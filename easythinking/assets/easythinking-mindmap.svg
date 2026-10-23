@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" role="img" aria-labelledby="title desc">
+  <title id="title">EasyThinking：从模糊困扰到可验证的判断</title>
+  <desc id="desc">六个按需使用的思考分支：明确问题，梳理信息，概念与尺度，证据与推理，判断与取舍，行动与更新。保留感受与价值，核对信息来源，尊重风险偏好，并随证据、目标与约束的变化更新判断和建议。只需陪伴时先回应感受，现实危险优先处理安全。</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+    .eyebrow { font-size: 15px; font-weight: 700; letter-spacing: 2px; fill: #526176; }
+    .heading { font-size: 32px; font-weight: 700; fill: #162338; }
+    .subtitle { font-size: 18px; fill: #526176; }
+    .branch-title { font-size: 25px; font-weight: 700; fill: #162338; }
+    .body { font-size: 19px; fill: #34445a; }
+    .number { font-size: 16px; font-weight: 700; fill: #fff; text-anchor: middle; }
+    .connector { fill: none; stroke-width: 3.5; stroke-linecap: round; }
+    .foot { font-size: 17px; fill: #526176; }
+  </style>
+
+  <rect width="1440" height="980" rx="24" fill="#f8fafc"/>
+  <text x="48" y="45" class="eyebrow">EASYTHINKING · 清晰思考</text>
+  <text x="48" y="91" class="heading">把模糊困扰变成可验证的判断</text>
+  <text x="48" y="126" class="subtitle">六个思考支点，按需取用；不必逐项走完。</text>
+
+  <!-- Branch order is indicated by numbers; connectors express a hierarchy, not mandatory steps. -->
+  <g class="connector">
+    <path d="M 584 472 C 540 472 552 260 500 260" stroke="#147d91"/>
+    <path d="M 584 500 L 500 500" stroke="#367358"/>
+    <path d="M 584 528 C 540 528 552 740 500 740" stroke="#98671d"/>
+    <path d="M 856 472 C 900 472 888 260 940 260" stroke="#4e62b7"/>
+    <path d="M 856 500 L 940 500" stroke="#8750a4"/>
+    <path d="M 856 528 C 900 528 888 740 940 740" stroke="#b25b45"/>
+  </g>
+
+  <g>
+    <rect x="584" y="432" width="272" height="136" rx="28" fill="#192d46"/>
+    <text x="720" y="477" text-anchor="middle" font-size="27" font-weight="700" fill="#fff">清晰思考</text>
+    <text x="720" y="512" text-anchor="middle" font-size="18" fill="#e0e9f5">问题清楚 · 判断有据</text>
+    <text x="720" y="541" text-anchor="middle" font-size="18" fill="#e0e9f5">下一步可验证</text>
+  </g>
+
+  <g>
+    <rect x="48" y="168" width="452" height="184" rx="20" fill="#edf8fa" stroke="#b4dce3"/>
+    <rect x="72" y="190" width="38" height="32" rx="10" fill="#147d91"/>
+    <text x="91" y="212" class="number">01</text>
+    <text x="125" y="216" class="branch-title">明确问题</text>
+    <text x="74" y="258" class="body">描述具体事件、目标与困扰</text>
+    <text x="74" y="292" class="body">明确范围、约束和成功标准</text>
+    <text x="74" y="326" class="body">辨别陪伴、澄清或决策诉求</text>
+  </g>
+
+  <g>
+    <rect x="48" y="408" width="452" height="184" rx="20" fill="#eff8f2" stroke="#bddcc9"/>
+    <rect x="72" y="430" width="38" height="32" rx="10" fill="#367358"/>
+    <text x="91" y="452" class="number">02</text>
+    <text x="125" y="456" class="branch-title">梳理信息</text>
+    <text x="74" y="498" class="body">观察与记录：注明来源与口径</text>
+    <text x="74" y="532" class="body">推断与假设：保留未知和条件</text>
+    <text x="74" y="566" class="body">感受与价值：保留；不据此读心</text>
+  </g>
+
+  <g>
+    <rect x="48" y="648" width="452" height="184" rx="20" fill="#fcf7eb" stroke="#e4d3ac"/>
+    <rect x="72" y="670" width="38" height="32" rx="10" fill="#98671d"/>
+    <text x="91" y="692" class="number">03</text>
+    <text x="125" y="696" class="branch-title">概念与尺度</text>
+    <text x="74" y="738" class="body">概念：定义、边界与正反例</text>
+    <text x="74" y="772" class="body">数据：样本、单位、时间窗和分母</text>
+    <text x="74" y="806" class="body">体验：评分锚点；序数不默认等距</text>
+  </g>
+
+  <g>
+    <rect x="940" y="168" width="452" height="184" rx="20" fill="#f0f3fc" stroke="#c8d0ef"/>
+    <rect x="964" y="190" width="38" height="32" rx="10" fill="#4e62b7"/>
+    <text x="983" y="212" class="number">04</text>
+    <text x="1017" y="216" class="branch-title">证据与推理</text>
+    <text x="966" y="258" class="body">分别检查前提、推理与结论</text>
+    <text x="966" y="292" class="body">核查来源、反证和替代解释</text>
+    <text x="966" y="326" class="body">保留限定条件；相关不等于因果</text>
+  </g>
+
+  <g>
+    <rect x="940" y="408" width="452" height="184" rx="20" fill="#f8f1fb" stroke="#dcc6e6"/>
+    <rect x="964" y="430" width="38" height="32" rx="10" fill="#8750a4"/>
+    <text x="983" y="452" class="number">05</text>
+    <text x="1017" y="456" class="branch-title">判断与取舍</text>
+    <text x="966" y="498" class="body">结论匹配证据，写明适用条件</text>
+    <text x="966" y="532" class="body">比较收益、代价和可逆性</text>
+    <text x="966" y="566" class="body">区分风险偏好与实际承受能力</text>
+  </g>
+
+  <g>
+    <rect x="940" y="648" width="452" height="184" rx="20" fill="#fcf2ed" stroke="#e9c9bc"/>
+    <rect x="964" y="670" width="38" height="32" rx="10" fill="#b25b45"/>
+    <text x="983" y="692" class="number">06</text>
+    <text x="1017" y="696" class="branch-title">行动与更新</text>
+    <text x="966" y="738" class="body">选择必要核实或小规模试行</text>
+    <text x="966" y="772" class="body">设定成本边界、停止与复查条件</text>
+    <text x="966" y="806" class="body">新证据或目标变化后，更新建议</text>
+  </g>
+
+  <path d="M 48 868 H 1392" stroke="#d9e1eb"/>
+  <text x="48" y="906" class="foot">使用分寸</text>
+  <text x="160" y="906" class="foot">只想倾诉 → 先回应感受　　现实危险 → 安全优先　　专业问题 → 结合专业流程</text>
+  <text x="48" y="944" class="foot">中性措辞 ≠ 已核实事实　　主观打分 ≠ 客观测量　　信息不足 → 标明未知与条件</text>
+</svg>
