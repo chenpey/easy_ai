@@ -1,6 +1,6 @@
 # EasyThinking
 
-版本：`0.2.0`
+版本：`0.2.1`
 
 EasyThinking 是一个通用思考辅助 Skill，帮助用户澄清问题、区分观察与推断、检查论证与关键证据、比较方案，并提出可验证的下一步。根据陪伴、澄清、检验、归因、决策或冲突等诉求选择方法；简单问题直接回答，复杂问题按需分析，不强制套用固定模板。
 
@@ -22,24 +22,39 @@ EasyThinking 是一个通用思考辅助 Skill，帮助用户澄清问题、区�
 
 EasyThinking 是纯文件 Skill，运行时只依赖 `SKILL.md` 与 `references/`，不要求子代理、模型配置、网络或特定工具。能否使用取决于目标 harness 是否能发现并加载 `SKILL.md`。
 
+下面按各宿主官方读取的目录分为两类：通用目录与专用目录。
+
+### 通用目录
+
+这些 harness 官方读取 `.agents/skills/`（项目级）与 `~/.agents/skills/`（用户级），共用同一份安装。
+
 | Harness | Skills CLI ID | 项目级 | 用户级 | 显式调用 |
 | --- | --- | --- | --- | --- |
 | Codex | `codex` | `.agents/skills/easythinking/` | `~/.agents/skills/easythinking/` | `$easythinking` |
-| Claude Code | `claude-code` | `.claude/skills/easythinking/` | `~/.claude/skills/easythinking/` | 以宿主语法为准 |
-| OpenCode | `opencode` | `.agents/skills/easythinking/` | `~/.config/opencode/skills/easythinking/` | 以宿主语法为准 |
+| OpenCode | `opencode` | `.agents/skills/easythinking/` | `~/.agents/skills/easythinking/` | 以宿主语法为准 |
 | Pi | `pi` | `.agents/skills/easythinking/` | `~/.agents/skills/easythinking/` | `/skill:easythinking` |
-| Cursor | `cursor` | `.agents/skills/easythinking/` | `~/.cursor/skills/easythinking/` | 以宿主语法为准 |
+| Cursor | `cursor` | `.agents/skills/easythinking/` | `~/.agents/skills/easythinking/` | 以宿主语法为准 |
+| DeepSeek Harness | 无（不在 Skills CLI 内置列表中） | `.agents/skills/easythinking/` | `~/.agents/skills/easythinking/` | `/easythinking` |
+
+DeepSeek Harness 没有单独安装命令，直接扫描上述两个通用目录（见下方说明）。
+
+### 专用目录
+
+这些 harness 不读取通用目录，或其用户级目录不是通用目录，需要安装到各自的官方目录。
+
+| Harness | Skills CLI ID | 项目级 | 用户级 | 显式调用 |
+| --- | --- | --- | --- | --- |
+| Claude Code | `claude-code` | `.claude/skills/easythinking/` | `~/.claude/skills/easythinking/` | 以宿主语法为准 |
 | Google Antigravity App | `antigravity` | `.agents/skills/easythinking/` | `~/.gemini/config/skills/easythinking/`（需按下方说明复制） | `/easythinking` |
-| Google Antigravity CLI | `antigravity-cli` | `.agents/skills/easythinking/` | `~/.gemini/antigravity-cli/skills/easythinking/` | 以宿主语法为准 |
-| DeepSeek Harness | 无（不在 Skills CLI 内置列表中） | `<项目根>/.dsh/skills/easythinking/` 或 `<项目根>/.agents/skills/easythinking/` | `~/.dsh/skills/easythinking/` 或 `~/.agents/skills/easythinking/` | `/easythinking` |
+| Google Antigravity CLI | `antigravity-cli` | `.agents/skills/easythinking/` | `~/.gemini/antigravity-cli/skills/easythinking/`（需按下方说明复制） | 以宿主语法为准 |
 
 说明：
 
 - **Skills CLI ID** 指 `npx skills add --agent` 可用的标识，已对照当前 Skills CLI 内置定义核对；未列出的 CLI ID 以 CLI 当前版本为准。
-- **Antigravity 路径**：官方 App 文档列出工作区 `.agents/skills/<skill-folder>/` 与用户级 `~/.gemini/config/skills/<skill-folder>/`；官方 Antigravity CLI 迁移文档列出工作区 `.agents/skills/` 与用户级 `~/.gemini/antigravity-cli/skills/`。Skills CLI 对这两者的 `--global` 会写入 `~/.agents/skills/`，不是官方路径，所以用户级安装见下方“Antigravity 用户级安装”。官方 Antigravity IDE 页面未取到对应路径，IDE 以宿主实际发现的位置为准。
 - **Claude Code 路径**：官方只读取 `.claude/skills/`，不读取 `.agents/skills/`，所以安装时使用 `--copy` 生成真实副本，避免依赖共享目录或符号链接。
+- **Antigravity 路径**：官方 App 文档列出工作区 `.agents/skills/<skill-folder>/` 与用户级 `~/.gemini/config/skills/<skill-folder>/`；官方 Antigravity CLI 迁移文档列出工作区 `.agents/skills/` 与全局共享 `~/.gemini/antigravity-cli/skills/`。Skills CLI 的 `--global` 会把两者写入 `~/.agents/skills/`，不是官方用户级路径，因此用户级改用复制，见下方“Antigravity 用户级安装”。官方 Antigravity IDE 页面未取到对应路径，IDE 以宿主实际发现的位置为准。
+- **DeepSeek Harness 路径**：依据其官方源码 `packages/skill/skill-filesystem/src/index.ts`，扫描根目录为项目级 `<项目根>/.dsh/skills/`、`<项目根>/.agents/skills/`，用户级 `$DSH_HOME/skills/`（默认 `~/.dsh/skills/`）、`$DSH_AGENTS_HOME/skills/`（默认 `~/.agents/skills/`）。因此通用目录中的安装对 DSH 可见。这是对源码的核对，尚未在 DSH 中实测加载。
 - **Codex 元数据**：`agents/openai.yaml` 只提供 Codex 的显示名称、简介和默认提示词，是可选文件；其他 harness 可忽略它。
-- **DeepSeek Harness**：官方 skill 根目录按优先级为 `<项目根>/.dsh/skills`、`<项目根>/.agents/skills`、`$DSH_HOME/skills`（默认 `~/.dsh/skills`）、`$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`）。`dsh plugin add` 不能安装 skill，只能放入上述目录。Skills CLI 没有 DSH 的 ID，但 `codex` 与 `pi` 安装到的 `.agents/skills/` 与 `~/.agents/skills/` 正是 DSH 扫描的目录，因此这些安装可被 DSH 直接发现。该结论依据目录约定推断，尚未在 DSH 中实测。
 - **检索能力**：需要核实事实时，`SKILL.md` 要求按宿主的检索要求使用可靠来源。宿主没有检索工具时，应说明无法核实，而不是凭记忆下结论。
 
 安装成功或目录存在，不代表宿主已加载该技能，也不代表行为符合预期。当前仓库只验证了安装命令与文件集，尚未在各 harness 上做行为回归；升级宿主后需要重新确认加载情况。
@@ -51,46 +66,70 @@ EasyThinking 是纯文件 Skill，运行时只依赖 `SKILL.md` 与 `references/
 - Node.js 22.20.0 或更高版本（`npx` 随 npm 提供）。
 - 能访问 GitHub。安装命令直接从仓库拉取，无需先 clone。
 
-在任意目录执行，把 EasyThinking 安装到当前项目。多数 harness 读取共享目录 `.agents/skills/`；Claude Code 官方只读取 `.claude/skills/`，因此单独安装为真实副本（`--copy`），不依赖共享目录或符号链接：
+安装命令分为两类：先安装到通用目录，再为专用目录单独安装。
+
+### 通用目录
+
+项目级：在目标项目目录中执行，安装到 `.agents/skills/easythinking/`。Antigravity 的项目级也使用此目录，因此一并列出。
 
 ```bash
 npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent codex opencode pi cursor antigravity antigravity-cli --copy
-npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent claude-code --copy
 ```
 
-安装到用户级目录（所有项目可用）：
+用户级：安装到 `~/.agents/skills/easythinking/`，所有项目可用。Antigravity 的用户级目录不是通用目录，不在此列。
 
 ```bash
 npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent codex opencode pi cursor --copy --global
+```
+
+DeepSeek Harness 没有单独命令，直接扫描上面两个 `.agents/skills/` 目录。
+
+### 专用目录
+
+#### Claude Code
+
+Claude Code 官方只读取 `.claude/skills/`，因此单独安装。
+
+项目级，安装到 `.claude/skills/easythinking/`：
+
+```bash
+npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent claude-code --copy
+```
+
+用户级，安装到 `~/.claude/skills/easythinking/`：
+
+```bash
 npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent claude-code --copy --global
 ```
 
-上面第一条用户级命令中，Codex、OpenCode、Pi、Cursor 的副本位于 `~/.agents/skills/`，这是各自官方支持的用户级目录之一。Antigravity 不使用 `--global`，见下方单独说明。
+#### Antigravity 用户级
 
-更新由 Skills CLI 安装的副本：（Antigravity App 用户级副本需按下方说明重新复制）
+Antigravity App 的用户级目录是 `~/.gemini/config/skills/easythinking/`，Antigravity CLI 的是 `~/.gemini/antigravity-cli/skills/easythinking/`。Skills CLI 的 `--global` 会写入 `~/.agents/skills/`，不是官方路径，因此先按项目级安装到临时目录，再复制到官方路径。只需要其中一个产品时，删去另一个产品对应的 `mkdir` 与 `cp` 行。
+
+```bash
+(
+  set -e
+  TMP_DIR="$(mktemp -d)"
+  cd "$TMP_DIR"
+  npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent antigravity --copy -y
+  mkdir -p ~/.gemini/config/skills/easythinking ~/.gemini/antigravity-cli/skills/easythinking
+  cp -R "$TMP_DIR/.agents/skills/easythinking/." ~/.gemini/config/skills/easythinking/          # Antigravity App
+  cp -R "$TMP_DIR/.agents/skills/easythinking/." ~/.gemini/antigravity-cli/skills/easythinking/  # Antigravity CLI
+  rm -rf "$TMP_DIR"
+)
+```
+
+更新时重新执行上述命令即可覆盖。
+
+### 更新
+
+更新由 Skills CLI 安装的副本：
 
 ```bash
 npx skills update easythinking
 ```
 
-### Antigravity 用户级安装
-
-Antigravity App 的官方用户级目录是 `~/.gemini/config/skills/`，Antigravity CLI 的是 `~/.gemini/antigravity-cli/skills/`。Skills CLI 的 `--global` 会把它们写入 `~/.agents/skills/` 等非官方位置，因此先按项目级安装到临时目录，再复制到官方路径。只需要其中一个产品时，删去另一个产品对应的 `mkdir` 与 `cp` 行：
-
-```bash
-TMP_DIR="$(mktemp -d)"
-(cd "$TMP_DIR" && npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent antigravity --copy -y)
-mkdir -p ~/.gemini/config/skills/easythinking ~/.gemini/antigravity-cli/skills/easythinking
-cp -R "$TMP_DIR/.agents/skills/easythinking/." ~/.gemini/config/skills/easythinking/          # Antigravity App
-cp -R "$TMP_DIR/.agents/skills/easythinking/." ~/.gemini/antigravity-cli/skills/easythinking/  # Antigravity CLI
-rm -rf "$TMP_DIR"
-```
-
-更新时重新执行上述命令即可覆盖。
-
-### DeepSeek Harness
-
-DSH 没有单独的安装命令。使用 `--agent codex` 或 `--agent pi` 安装后，文件已位于 DSH 扫描的共享目录中（项目级与用户级分别见上表）。
+Antigravity 用户级副本需按上方命令重新复制。
 
 ### 常见问题
 
@@ -103,7 +142,7 @@ DSH 没有单独的安装命令。使用 `--agent codex` 或 `--agent pi` 安装
 
 ### 查看已安装版本
 
-版本写在 `SKILL.md` 前置元数据的 `metadata.version` 中。安装目录路径取决于上表，例如 Codex 项目级为 `.agents/skills/easythinking/`：
+版本写在 `SKILL.md` 前置元数据的 `metadata.version` 中。把路径替换为上表对应的目录，例如 Codex 项目级为 `.agents/skills/easythinking/SKILL.md`：
 
 ```bash
 sed -n '/^---$/,/^---$/p' .agents/skills/easythinking/SKILL.md | grep -m1 'version:'
