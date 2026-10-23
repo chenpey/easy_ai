@@ -39,4 +39,4 @@ easythinking/
     └── methods.md
 ```
 
-运行时说明位于 `SKILL.md`；`references/` 提供按需读取的方法和应用示例。`agents/openai.yaml` 是 OpenAI/Codex 专用的可选界面元数据，提供显示名称、简介和默认提示词；它不是 Agent Skills 的必需文件，也不负责其他 harness 的兼容性。跨 harness 的核心是符合规范的 `SKILL.md` 及其随包提供的引用文件；其他 harness 可忽略 `agents/openai.yaml`。Skills CLI 的 `--agent '*'` 只覆盖该 CLI 当前支持的 harness，具体加载行为仍以各宿主为准。
+运行时说明位于 `SKILL.md`；`references/` 提供按需读取的方法和应用示例。关于 `agents/openai.yaml` 与跨 harness 兼容性的说明见仓库根目录 [README](../README.md#harness-兼容性)。
