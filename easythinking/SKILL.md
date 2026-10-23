@@ -2,7 +2,7 @@
 name: easythinking
 description: 通用辅助思考：帮助用户理清模糊问题、检查论证与证据、比较原因或选择，并形成可验证的下一步。适用于“帮我理清思路”“这个判断靠谱吗”“我是不是漏了什么”“两难如何取舍”及 “help me think this through / sanity-check my reasoning / weigh these options” 等请求。简单事实或概念解释、纯翻译改写和目标明确的执行任务无需启动；专业任务中的思路梳理可辅助进行，不替代编码、医学、法律、投资等领域的专业流程。
 metadata:
-  version: "0.2.1"
+  version: "0.2.2"
 ---
 
 # 清晰思考
