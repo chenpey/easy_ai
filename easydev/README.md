@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`0.11.0`
+当前版本：`0.11.1`
 
 EasyDev 是面向编码 Agent 的纯文件 Skill。它把需求设计、实施、排障、验证、独立审查、可行性探针和全仓审计收进一个入口，按任务风险选择必要流程，并以可核验的改动和证据交付。
 
@@ -177,99 +177,23 @@ auto / quick / full / design / plan / debug / review / spike / audit
 
 ## 安装
 
-### Skills CLI
-
-Skills CLI 需要 Node.js/npm。已获取本仓库时，在仓库根目录执行：
-
-```bash
-npx skills add ./easydev --skill easydev
-```
-
-也可以传入 EasyDev 文件夹的绝对路径，并按提示选择安装范围：
-
-```bash
-npx skills add ./easydev --skill easydev --agent codex
-npx skills add ./easydev --skill easydev --agent codex claude-code opencode pi cursor
-npx skills add ./easydev --skill easydev --agent codex --global
-```
-
-发布到 GitHub 后，可以使用实际仓库地址安装：
-
-```bash
-npx skills add https://github.com/chenpey/easy_ai/tree/main/easydev --skill easydev
-```
-
-更新已安装技能：
-
-```bash
-npx skills update easydev
-```
-
-从本地工作区安装后检查目标目录；若出现 `.pi/` 或 `tests/`，删除后再使用。`DEST` 为已安装的 `easydev` 目录，可用下面命令确认安装结果：
-
-```bash
-DEST=/path/to/skills/easydev
-test -f "$DEST/SKILL.md" && test ! -d "$DEST/tests" && test ! -d "$DEST/.pi"
-```
-
-从本地工作区安装可能带上 `tests/`、`.pi/`；不通过校验就删掉这两个目录再继续。需要可重复的最小安装时，优先用下方[手动安装](#手动安装)的 rsync 命令。
-
-### 手动安装
-
-运行时最低文件集是：
+将下面的提示词复制给你使用的 Agent，让它完成安装；更新时也使用同一段提示词。
 
 ```text
-SKILL.md
-references/
+请安装或更新 EasyDev：
+https://github.com/chenpey/easy_ai/tree/main/easydev
+
+识别当前操作系统和 Agent，将仓库 main 分支的最新技能文件保存到用户主目录下的 ~/.agents/skills/easydev。
+只安装 easydev 的 SKILL.md、references/ 和可选展示元数据 agents/，保持相对位置；不要安装 tests/、.pi/ 或仓库中的其他技能，不改动用户的模型配置。
+
+如果当前 Agent 支持该通用目录，直接使用；否则在其实际配置的用户级技能目录中创建指向上述目录的软链接，让所有项目都能使用。确认 Agent 能读取该链接；若不支持软链接，可使用受支持的目录联接或复制，并说明采用的方式。
+
+优先使用已有工具，避免安装不必要的依赖。更新前检查已有文件和链接，保留本地修改及自建文件；仅替换确认未被本地修改的旧版技能文件，并处理新版已移除的文件。遇到冲突先说明，不直接覆盖或删除。
+
+完成后检查技能及引用文件是否完整、链接是否有效，告知安装路径、版本和生效步骤。未实际验证 Agent 加载时，请明确说明。
 ```
 
-将这些文件复制到目标 harness 的技能目录，并保持相对位置。`agents/` 和 `examples/` 是可选扩展；`.pi/` 是本地配置，`tests/` 是维护和评测材料，均不应随运行时安装。需要 Codex 展示元数据（显示名、默认提示词）时，另外把 `agents/` 复制到技能目录；需要使用示例模型配置时，从 `examples/` 选文件后复制到用户外部配置位置。模型配置不在安装文件内：无用户配置时使用内置 `inherit` 默认值，见 [模型配置](#模型配置)。
-
-在 EasyDev 目录执行，`DEST` 为技能父目录：
-
-```bash
-DEST=/path/to/skills
-rsync -a \
-  --exclude .git \
-  --exclude .pi \
-  --exclude tests \
-  --exclude agents \
-  --exclude examples \
-  --exclude README.md \
-  --exclude CHANGELOG.md \
-  ./ "$DEST/easydev/"
-```
-
-该命令不带 `--delete`。更新时先确认目标目录没有自建文件，再删除旧目录并重新复制，避免遗留已移除的文件。
-
-### 查看已安装版本
-
-只持有安装副本、没有源码时，版本直接读 `SKILL.md` 前置元数据的 `metadata.version`：
-
-```bash
-sed -n '/^---$/,/^---$/p' /path/to/skills/easydev/SKILL.md | grep -m1 'version:'
-```
-
-发布新版本时，请同步更新 README 的当前版本、`CHANGELOG.md` 的最新条目，以及 `SKILL.md` 前置元数据中的 `metadata.version`。本仓库不包含原 `easy_suite` 单仓库的版本同步脚本和 `versions.json`。
-
-### 常见目录
-
-项目级路径相对于目标项目，`~` 表示用户主目录。Skills CLI 的共享目录实际位置以安装输出为准。
-
-| Harness | Skills CLI ID | 项目级 | 用户级 |
-| --- | --- | --- | --- |
-| Codex | `codex` | `.agents/skills/easydev/` | `~/.agents/skills/easydev/` |
-| Claude Code | `claude-code` | `.claude/skills/easydev/` | `~/.claude/skills/easydev/` |
-| OpenCode | `opencode` | `.agents/skills/easydev/` | `~/.config/opencode/skills/easydev/` |
-| Pi | `pi` | `.agents/skills/easydev/` | `~/.agents/skills/easydev/` |
-| DeepSeek Harness | 原生目录或共享目录 | `.dsh/skills/easydev/` 或 `.agents/skills/easydev/` | `~/.dsh/skills/easydev/` 或 `~/.agents/skills/easydev/` |
-| Cursor | `cursor` | `.agents/skills/easydev/` | `~/.cursor/skills/easydev/` |
-| Google Antigravity App/IDE | `antigravity` 或手动复制 | `.agents/skills/easydev/` | `~/.gemini/config/skills/easydev/` |
-| Google Antigravity CLI | `antigravity-cli` | `.agents/skills/easydev/` | `~/.gemini/antigravity-cli/skills/easydev/` |
-
-DeepSeek Harness 设置 `DSH_HOME` 后，原生用户目录变为 `$DSH_HOME/skills/easydev/`；设置 `DSH_AGENTS_HOME` 后，共享目录变为 `$DSH_AGENTS_HOME/skills/easydev/`。自定义部署还需要加载文件系统 Skill provider 和模型调用入口，具体以宿主文档为准。
-
-安装后刷新技能或开启新会话。Pi 可使用 `/reload`。子代理、模型覆盖、推理深度和工作区隔离仍需按宿主实际工具核对，见 [环境适配](references/setup.md)。
+默认继承宿主模型，需要自定义时见[模型配置](#模型配置)；宿主能力要求见[环境适配](references/setup.md)。
 
 ## 模型配置
 
