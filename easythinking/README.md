@@ -1,6 +1,6 @@
 # EasyThinking
 
-版本：`0.2.6`
+版本：`0.2.7`
 
 帮助你理清问题、检查证据、比较选择，并找到可验证的下一步。简单问题直接回答，复杂问题按需分析，不套固定模板，也不替你做决定。
 
@@ -14,8 +14,8 @@
 请安装或更新 EasyThinking：
 https://github.com/chenpey/easy_ai/tree/main/easythinking
 
-识别当前操作系统和 Agent，将仓库 main 分支的最新技能文件保存到用户主目录下的 ~/.agents/skills/easythinking。
-只安装 easythinking，保留 SKILL.md 及其引用文件的相对位置。
+识别当前操作系统和 Agent，将仓库 main 分支的最新运行时技能文件（SKILL.md、references/ 及可选的 agents/，排除 tests/、CHANGELOG.md、README.md）保存到用户主目录下的 ~/.agents/skills/easythinking。
+保留 SKILL.md 及其引用文件的相对位置。
 
 如果当前 Agent 支持该通用目录，直接使用；否则在其实际配置的用户级技能目录中创建指向上述目录的软链接，让所有项目都能使用。确认 Agent 能读取该链接；若不支持软链接，可使用受支持的目录联接或复制，并说明采用的方式。
 
@@ -26,47 +26,100 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
 
 ### 方式二：手动安装（确定性对照）
 
-如果需要稳定、可复现的安装，可在终端执行以下安全命令（克隆失败不会破坏已有版本，替换前自动备份旧目录）。以下各 Agent 的目录约定截至 2026-10 核对；若宿主后续调整路径，请以其官方文档为准。
+如果需要稳定、可复现的安装，可在终端执行以下命令（仅安装运行时所需的 `SKILL.md`、`references/` 与 `agents/`，先在同目录暂存校验成功后再备份替换，避免克隆或复制失败时破坏已安装版本）。各 Agent 的技能目录约定可能随版本变化，请以各自官方文档为准。
 
-#### 1. 通用目录（Codex、Cursor、OpenCode、Pi、DeepSeek Harness 等共用）
+#### 1. 通用目录（Codex、Cursor、OpenCode、Pi、DeepSeek Harness 等常见约定）
 
-```bash
-(
-  set -euo pipefail
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp/repo"
-  mkdir -p ~/.agents/skills
-  [ -e ~/.agents/skills/easythinking ] && mv ~/.agents/skills/easythinking ~/easythinking.bak.$(date +%s)
-  cp -R "$tmp/repo/easythinking" ~/.agents/skills/
-)
-```
-
-#### 2. 专用目录
-
-先完成上方通用目录安装，再按需同步到专用目录：
-
-- **Claude Code**（官方仅读取 `~/.claude/skills/`）：
+- **macOS / Linux（bash / zsh）**：
   ```bash
   (
     set -euo pipefail
-    test -f ~/.agents/skills/easythinking/SKILL.md
-    mkdir -p ~/.claude/skills
-    [ -e ~/.claude/skills/easythinking ] && mv ~/.claude/skills/easythinking ~/easythinking.claude.bak.$(date +%s)
-    cp -R ~/.agents/skills/easythinking ~/.claude/skills/
+    tmp="$(mktemp -d)"
+    stage="$HOME/.agents/skills/.easythinking.stage.$$"
+    trap 'rm -rf "$tmp" "$stage"' EXIT
+    git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp/repo"
+    mkdir -p "$stage"
+    cp -R "$tmp/repo/easythinking/SKILL.md" "$tmp/repo/easythinking/references" "$tmp/repo/easythinking/agents" "$stage/"
+    dest="$HOME/.agents/skills/easythinking"
+    if [ -e "$dest" ]; then
+      bak="$HOME/.agents/skills/easythinking.bak.$(date +%s)"
+      mv "$dest" "$bak"
+      echo "已备份旧版至: $bak"
+    fi
+    mv "$stage" "$dest"
+    echo "已安装至: $dest ($(grep -m1 'version:' "$dest/SKILL.md" | awk '{print $2}'))"
   )
   ```
 
-- **Google Antigravity**（官方用户级配置）：
+- **Windows（PowerShell）**：
+  ```powershell
+  $ErrorActionPreference = "Stop"
+  $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("easy_ai_" + [guid]::NewGuid())
+  $skillsRoot = Join-Path $HOME ".agents\skills"
+  $stage = Join-Path $skillsRoot (".easythinking.stage." + $PID)
+  $dest = Join-Path $skillsRoot "easythinking"
+  try {
+    git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp\repo"
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+    Copy-Item "$tmp\repo\easythinking\SKILL.md" $stage
+    Copy-Item -Recurse "$tmp\repo\easythinking\references", "$tmp\repo\easythinking\agents" $stage
+    if (Test-Path $dest) {
+      $bak = "$dest.bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+      Move-Item $dest $bak
+      Write-Host "已备份旧版至: $bak"
+    }
+    Move-Item $stage $dest
+    Write-Host "已安装至: $dest"
+  } finally {
+    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+    if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+  }
+  ```
+
+#### 2. 专用目录（macOS / Linux 示例）
+
+先完成上方通用目录安装，再按需同步到专用目录：
+
+- **Claude Code**（`~/.claude/skills/`）：
   ```bash
   (
     set -euo pipefail
-    test -f ~/.agents/skills/easythinking/SKILL.md
-    mkdir -p ~/.gemini/config/skills ~/.gemini/antigravity-cli/skills
-    [ -e ~/.gemini/config/skills/easythinking ] && mv ~/.gemini/config/skills/easythinking ~/easythinking.agy-app.bak.$(date +%s)
-    [ -e ~/.gemini/antigravity-cli/skills/easythinking ] && mv ~/.gemini/antigravity-cli/skills/easythinking ~/easythinking.agy-cli.bak.$(date +%s)
-    cp -R ~/.agents/skills/easythinking ~/.gemini/config/skills/
-    cp -R ~/.agents/skills/easythinking ~/.gemini/antigravity-cli/skills/
+    src="$HOME/.agents/skills/easythinking"
+    dest="$HOME/.claude/skills/easythinking"
+    stage="$HOME/.claude/skills/.easythinking.stage.$$"
+    trap 'rm -rf "$stage"' EXIT
+    test -f "$src/SKILL.md"
+    mkdir -p "$stage"
+    cp -R "$src/." "$stage/"
+    if [ -e "$dest" ]; then
+      bak="$HOME/.claude/skills/easythinking.bak.$(date +%s)"
+      mv "$dest" "$bak"
+      echo "已备份旧版至: $bak"
+    fi
+    mv "$stage" "$dest"
+    echo "已同步至: $dest"
+  )
+  ```
+
+- **Google Antigravity**（App 与 CLI 用户级目录）：
+  ```bash
+  (
+    set -euo pipefail
+    src="$HOME/.agents/skills/easythinking"
+    test -f "$src/SKILL.md"
+    for parent in "$HOME/.gemini/config/skills" "$HOME/.gemini/antigravity-cli/skills"; do
+      dest="$parent/easythinking"
+      stage="$parent/.easythinking.stage.$$"
+      mkdir -p "$stage"
+      cp -R "$src/." "$stage/"
+      if [ -e "$dest" ]; then
+        bak="$parent/easythinking.bak.$(date +%s)"
+        mv "$dest" "$bak"
+        echo "已备份旧版至: $bak"
+      fi
+      mv "$stage" "$dest"
+      echo "已同步至: $dest"
+    done
   )
   ```
 
