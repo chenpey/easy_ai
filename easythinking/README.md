@@ -1,6 +1,6 @@
 # EasyThinking
 
-版本：`0.2.2`
+版本：`0.2.3`
 
 EasyThinking 是一个通用思考辅助 Skill，帮助用户澄清问题、区分观察与推断、检查论证与关键证据、比较方案，并提出可验证的下一步。根据陪伴、澄清、检验、归因、决策或冲突等诉求选择方法；简单问题直接回答，复杂问题按需分析，不强制套用固定模板。
 
@@ -71,10 +71,10 @@ DeepSeek Harness 没有单独安装命令，直接扫描上面这个目录（见
 ### 通用目录
 
 ```bash
-npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent codex opencode pi cursor --copy --global
+npx skills add https://github.com/chenpey/easy_ai/tree/main/easythinking --skill easythinking --agent codex --global
 ```
 
-安装到 `~/.agents/skills/easythinking/`。DeepSeek Harness 没有单独命令，直接扫描该目录。
+安装到 `~/.agents/skills/easythinking/`。Codex、OpenCode、Pi、Cursor 和 DeepSeek Harness 都直接读取这个目录，所以只需指定一个 agent（这里是 `codex`），无需逐个列出。不指定 `--agent` 时，Skills CLI 会按本机检测结果写入其他 agent 的目录，因此保留该参数。
 
 ### 专用目录
 
