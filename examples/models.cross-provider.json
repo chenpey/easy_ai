@@ -1,0 +1,32 @@
+{
+  "developer": {
+    "model": "antigravity-acp/gemini-3.8-flash",
+    "reasoning_effort": "high"
+  },
+  "reviewer": {
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
+  },
+  "upgrades": [
+    {
+      "developer": {
+        "model": "antigravity-acp/gemini-4-argon",
+        "reasoning_effort": "high"
+      },
+      "reviewer": {
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "high"
+      }
+    },
+    {
+      "developer": {
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "high"
+      },
+      "reviewer": {
+        "model": "zed/claude-sonnet-5-5",
+        "reasoning_effort": "high"
+      }
+    }
+  ]
+}
