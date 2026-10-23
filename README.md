@@ -2,8 +2,10 @@
 
 本仓库包含 2 个 Skill：
 
-- [EasyThinking](easythinking/README.md)：帮助理清问题、检查证据、比较选择并形成可验证下一步的通用思考技能。
-- [EasyDev](easydev/README.md)：面向编码 Agent 的开发流程技能。
+| 名称 | 版本 | 简单说明 |
+| --- | --- | --- |
+| [EasyThinking](easythinking/README.md) | 未标版本 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
+| [EasyDev](easydev/README.md) | 0.11.0 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
 
 ## Harness 兼容性
 
