@@ -2,7 +2,7 @@
 
 按以下顺序选择**第一个存在的完整配置**，不合并多个配置：
 
-1. **用户外部配置（权威来源）**：保存在 Skill 安装目录外，多 harness 共用且更新 Skill 不覆盖。macOS/Linux 为 `$XDG_CONFIG_HOME/easydev/models.json`（`XDG_CONFIG_HOME` 非空时）或 `~/.config/easydev/models.json`；Windows 为 `%APPDATA%/easydev/models.json`（未设置时用主目录下 `.config/easydev/models.json`）。主目录与环境变量以宿主实际提供值为准，不猜其他用户路径。该文件存在且解析有效时即为强约束：不再改用对话指定的其他文件，也不得按 `inherit` 默认值跳过。文件存在但不可读或无效时按下文报错，不静默回退；用户显式确认使用默认值或改用对话指定文件属异常恢复，须在报告注明。
+1. **用户外部配置（权威来源）**：保存在 Skill 安装目录外，多 harness 共用且更新 Skill 不覆盖。macOS/Linux 为 `~/.config/easydev/models.json`；Windows 为 `%APPDATA%/easydev/models.json`（未设置时用主目录下 `.config/easydev/models.json`）。主目录与环境变量以宿主实际提供值为准，不猜其他用户路径。该文件存在且解析有效时即为强约束：不再改用对话指定的其他文件，也不得按 `inherit` 默认值跳过。文件存在但不可读或无效时按下文报错，不静默回退；用户显式确认使用默认值或改用对话指定文件属异常恢复，须在报告注明。
 2. 用户在当前对话中明确指定的配置文件路径：仅在外部配置不存在时使用，并在报告中说明；该文件不存在或不可读时报错暂停，不静默回退。
 3. 两者都不存在时使用内置默认值：`developer` 与 `reviewer` 均为 `inherit`，`upgrades` 为空。该默认值不依赖任何文件，`inherit` 表示沿用宿主模型与推理深度；此时报告实际来源为“内置 `inherit` 默认值”。
 

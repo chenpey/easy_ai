@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`0.11.1`
+当前版本：`0.12.0`
 
 EasyDev 是面向编码 Agent 的 Skill，按任务风险组织设计、实现、排障、验证与审查。简单任务直接完成，复杂或高风险任务进入开发—独立审查—修复闭环。
 
@@ -13,6 +13,7 @@ EasyDev 是面向编码 Agent 的 Skill，按任务风险组织设计、实现�
 使用 easydev debug，排查保存按钮重复提交的问题。
 使用 easydev review，审查当前改动，先不要修改代码。
 使用 easydev design，比较三个导入方案并推荐一个。
+使用 easydev，重构订单解析模块，保持现有行为，合并重复业务规则并验证调用方。
 ```
 
 Codex 可用 `$easydev`；其他宿主的技能入口以其实际支持为准。以下路径名是提示词约定，不是额外安装的命令。
@@ -105,9 +106,17 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 配置按以下优先级选取，不合并：
 
-1. 用户外部配置：macOS/Linux 使用 `$XDG_CONFIG_HOME/easydev/models.json`（变量非空时），否则使用 `~/.config/easydev/models.json`；Windows 使用 `%APPDATA%/easydev/models.json`，变量未设置时回退到主目录下的 `.config/easydev/models.json`。
+1. 用户外部配置：macOS/Linux 使用 `~/.config/easydev/models.json`；Windows 使用 `%APPDATA%/easydev/models.json`，变量未设置时回退到主目录下的 `.config/easydev/models.json`。
 2. 对话指定的文件，仅在外部配置不存在时使用。
 3. 内置默认值：`developer`、`reviewer` 均为 `inherit`，`upgrades` 为空。
+
+macOS/Linux 可用以下命令查看配置：
+
+```bash
+cat ~/.config/easydev/models.json
+```
+
+若该文件不存在，表示尚未创建个人配置；使用内置默认值时无须创建，需要自定义时再将上面的 JSON 保存到此路径。
 
 `developer`、`reviewer` 各含 `model` 和 `reasoning_effort`；模型 ID 须与宿主支持的完整写法一致，深度单独填写。`upgrades` 最多两个阶段，每阶段包含完整的两个角色配置。
 
@@ -126,7 +135,8 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 运行规则以 [SKILL.md](SKILL.md) 及其按需引用的 `references/` 为准；README 只提供使用指南。
 
 - [设计与计划](references/planning.md)、[候选方案评审](references/candidates.md)
-- [实现与验证](references/execution.md)、[排障](references/debugging.md)
+- [实现与验证](references/execution.md)、[重构方法](references/refactoring.md)、[排障](references/debugging.md)
+- [项目验证方法](references/verification.md)：已有测试不足或需复用人工验收方法时，补足真实入口操作、取证与清理
 - [独立审查](references/review.md)、[闭环编排与预算](references/orchestration.md)
 - [基线与恢复](references/baseline-safety.md)
 - [维护检查](tests/README.md)、[行为回归规约](tests/behavior.md)、[实验说明](tests/experiments/README.md)
