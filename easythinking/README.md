@@ -1,6 +1,6 @@
 # EasyThinking
 
-版本：`0.2.5`
+版本：`0.2.6`
 
 帮助你理清问题、检查证据、比较选择，并找到可验证的下一步。简单问题直接回答，复杂问题按需分析，不套固定模板，也不替你做决定。
 
@@ -26,31 +26,48 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
 
 ### 方式二：手动安装（确定性对照）
 
-如果需要稳定、可复现的安装，可在终端执行以下最简命令：
+如果需要稳定、可复现的安装，可在终端执行以下安全命令（克隆失败不会破坏已有版本，替换前自动备份旧目录）。以下各 Agent 的目录约定截至 2026-10 核对；若宿主后续调整路径，请以其官方文档为准。
 
 #### 1. 通用目录（Codex、Cursor、OpenCode、Pi、DeepSeek Harness 等共用）
 
 ```bash
-mkdir -p ~/.agents/skills
-git clone --depth=1 https://github.com/chenpey/easy_ai.git /tmp/easy_ai_repo
-rm -rf ~/.agents/skills/easythinking
-cp -R /tmp/easy_ai_repo/easythinking ~/.agents/skills/
-rm -rf /tmp/easy_ai_repo
+(
+  set -euo pipefail
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp/repo"
+  mkdir -p ~/.agents/skills
+  [ -e ~/.agents/skills/easythinking ] && mv ~/.agents/skills/easythinking ~/easythinking.bak.$(date +%s)
+  cp -R "$tmp/repo/easythinking" ~/.agents/skills/
+)
 ```
 
 #### 2. 专用目录
 
-- **Claude Code**（官方仅读取 `.claude/skills/`）：
+先完成上方通用目录安装，再按需同步到专用目录：
+
+- **Claude Code**（官方仅读取 `~/.claude/skills/`）：
   ```bash
-  mkdir -p ~/.claude/skills
-  cp -R ~/.agents/skills/easythinking ~/.claude/skills/
+  (
+    set -euo pipefail
+    test -f ~/.agents/skills/easythinking/SKILL.md
+    mkdir -p ~/.claude/skills
+    [ -e ~/.claude/skills/easythinking ] && mv ~/.claude/skills/easythinking ~/easythinking.claude.bak.$(date +%s)
+    cp -R ~/.agents/skills/easythinking ~/.claude/skills/
+  )
   ```
 
 - **Google Antigravity**（官方用户级配置）：
   ```bash
-  mkdir -p ~/.gemini/config/skills ~/.gemini/antigravity-cli/skills
-  cp -R ~/.agents/skills/easythinking ~/.gemini/config/skills/
-  cp -R ~/.agents/skills/easythinking ~/.gemini/antigravity-cli/skills/
+  (
+    set -euo pipefail
+    test -f ~/.agents/skills/easythinking/SKILL.md
+    mkdir -p ~/.gemini/config/skills ~/.gemini/antigravity-cli/skills
+    [ -e ~/.gemini/config/skills/easythinking ] && mv ~/.gemini/config/skills/easythinking ~/easythinking.agy-app.bak.$(date +%s)
+    [ -e ~/.gemini/antigravity-cli/skills/easythinking ] && mv ~/.gemini/antigravity-cli/skills/easythinking ~/easythinking.agy-cli.bak.$(date +%s)
+    cp -R ~/.agents/skills/easythinking ~/.gemini/config/skills/
+    cp -R ~/.agents/skills/easythinking ~/.gemini/antigravity-cli/skills/
+  )
   ```
 
 ## 使用
