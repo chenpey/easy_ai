@@ -279,7 +279,7 @@ def _snapshot_tree(root: Path, *, exclude_names: set[str] | None = None) -> Dict
     for current, directories, files in os.walk(root, followlinks=False):
         current_path = Path(current)
         directories[:] = sorted(
-            name for name in directories if name not in excluded
+            name for name in directories if current_path != root or name not in excluded
         )
         for name in list(directories):
             path = current_path / name
@@ -291,7 +291,7 @@ def _snapshot_tree(root: Path, *, exclude_names: set[str] | None = None) -> Dict
             else:
                 snapshot[relative] = f"directory:{mode:o}"
         for name in sorted(files):
-            if name in excluded:
+            if current_path == root and name in excluded:
                 continue
             path = current_path / name
             relative = path.relative_to(root).as_posix()
@@ -558,7 +558,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     run_parser = subparsers.add_parser("run")
     common_args(run_parser)
-    run_parser.add_argument("--codex-bin", type=Path, default=default_codex_bin())
+    run_parser.add_argument("--codex-bin", type=str, default=default_codex_bin())
     run_parser.add_argument(
         "--codex-auth",
         type=Path,
@@ -570,7 +570,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run_parser.add_argument("--agent-timeout", type=int, default=900)
 
     subparsers.add_parser("list")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # Resolve against the caller's cwd before the adapter switches to workspace.
+    for name in ("out", "skill_root", "case_root", "codex_bin", "codex_auth"):
+        value = getattr(args, name, None)
+        if value is not None:
+            if name == "codex_bin":
+                binary = os.path.expanduser(str(value))
+                if os.sep not in binary:
+                    binary = shutil.which(binary) or binary
+                setattr(args, name, Path(binary).absolute())
+            else:
+                setattr(args, name, value.expanduser().absolute())
+    return args
 
 
 def main(argv: Sequence[str]) -> int:

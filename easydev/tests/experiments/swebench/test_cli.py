@@ -701,6 +701,72 @@ class SwebenchCliTest(unittest.TestCase):
         self.assertTrue((run_path / "grade" / "junit.xml").is_file())
         self.assertIn("src/mod.py", (run_path / "agent.patch").read_text(encoding="utf-8"))
 
+    def test_failed_test_cannot_be_overwritten_by_stdout(self) -> None:
+        assets = self.make_assets("spoof-output")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("spoof-output-stub")
+        env = self.environment(stub, self.complete_plan(),
+                               {TASK["f2p"]: "FAILED", TASK["p2p"]: "PASSED"})
+        env["EASYDEV_PYTEST_TRAILER"] = TASK["f2p"] + " PASSED"
+        result = self.cli(["run", "--experiment", experiment, "--tasks", TASK["id"],
+                           "--arms", "baseline", "--repeats", "1", "--concurrency", "1",
+                           "--codex-bin", stub.launcher, "--test-timeout", "10"], env=env)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.result(experiment)["resolved"])
+        self.assertEqual(self.result(experiment)["test_statuses"][TASK["f2p"]], "FAILED")
+
+    def test_explicit_tool_path_wins_over_path_shadow(self) -> None:
+        assets = self.make_assets("explicit-tool")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("explicit-tool-stub")
+        shadow = stub.base / "shadow"
+        shadow.mkdir()
+        (shadow / "codex-stub").write_text("#!/bin/sh\nexit 79\n")
+        (shadow / "codex-stub").chmod(0o755)
+        env = self.environment(stub, self.complete_plan(),
+                               {TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"})
+        env["PATH"] = str(shadow) + os.pathsep + os.environ["PATH"]
+        result = self.cli(["run", "--experiment", experiment, "--tasks", TASK["id"],
+                           "--arms", "baseline", "--repeats", "1", "--concurrency", "1",
+                           "--codex-bin", "./codex-stub", "--test-timeout", "10"],
+                          env=env, cwd=stub.base)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(self.result(experiment)["resolved"])
+
+    def test_parameter_colons_preserve_junit_identity(self) -> None:
+        task = dict(TASK, f2p=TASK["f2p"] + "[a::b]")
+        assets = self.make_assets("parameter-colons", tasks=(task,))
+        experiment = self.install_experiment(assets, "experiment", tasks=(task,))
+        stub = self.make_stub("parameter-colons-stub")
+        result = self.run_command(stub, experiment, plan=self.complete_plan(), tasks=(task,),
+                                  statuses={task["f2p"]: "PASSED", task["p2p"]: "PASSED"})
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(self.result(experiment)["resolved"])
+
+    def test_inconsistent_junit_exit_status_fails_closed(self) -> None:
+        assets = self.make_assets("inconsistent-junit")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("inconsistent-junit-stub")
+        env = self.environment(stub, self.complete_plan(),
+                               {TASK["f2p"]: "PASSED", TASK["p2p"]: "FAILED"})
+        env["EASYDEV_PYTEST_RETURNCODE"] = "0"
+        result = self.cli(["run", "--experiment", experiment, "--tasks", TASK["id"],
+                           "--arms", "baseline", "--repeats", "1", "--concurrency", "1",
+                           "--codex-bin", stub.launcher, "--test-timeout", "10"], env=env)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.result(experiment)["test_statuses"][TASK["f2p"]], "MISSING")
+
+    def test_setup_resolves_relative_asset_links(self) -> None:
+        assets = self.make_assets("relative-assets")
+        result = self.cli(["setup", "--dataset", assets.dataset.relative_to(self.root),
+                           "--templates", assets.templates.relative_to(self.root),
+                           "--venvs", assets.venvs.relative_to(self.root),
+                           "--experiment", "relative-exp", "--tasks", TASK["id"]],
+                          cwd=self.root, env=os.environ.copy())
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((self.root / "relative-exp" / "templates" / (TASK["id"] + ".tar")).is_file())
+        self.assertTrue((self.root / "relative-exp" / "venvs" / TASK["id"] / "bin" / "python").is_file())
+
     def test_run_writes_invalid_result_for_broken_invocations(self) -> None:
         cases = (
             (

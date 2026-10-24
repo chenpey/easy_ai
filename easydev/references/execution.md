@@ -1,6 +1,6 @@
 # 执行与验证
 
-本模块用于 full、quick 超出内联核心（未触及高风险边界或公共契约）或需要完整验证/完成边界的工作；干净局部 quick 使用 [SKILL.md 的 quick 执行核心](../SKILL.md#quick-执行核心)。任务基线、敏感快照与恢复见 [baseline-safety.md](baseline-safety.md)。
+本模块用于 full、quick 超出内联核心（未触及高风险边界或公共契约）、性能优化/效果声明或需要完整验证/完成边界的工作；仅为性能任务加载时聚焦「测试选择」的性能要求，不改变风险分流。其他干净局部 quick 使用 [SKILL.md 的 quick 执行核心](../SKILL.md#quick-执行核心)。任务基线、敏感快照与恢复见 [baseline-safety.md](baseline-safety.md)。
 
 ## 最小充分实现
 

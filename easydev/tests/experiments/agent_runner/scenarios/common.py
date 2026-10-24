@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, Iterable, List
+
+_EXPERIMENTS = str(Path(__file__).resolve().parents[2])
+if _EXPERIMENTS not in sys.path:
+    sys.path.insert(0, _EXPERIMENTS)
+from process_control import run_captured  # noqa: E402
 
 
 def write_files(root: Path, files: Dict[str, str]) -> None:
@@ -102,19 +107,9 @@ def run_python(
             "PYTHONPATH": str(workspace),
         }
     )
-    result = subprocess.run(
+    return run_captured(
         [os.environ.get("PYTHON", "python3"), "-S", "-B", "-c", code],
         cwd=str(workspace),
         env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        errors="replace",
         timeout=timeout,
     )
-    return {
-        "returncode": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-    }

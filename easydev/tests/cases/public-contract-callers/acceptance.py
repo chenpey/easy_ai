@@ -120,30 +120,35 @@ def iter_checks():
     yield row(
         "other user denied",
         lambda: get_order("o1", "u2"),
+        known_inputs=("o1", "u2"),
         raises=PermissionError,
         no_order=True,
     )
     yield row(
         "first user denied on second order",
         lambda: get_order("o2", "u1"),
+        known_inputs=("o2", "u1"),
         raises=PermissionError,
         no_order=True,
     )
     yield row("missing order returns None", lambda: get_order("nope", "u1"), expected=None)
-    yield row("missing identity does not read order", lambda: get_order("o1"), no_order=True)
+    yield row("missing identity does not read order", lambda: get_order("o1"), known_inputs=("o1",), no_order=True)
     yield row(
         "none identity does not read order",
         lambda: get_order("o1", None),
+        known_inputs=("o1",),
         no_order=True,
     )
     yield row(
         "empty identity does not read order",
         lambda: get_order("o1", ""),
+        known_inputs=("o1",),
         no_order=True,
     )
     yield row(
         "admin user_id is not owner in get_order",
         lambda: get_order("o1", "admin"),
+        known_inputs=("o1", "admin"),
         raises=PermissionError,
         no_order=True,
     )
@@ -176,6 +181,7 @@ def iter_checks():
     yield row(
         "missing request identity does not read order",
         lambda: handle_show_order({}, "o1"),
+        known_inputs=("o1",),
         no_order=True,
     )
     yield row(
@@ -186,11 +192,13 @@ def iter_checks():
     yield row(
         "none request identity does not read order",
         lambda: handle_show_order({"user_id": None}, "o1"),
+        known_inputs=("o1",),
         no_order=True,
     )
     yield row(
         "empty request identity does not read order",
         lambda: handle_show_order({"user_id": ""}, "o1"),
+        known_inputs=("o1",),
         no_order=True,
     )
 
@@ -207,18 +215,21 @@ def iter_checks():
     yield row(
         "missing role export denied",
         lambda: export_order("o1", {}),
+        known_inputs=("o1",),
         raises=PermissionError,
         no_order=True,
     )
     yield row(
         "none role export denied",
         lambda: export_order("o1", {"role": None}),
+        known_inputs=("o1",),
         raises=PermissionError,
         no_order=True,
     )
     yield row(
         "non-admin export denied",
         lambda: export_order("o1", {"role": "viewer"}),
+        known_inputs=("o1", "viewer"),
         raises=PermissionError,
         no_order=True,
     )
@@ -231,12 +242,14 @@ def iter_checks():
     yield row(
         "dynamic other user denied",
         lambda: get_order(DYNAMIC_ORDER["id"], OTHER_USER),
+        known_inputs=(DYNAMIC_ORDER["id"], OTHER_USER),
         raises=PermissionError,
         no_order=True,
     )
     yield row(
         "fixed user denied on dynamic order",
         lambda: get_order(DYNAMIC_ORDER["id"], "u1"),
+        known_inputs=(DYNAMIC_ORDER["id"], "u1"),
         raises=PermissionError,
         no_order=True,
     )
@@ -264,12 +277,14 @@ def iter_checks():
     yield row(
         "previous owner denied after ownership change",
         lambda: get_order(DYNAMIC_ORDER["id"], previous_owner),
+        known_inputs=(DYNAMIC_ORDER["id"], previous_owner),
         raises=PermissionError,
         no_order=True,
     )
     yield row(
         "new owner reads after ownership change",
         lambda: get_order(DYNAMIC_ORDER["id"], OTHER_USER),
+        known_inputs=(DYNAMIC_ORDER["id"], OTHER_USER),
         expected=DYNAMIC_ORDER,
     )
     yield row(
@@ -293,6 +308,7 @@ def iter_checks():
             lambda order_id=fixed_order["id"], user_id=old_owner: get_order(
                 order_id, user_id
             ),
+            known_inputs=(fixed_order["id"], old_owner),
             raises=PermissionError,
             no_order=True,
         )
@@ -314,13 +330,25 @@ def iter_checks():
 
 def run_check(row):
     label = row["label"]
+    def error_leaks(error):
+        def leaks(value):
+            if isinstance(value, str):
+                for known in row.get("known_inputs", ()):
+                    value = re.sub(rf"(?<![0-9A-Za-z]){re.escape(str(known))}(?![0-9A-Za-z])", "[input]", value)
+                return contains_order(value)
+            if isinstance(value, dict):
+                return contains_order(value) or any(leaks(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(leaks(item) for item in value)
+            return contains_order(value)
+        return leaks(str(error)) or leaks(error.args)
     try:
         actual = row["call"]()
     except Exception as error:  # noqa: BLE001 - acceptance reports failures
         expected = row.get("raises")
         if expected is None:
             if row.get("no_order"):
-                if contains_order(str(error)) or contains_order(error.args):
+                if error_leaks(error):
                     return f"{label}: error leaked order data {error!r}"
                 return None
             return f"{label}: unexpected {type(error).__name__}: {error}"
@@ -330,7 +358,7 @@ def run_check(row):
                 f"{type(error).__name__}: {error}"
             )
         if row.get("no_order") and (
-            contains_order(str(error)) or contains_order(error.args)
+            error_leaks(error)
         ):
             return f"{label}: error leaked order data {error!r}"
         return None

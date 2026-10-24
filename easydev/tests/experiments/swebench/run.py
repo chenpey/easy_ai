@@ -19,6 +19,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
@@ -539,8 +540,8 @@ def run_agent(
             returncode, tracked = wait_for_process(process, timeout)
             if returncode is None:
                 timed_out = True
-                terminate_process(process, tracked=tracked)
-                returncode = process.wait()
+            terminate_process(process, tracked=tracked)
+            returncode = process.wait(timeout=10)
     except Exception as error:  # noqa: BLE001 - recorded as experiment data
         returncode = -1
         stderr_path.write_text(
@@ -572,7 +573,8 @@ def is_test_path(path: str) -> bool:
     if any(part in {"test", "tests", "testing"} for part in parts):
         return True
     name = parts[-1] if parts else path
-    return name.startswith("test_") or name.endswith("_test.py")
+    return (name.startswith("test_") or name.endswith("_test.py")
+            or name in {"conftest.py", "pytest.ini", ".pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"})
 
 
 def capture_patch(
@@ -611,6 +613,40 @@ def parse_test_output(output: str) -> Dict[str, str]:
     statuses: Dict[str, str] = {}
     for match in TEST_SUMMARY_RE.finditer(output):
         statuses[match.group("nodeid")] = match.group("status")
+    return statuses
+
+
+def verified_test_statuses(junit: Path, output: str, expected: Sequence[str], returncode: int) -> Dict[str, str]:
+    """Use JUnit outcomes; stdout supplies names only, never a passing outcome."""
+    candidates = set(expected) | set(parse_test_output(output))
+    identities = {}
+    for nodeid in candidates:
+        head, bracket, parameters = nodeid.partition("[")
+        parts = head.split("::")
+        if len(parts) < 2:
+            continue
+        module = parts[0].removesuffix(".py").replace("/", ".")
+        name = parts[-1] + (bracket + parameters if bracket else "")
+        identities[(".".join([module, *parts[1:-1]]), name)] = nodeid
+        identities[("::".join(parts[:-1]), name)] = nodeid
+    statuses: Dict[str, str] = {}
+    try:
+        tree = ET.parse(junit)
+    except (OSError, ET.ParseError):
+        return {}
+    saw_failure = False
+    rank = {"PASSED": 0, "SKIPPED": 1, "FAILED": 2, "ERROR": 3}
+    for case in tree.iter("testcase"):
+        status = ("ERROR" if case.find("error") is not None else
+                  "FAILED" if case.find("failure") is not None else
+                  "SKIPPED" if case.find("skipped") is not None else "PASSED")
+        saw_failure |= status in {"FAILED", "ERROR"}
+        nodeid = identities.get((case.get("classname", ""), case.get("name", "")))
+        if nodeid and rank[status] >= rank.get(statuses.get(nodeid, "PASSED"), 0):
+            statuses[nodeid] = status
+    # pytest uses 1 for test failures, 2+ for infrastructure/collection errors.
+    if returncode not in (0, 1) or (returncode == 1) != saw_failure:
+        return {}
     return statuses
 
 
@@ -713,6 +749,7 @@ def grade_patch(
 
     selected = test_scope(task)
     junit = out_dir / "junit.xml"
+    junit.unlink(missing_ok=True)
     env = os.environ.copy()
     env.update(
         {
@@ -729,7 +766,7 @@ def grade_patch(
     )
     (out_dir / "pytest.stdout.log").write_text(result.stdout, encoding="utf-8")
     (out_dir / "pytest.stderr.log").write_text(result.stderr, encoding="utf-8")
-    statuses = parse_test_output(result.stdout)
+    statuses = verified_test_statuses(junit, result.stdout, task["FAIL_TO_PASS"] + task["PASS_TO_PASS"], result.returncode)
     f2p_status = {nodeid: statuses.get(nodeid, "MISSING") for nodeid in task["FAIL_TO_PASS"]}
     p2p_status = {nodeid: statuses.get(nodeid, "MISSING") for nodeid in eligible_p2p}
     regressions = [
@@ -763,6 +800,7 @@ def baseline_status(
     apply_patch(workdir, task["test_patch"], "test")
     nodeids = test_scope(task)
     junit = out_dir / "junit.xml"
+    junit.unlink(missing_ok=True)
     result = run_command(
         pytest_command(venv, nodeids, junit),
         workdir,
@@ -776,7 +814,7 @@ def baseline_status(
     )
     (out_dir / "pytest.stdout.log").write_text(result.stdout, encoding="utf-8")
     (out_dir / "pytest.stderr.log").write_text(result.stderr, encoding="utf-8")
-    statuses = parse_test_output(result.stdout)
+    statuses = verified_test_statuses(junit, result.stdout, task["FAIL_TO_PASS"] + task["PASS_TO_PASS"], result.returncode)
     eligible = baseline_eligible_p2p(task, statuses)
     excluded = [
         {"nodeid": nodeid, "status": statuses.get(nodeid, "MISSING")}
@@ -1599,7 +1637,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run_parser.add_argument("--protect-paths", type=Path, nargs="*", default=[])
     run_parser.add_argument(
         "--codex-bin",
-        type=Path,
+        type=str,
         default=Path(
             "/Applications/ChatGPT.app/Contents/Resources/codex-cli/"
             "CodexCLI.app/Contents/MacOS/codex"
@@ -1614,7 +1652,18 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--experiment", type=Path, required=True)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    for name, value in vars(args).items():
+        if name == "codex_bin":
+            binary = os.path.expanduser(str(value))
+            if os.sep not in binary:
+                binary = shutil.which(binary) or binary
+            setattr(args, name, Path(binary).absolute())
+        elif isinstance(value, Path):
+            setattr(args, name, value.expanduser().absolute())
+        elif name == "protect_paths":
+            setattr(args, name, [p.expanduser().absolute() for p in value])
+    return args
 
 
 def main(argv: Sequence[str]) -> int:

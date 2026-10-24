@@ -2,6 +2,8 @@
 
 本目录保存 EasyDev 的小样本对照实验运行器。它使用 SWE-bench Lite 的任务元数据、base commit、测试补丁、FAIL_TO_PASS 与 PASS_TO_PASS，但不在本仓库内分发上游源码或测试补丁。
 
+所有路径参数均按调用目录归一化，支持 `~`；裸 `--codex-bin` 按 PATH 查找。
+
 ## 判定
 
 ```text
@@ -9,7 +11,7 @@ resolved = 全部 FAIL_TO_PASS 通过
            且环境基线可通过的 PASS_TO_PASS 无回归
 ```
 
-`PASS_TO_PASS` 先在本机环境跑基线；环境本身无法通过的测试不进入回归分母。这不是官方 SWE-bench Docker harness 的完整替代，报告必须披露排除数量与原因。
+`PASS_TO_PASS` 先在本机环境跑基线；环境本身无法通过的测试不进入回归分母。这评分从 JUnit XML 读取结果（重复条目取失败优先），拒绝缺失/损坏结果和异常退出；stdout 只辅助关联测试名称。采集排除 `conftest.py`、pytest 及构建配置，避免修改验收驱动。此运行器不是官方 SWE-bench Docker harness 的完整替代，报告必须披露排除数量与原因。
 
 ## 前提
 
@@ -78,7 +80,7 @@ python3 tests/experiments/swebench/analyze_events.py \
 python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 ```
 
-本地验证应与 CI 一致使用 Python 3.12 复跑（本机可用 `/tmp/agents/uv-python/cpython-3.12-macos-aarch64-none/bin/python3.12`）；swebench 的 38 例在 3.9 与 3.12 下都要全绿。
+本地验证应与 CI 一致使用 Python 3.12 复跑（本机可用 `/tmp/agents/uv-python/cpython-3.12-macos-aarch64-none/bin/python3.12`）；swebench 的全部用例在 3.9 与 3.12 下都要全绿。
 
 - `test_cli.py` 驱动 `setup`/`run`/`summarize`/`calibrate`，用 `tests/experiments/stubs/codex_stub.py` 与 `pytest_stub.py` 替代外部进程，覆盖结果读取器拒绝（身份、事件计数、协议、F2P/P2P 矛盾）、manifest 选择与报告计数、模板逃逸与合法链接/延迟目录属性、保护模式恢复细节、采集不执行 Agent hook/filter、无效调用、P2P 回归与报告。
 - `test_analyze_cli.py` 驱动 `analyze_events.py`，覆盖路由否定/候选档位、reviewer 完成条件、访问与元数据归因、current-protocol 契约、behavior 协议、嵌套 usage、零发现声明、畸形结构、usage 来源矩阵与 `--output`。
@@ -109,3 +111,5 @@ python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 - 本目录只做补丁级小样本实验，不是官方成绩；报告必须区分本地预实验与官方 Verified。
 - 请求关闭网络不等于已经具备强制隔离；正式评测仍应在断网、隔离基准材料的容器中运行。
 - patch 采集使用运行前保存的可信 `.git/config`，并禁用 hooks、fsmonitor、系统/全局 Git 配置与 attributes。
+
+评分证据假定测试进程可信；能够执行任意代码的被测程序仍可能篡改 XML 或提前伪造完成标记。正式评测须使用独立受保护的评测进程/容器，本地机制不提供恶意代码安全沙箱。

@@ -18,7 +18,7 @@
 
 ## Google Antigravity（AGY）
 
-- 安装位置按 [官方 Skills 文档](https://antigravity.google/docs/skills)：项目级为 `.agents/skills/easydev/`；App/IDE 用户级为 `~/.gemini/config/skills/easydev/`，CLI 用户级为 `~/.gemini/antigravity-cli/skills/easydev/`。保持 `SKILL.md` 与 `references/` 等运行时文件的相对位置；安装步骤见 [README](../README.md#安装)。
+- 安装位置按 [官方 Skills 文档](https://antigravity.google/docs/skills)：项目级为 `.agents/skills/easydev/`；App/IDE 用户级为 `~/.gemini/config/skills/easydev/`，CLI 用户级为 `~/.gemini/antigravity-cli/skills/easydev/`。保持 `SKILL.md` 与 `references/` 等运行时文件的相对位置；安装步骤见 [仓库安装指南](https://github.com/chenpey/easy_ai/tree/main/easydev#安装)。
 - 先确认宿主已发现技能，App/CLI 可通过 `/easydev` 显式调用。目录存在或文档兼容不代表当前宿主已加载、激活或通过行为回归。
 - 原生委派按 [官方 Subagents 文档](https://antigravity.google/docs/subagents)：使用当前工具实际暴露的 `invoke_subagent`；自定义代理的 `subagent` 必须允许调用。将开发/审查角色映射为独立实例，审查仅给必要材料与只读权限，不因工具同名假定各版本参数相同。
 - 配置中的模型 ID、推理深度及工作区隔离选项须逐项核对宿主工具能力；不能把模型层级当成任意供应商 ID，或静默忽略不支持的设置。无法满足时沿用本文件的受阻规则，不虚称独立审查通过。

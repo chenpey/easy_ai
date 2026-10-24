@@ -31,14 +31,11 @@ CASES_ROOT = TESTS_ROOT / "cases"
 SCENARIO_IDS = ["b01", "b02", "b16", "public-contract-callers"]
 
 B02_SOLUTION = (
-    "NOTES = {\n"
-    '    "n1": {"owner_id": "u1", "text": "first"},\n'
-    '    "n2": {"owner_id": "u2", "text": "second"},\n'
-    "}\n\n\n"
+    "import json\nfrom pathlib import Path\n\n\n"
     "def get_note(note_id, user_id):\n"
     "    if user_id in (None, ''):\n"
     "        raise PermissionError('missing user')\n"
-    "    note = NOTES.get(note_id)\n"
+    "    note = json.loads(Path(__file__).with_name('notes.json').read_text()).get(note_id)\n"
     "    if note is None:\n"
     "        return None\n"
     "    if note['owner_id'] != user_id:\n"
@@ -241,6 +238,53 @@ class RunnerCliTest(unittest.TestCase):
         self.assertEqual(prepared["scenario"], "b01")
         self.assertIn("prompt", prepared)
 
+    def test_run_accepts_relative_paths_from_invocation_directory(self) -> None:
+        fixture = self.stub_environment("relative-paths", self.b01_plan())
+        shadow = fixture.base / "shadow"
+        shadow.mkdir()
+        (shadow / "codex-stub").write_text("#!/bin/sh\nexit 79\n")
+        (shadow / "codex-stub").chmod(0o755)
+        fixture.env["PATH"] = str(shadow) + os.pathsep + os.environ["PATH"]
+        completed = subprocess.run(
+            [sys.executable, "-B", str(RUNNER), "run", "--scenario", "b01",
+             "--out", "out", "--codex-bin", "./codex-stub",
+             "--codex-auth", "auth.json", "--skill-root", "skill",
+             "--agent-timeout", "10"],
+            cwd=fixture.base, env=fixture.env, capture_output=True,
+            text=True, timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertTrue(self.result(fixture, "b01")["resolved"])
+        auth_link = self.run_dir(fixture, "b01") / "codex-home" / "auth.json"
+        self.assertEqual(auth_link.resolve(), fixture.auth.resolve())
+        self.assertEqual(auth_link.read_text(), "{}\n")
+
+    def test_bare_executable_uses_path(self) -> None:
+        fixture = self.stub_environment("bare-command", self.b01_plan())
+        env = dict(fixture.env, PATH=str(fixture.base) + os.pathsep + os.environ["PATH"])
+        result = subprocess.run(
+            [sys.executable, "-B", str(RUNNER), "run", "--scenario", "b01",
+             "--out", str(fixture.out), "--codex-bin", "codex-stub",
+             "--codex-auth", str(fixture.auth), "--skill-root", str(fixture.skill)],
+            cwd=self.root, env=env, text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_normal_exit_cleans_background_child(self) -> None:
+        pidfile = self.root / "normal-child.pid"
+        fixture = self.stub_environment("normal-child", self.b01_plan(
+            spawn_child=True, child_pid_file=str(pidfile)))
+        result = self.run_scenario(fixture, "b01")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(alive(int(pidfile.read_text())))
+
+    def test_nested_git_is_observed(self) -> None:
+        plan = self.b01_plan()
+        plan["mutations"].append({"path": "src/.git", "content": "unrequested"})
+        fixture = self.stub_environment("nested-git", plan)
+        result = self.run_scenario(fixture, "b01")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
     def test_prepare_refuses_non_empty_target_unless_overwritten(self) -> None:
         fixture = self.stub_environment("prepare-overwrite", {})
         args = (
@@ -393,6 +437,24 @@ class RunnerCliTest(unittest.TestCase):
     def test_run_b02_requires_full_route_and_ownership_check(self) -> None:
         cases = (
             ("complete", B02_SOLUTION, True, []),
+            ("early exit", "import os; os._exit(0)\n", False, ["ownership behavior passes"]),
+            ("hardcoded with empty open", B02_SOLUTION.replace(
+                "json.loads(Path(__file__).with_name('notes.json').read_text())",
+                "(Path(__file__).with_name('notes.json').open().close() or {'n1': {'owner_id': 'u1', 'text': 'first'}, 'n2': {'owner_id': 'u2', 'text': 'second'}})"
+            ), False, ["ownership behavior passes"]),
+            (
+                "read before identity guard",
+                B02_SOLUTION.replace(
+                    "    if user_id in (None, ''):\n"
+                    "        raise PermissionError('missing user')\n"
+                    "    note = json.loads(Path(__file__).with_name('notes.json').read_text()).get(note_id)\n",
+                    "    note = json.loads(Path(__file__).with_name('notes.json').read_text()).get(note_id)\n"
+                    "    if user_id in (None, ''):\n"
+                    "        raise PermissionError('missing user')\n",
+                ),
+                False,
+                ["ownership behavior passes"],
+            ),
             (
                 "missing identity guard",
                 B02_MISSING_IDENTITY,
@@ -792,6 +854,16 @@ class RunnerCliTest(unittest.TestCase):
     # -- public-contract-callers run contracts --------------------------
     def test_run_public_contract_callers_uses_independent_acceptance(self) -> None:
         cases = (
+            ("hidden exception args", [
+                {"path": "app/orders.py", "content":
+                 "class AccessDenied(PermissionError):\n    def __str__(self): return 'access denied'\n\n" +
+                 PUBLIC_ORDERS.replace('raise PermissionError("order is not owned by the current user")',
+                                       'raise AccessDenied(order)')},
+                {"path": "app/api.py", "content": PUBLIC_API},
+                {"path": "app/admin.py", "content": PUBLIC_ADMIN}],
+             1, ["independent acceptance passes"]),
+            ("early exit", [{"path": "app/orders.py", "content": "import os; os._exit(0)\n"}],
+             1, ["independent acceptance passes"]),
             (
                 "complete",
                 [

@@ -175,8 +175,8 @@ def run_codex(
             returncode, tracked = wait_for_process(process, timeout)
             if returncode is None:
                 timed_out = True
-                terminate_process(process, tracked=tracked)
-                returncode = process.wait()
+            terminate_process(process, tracked=tracked)
+            returncode = process.wait(timeout=10)
     except OSError as error:
         returncode = -1
         stderr_path.write_text(f"{error}\n", encoding="utf-8")

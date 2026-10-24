@@ -17,7 +17,7 @@ python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 ## 覆盖什么
 
 - **固定补丁复验** (`tests/cases/public-contract-callers/`)：初始仓库的红测、参考补丁后的 403 与契约检查、独立验收，以及 11 类伪修复被拒绝；不依赖被测仓库自带的 `check_orders.py`。
-- **行为 runner CLI** (`tests/experiments/agent_runner/test_cli.py`)：`list` / `prepare` / `run` 的退出码与产物；B01 路由/状态标记/访问/ignored 文件/Git 配置负例、运行时 Skill 篡改、普通/回退暂存与 assume-unchanged、缺 `turn.completed`、畸形事件、非零退出码、超时后进程组清理、捕获不执行 hook/filter；B02 高风险 full、quick/候选档位、未完成 reviewer、所有权校验、`sitecustomize` 不执行；B16 合格发现块与围栏/位置/排序/数量/读取负例；public-contract-callers 的独立验收、保留文件与 benchmark 元数据负例。
+- **行为 runner CLI** (`tests/experiments/agent_runner/test_cli.py`)：`list` / `prepare` / `run` 的退出码与产物；B01 路由/状态标记/访问/ignored 文件/Git 配置负例、运行时 Skill 篡改、普通/回退暂存与 assume-unchanged、缺 `turn.completed`、畸形事件、非零退出码、超时后进程组清理、捕获不执行 hook/filter；相对路径与认证链接、B02 高风险 full、quick/候选档位、未完成 reviewer、所有权校验及拒绝先读后鉴权、`sitecustomize` 不执行；B16 合格发现块与围栏/位置/排序/数量/读取负例；public-contract-callers 的独立验收、保留文件与 benchmark 元数据负例。
 - **SWE-bench runner CLI** (`tests/experiments/swebench/test_cli.py`)：`setup` / `run` / `summarize` / `calibrate`；结果读取器对身份、事件计数、协议版本与 F2P/P2P 矛盾的拒绝；manifest 选择与报告计数；模板解包逃逸与合法链接/延迟目录属性；保护模式的收紧权限、损坏/软链记录、父子顺序、失败结束与换 cwd 恢复；补丁采集不执行 Agent hook/filter；P2P 回归与每 arm 报告。
 - **事件归因 CLI** (`tests/experiments/swebench/test_analyze_cli.py`)：声明路径、reviewer 完成与报告、P0–P3、文件/模块访问、usage/缓存率/耗时、零发现声明、畸形行容错、`--output` 与 stdout 一致。
 
@@ -76,3 +76,7 @@ tests/
 ```
 
 `tests/experiments/review-ablation/README.md` 是四臂消融协议文档，不含测试断言或夹具，因此不随本次测试材料重建删除。
+
+## 0.12.1 回归补充
+
+逐项裁决见 [审计处置](audit-0.12.1.md)。新增裸命令 PATH、正常退出后代清理、嵌套 `.git`、B02/公共契约提前退出、B02 空打开硬编码、运行期数据变化、SWE-bench 伪造 stdout 及相对资产路径、验收超时与继承输出句柄检查。固定补丁验收另接受两种合法的调用者已知 ID 异常文案，11 类伪修复仍须被拒绝。

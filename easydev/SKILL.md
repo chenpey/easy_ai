@@ -4,7 +4,7 @@ description: >-
   统一处理编码需求、功能实现、Bug 排查与修复、重构、技术设计、实施计划、可行性探针、代码审查及全仓审计。按任务风险选择直接执行或开发—独立审查—修复闭环，内置审查规程。适用于 coding 任务或显式调用 $easydev；纯代码解释、模型咨询和非编码任务不启动开发流程。
   Full-lifecycle coding agent skill: quick, full, design, plan, debug, review, spike, audit. Use for coding work; not explanation-only, model advice or non-coding requests.
 metadata:
-  version: "0.12.0"
+  version: "0.12.1"
 ---
 
 # easydev
@@ -47,7 +47,7 @@ metadata:
 
 ## quick 执行核心
 
-干净已跟踪工作区中的局部低风险任务按此闭环，不加载 `execution.md`、`orchestration.md` 或其他参考模块；出现复杂任务或超出内联核心的信号时，按下方「按需加载」表读取对应模块并在报告中注明。
+干净已跟踪工作区中的局部低风险任务按此闭环，通常不加载 `execution.md`、`orchestration.md` 或其他参考模块；性能优化或涉及性能效果声明时，读取 [性能验证要求](references/execution.md#测试选择)，按可比基线、实际完成量与测量波动判定收益，流程仍按实际风险分流，不因性能任务自动升级；其他出现复杂任务或超出内联核心的信号时，按下方「按需加载」表读取对应模块并在报告中注明。
 
 1. 找现成模式与全部直接调用方；不扩大交付，不为假设需求增加灵活性。
 2. 做最小完整改动；行为变化时同步受影响调用方、相关注释和必要文档，不留下半成品。
@@ -74,7 +74,7 @@ metadata:
 | --- | --- | --- |
 | 设计、拆分、分阶段或复杂实施 | [planning.md](references/planning.md) | 选项式澄清、权衡、拆分、阶段边界验证与计划契约 |
 | 设计方案存在多个实质不同的可行选项 | [candidates.md](references/candidates.md) | 候选产出隔离与冻结、交叉评估分配、择优矩阵与记录 |
-| full、quick 超出内联核心（未触及高风险边界或公共契约） | [execution.md](references/execution.md) | 最小实现、审查反馈、测试证据与完成边界 |
+| full、quick 超出内联核心（未触及高风险边界或公共契约），或任务涉及性能优化/性能效果声明 | [execution.md](references/execution.md) | 最小实现、审查反馈、测试证据与完成边界 |
 | 重构需明确目标结构、迁移步骤或补足行为保持证据；简单机械改动仍用 quick 核心 | [refactoring.md](references/refactoring.md) | 行为基线、结构收益、兼容迁移、差分验证与重构交付 |
 | 现有测试不足以证明目标行为，或项目反复需要人工验收且缺可复用操作方法 | [verification.md](references/verification.md) | 启动与实例检查、用户路径操作、结果与副作用取证、清理及方法维护 |
 | 工作区不干净、敏感/未跟踪文件、无 Git 或需要恢复 | [baseline-safety.md](references/baseline-safety.md) | 基线保护、敏感快照权限、任务目录与恢复 |

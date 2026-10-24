@@ -230,22 +230,29 @@ def terminate_process(
 
     try:
         snapshot = _process_snapshot()
-        for pid, identity in _descendants({process.pid}, snapshot).items():
-            known.setdefault(pid, identity)
     except (OSError, RuntimeError):
         snapshot = {}
-
-    if root_identity is None:
-        root_identity = snapshot.get(process.pid, (0, ()))[1]
-    root_alive = bool(root_identity) and _identity_alive(
-        process.pid,
-        root_identity,
-        snapshot,
-    )
+    actual = snapshot.get(process.pid)
+    if root_identity is None and process.poll() is None and actual is not None:
+        root_identity = actual[1]
+    root_alive = bool(root_identity) and _identity_alive(process.pid, root_identity, snapshot)
     if not snapshot:
         root_alive = process.poll() is None
-    if root_alive:
+    # A missing leader permits cleaning its remaining group. An existing PID
+    # must match the recorded identity; never adopt a replacement process.
+    owns_group = root_alive or (bool(snapshot) and actual is None and process.poll() is not None)
+    if owns_group:
+        for pid, (_, identity) in snapshot.items():
+            try:
+                if pid != process.pid and os.getpgid(pid) == process.pid:
+                    known.setdefault(pid, identity)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if root_alive:
+            for pid, identity in _descendants({process.pid}, snapshot).items():
+                known.setdefault(pid, identity)
         _signal_group(process.pid, signal.SIGTERM)
+    if root_alive:
         _signal_pid(process.pid, signal.SIGTERM)
     _signal_known(known, signal.SIGTERM)
 
@@ -255,7 +262,9 @@ def terminate_process(
         try:
             snapshot = _process_snapshot()
             for pid, identity in _descendants(
-                set(known) | {process.pid},
+                {pid for pid, identity in known.items()
+                 if _identity_alive(pid, identity, snapshot)}
+                | ({process.pid} if root_identity and _identity_alive(process.pid, root_identity, snapshot) else set()),
                 snapshot,
             ).items():
                 known.setdefault(pid, identity)
@@ -313,3 +322,22 @@ def terminate_process(
             return
         time.sleep(0.05)
     raise RuntimeError(f"descendant processes survived SIGKILL: {sorted(alive)}")
+
+
+def run_captured(command, *, cwd, env, timeout):
+    """Capture an untrusted check in files and always clean its owned process tree."""
+    import tempfile
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        with subprocess.Popen(command, cwd=str(cwd), env=env,
+                              stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                              start_new_session=os.name == "posix") as process:
+            code, tracked = wait_for_process(process, timeout)
+            timed_out = code is None
+            terminate_process(process, tracked=tracked)
+            code = process.wait(timeout=10)
+        stdout.seek(0)
+        stderr.seek(0)
+        return {"returncode": -1 if timed_out else code,
+                "timed_out": timed_out,
+                "stdout": stdout.read().decode("utf-8", errors="replace"),
+                "stderr": stderr.read().decode("utf-8", errors="replace")}

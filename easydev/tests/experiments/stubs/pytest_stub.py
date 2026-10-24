@@ -93,7 +93,10 @@ def write_junit(path: Path, results: List[tuple[str, str]]) -> None:
         },
     )
     for nodeid, status in results:
-        classname, _, name = nodeid.rpartition("::")
+        head, bracket, parameters = nodeid.partition("[")
+        parts = head.split("::")
+        classname = ".".join([parts[0].removesuffix(".py").replace("/", "."), *parts[1:-1]])
+        name = parts[-1] + (bracket + parameters if bracket else "")
         case = ElementTree.SubElement(
             suite,
             "testcase",
@@ -120,9 +123,10 @@ def main(argv: List[str]) -> int:
         f"in 0.01s =====",
         flush=True,
     )
+    print(os.environ.get("EASYDEV_PYTEST_TRAILER", ""), flush=True)
     if junit is not None:
         write_junit(junit, results)
-    return 1 if failed else 0
+    return int(os.environ.get("EASYDEV_PYTEST_RETURNCODE", 1 if failed else 0))
 
 
 if __name__ == "__main__":

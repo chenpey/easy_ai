@@ -444,6 +444,21 @@ def verify() -> None:
             print(accepted.stdout)
             raise SystemExit(1)
 
+        orders = workspace / "app/orders.py"
+        original = orders.read_text(encoding="utf-8")
+        for message in ("f'user {current_user_id!r} is not the owner'",
+                        "f'order {order_id} is not owned'"):
+            target = 'PermissionError("order is not owned by the current user")'
+            assert original.count(target) == 1, "reference error statement changed"
+            modified = original.replace(target, f"PermissionError({message})")
+            assert modified != original, "positive case did not change the source"
+            orders.write_text(modified, encoding="utf-8")
+            result = python("caller-known error text", ACCEPTANCE, workspace, str(workspace))
+            if "PASS:" not in result.stdout:
+                raise SystemExit("missing acceptance completion")
+        orders.write_text(original, encoding="utf-8")
+        print("== accepted: caller-known identifiers in error text")
+
         for pseudo_fix in PSEUDO_FIXES:
             expect_rejected(
                 root,
