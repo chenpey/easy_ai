@@ -2,6 +2,15 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.4.0 更新说明（2026-10-24）
+
+本次只改技能名与安装路径：`easythinking` → `easythink`。技能名与默认安装路径同时变化属破坏性变更，按中版本号发布 0.4.0；行为规则、断言清单与 `references/` 内容均未变。
+
+- **改名与路径**：技能目录 `easythinking/` → `easythink/`，脑图改为 `assets/easythink-mindmap.svg`；`SKILL.md` frontmatter `name: easythink`、`metadata.version` 0.4.0；`agents/openai.yaml` 默认提示词改为 `$easythink`；`README.md` 的安装命令、默认安装目标 `~/.agents/skills/easythink`、备份名与使用示例同步。
+- **门禁与冒烟**：`scripts/check.sh` 的技能循环、体量 `case` 分支、版本一致性分组与链接检查清单，以及 `scripts/smoke-install.sh` 的 README 路径、安装目标与 skills 根目录断言，全部切到新名。
+- **历史记录不改写**：`tests/runs/` 下的历史抽测证据，以及本文件与 `easydev/CHANGELOG.md` 的旧条目，按当时事实保留 `easythinking`，不回填。
+- **验证**：`bash scripts/check.sh`、`bash scripts/smoke-install.sh` 通过；改名不改变行为，未重跑行为抽测。**非全量；自动触发未验证；PowerShell 未运行**。
+
 ## 0.3.2 更新说明（2026-10-24）
 
 本次按 r1 初审修复二级入口、三级边界、角色动作与记录精度，在 stage 1 修复 BH-02A 入口并完成 10 条定向抽测；r2 复审后再修复第三方禁句、更正 L 首测判定并补强 L「首个动作」判据，最终在 **final 快照**上同批重跑 **10/10 通过**；仍非全量回归。

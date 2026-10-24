@@ -1,6 +1,6 @@
-# EasyThinking
+# EasyThink
 
-版本：`0.3.2`
+版本：`0.4.0`
 
 帮助你理清问题、检查证据、比较选择，并找到可验证的下一步。简单问题直接回答，复杂问题按需分析，不套固定模板，也不替你做决定。
 
@@ -11,10 +11,10 @@
 将下面的提示词复制给你使用的 Agent，让它完成安装或更新：
 
 ```text
-请安装或更新 EasyThinking：
-https://github.com/chenpey/easy_ai/tree/main/easythinking
+请安装或更新 EasyThink：
+https://github.com/chenpey/easy_ai/tree/main/easythink
 
-识别当前操作系统和 Agent，将仓库 main 分支的最新运行时技能文件（SKILL.md、references/ 及可选的 agents/，排除 tests/、CHANGELOG.md、README.md）保存到用户主目录下的 ~/.agents/skills/easythinking。
+识别当前操作系统和 Agent，将仓库 main 分支的最新运行时技能文件（SKILL.md、references/ 及可选的 agents/，排除 tests/、CHANGELOG.md、README.md）保存到用户主目录下的 ~/.agents/skills/easythink。
 保留 SKILL.md 及其引用文件的相对位置。
 
 如果当前 Agent 支持该通用目录，直接使用；否则在其实际配置的用户级技能目录中创建指向上述目录的软链接，让所有项目都能使用。确认 Agent 能读取该链接；若不支持软链接，可使用受支持的目录联接或复制，并说明采用的方式。
@@ -42,12 +42,12 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp/repo"
     mkdir -p "$stage"
     chmod 755 "$stage"
-    cp -R "$tmp/repo/easythinking/SKILL.md" "$tmp/repo/easythinking/references" "$tmp/repo/easythinking/agents" "$stage/"
+    cp -R "$tmp/repo/easythink/SKILL.md" "$tmp/repo/easythink/references" "$tmp/repo/easythink/agents" "$stage/"
     test -f "$stage/SKILL.md"
     test -d "$stage/references"
-    dest="$HOME/.agents/skills/easythinking"
+    dest="$HOME/.agents/skills/easythink"
     if [ -e "$dest" ]; then
-      bak="$HOME/.agents/backups/easythinking.$(date +%s)"
+      bak="$HOME/.agents/backups/easythink.$(date +%s)"
       mv "$dest" "$bak"
       echo "已备份旧版至: $bak"
     fi
@@ -64,21 +64,21 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
   $destParent = Join-Path $HOME ".agents\skills"
   $bakDir = Join-Path $HOME ".agents\backups"
   $stage = Join-Path $HOME (".agents\.stage_" + [guid]::NewGuid())
-  $dest = Join-Path $destParent "easythinking"
+  $dest = Join-Path $destParent "easythink"
   try {
     git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp\repo"
     if ($LASTEXITCODE -ne 0) { throw "git clone failed with exit code $LASTEXITCODE" }
     New-Item -ItemType Directory -Force -Path $destParent | Out-Null
     New-Item -ItemType Directory -Force -Path $bakDir | Out-Null
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
-    Copy-Item "$tmp\repo\easythinking\SKILL.md" $stage
-    Copy-Item -Recurse "$tmp\repo\easythinking\references", "$tmp\repo\easythinking\agents" $stage
+    Copy-Item "$tmp\repo\easythink\SKILL.md" $stage
+    Copy-Item -Recurse "$tmp\repo\easythink\references", "$tmp\repo\easythink\agents" $stage
     if (-not (Test-Path -Path (Join-Path $stage "SKILL.md") -PathType Leaf) -or
         -not (Test-Path -Path (Join-Path $stage "references") -PathType Container)) {
       throw "暂存目录不完整：缺少 SKILL.md 或 references/"
     }
     if (Test-Path $dest) {
-      $bak = Join-Path $bakDir ("easythinking." + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+      $bak = Join-Path $bakDir ("easythink." + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
       Move-Item $dest $bak
       Write-Host "已备份旧版至: $bak"
     }
@@ -99,8 +99,8 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
   ```bash
   (
     set -euo pipefail
-    src="$HOME/.agents/skills/easythinking"
-    dest="$HOME/.claude/skills/easythinking"
+    src="$HOME/.agents/skills/easythink"
+    dest="$HOME/.claude/skills/easythink"
     test -f "$src/SKILL.md"
     mkdir -p "$HOME/.claude/skills" "$HOME/.claude/backups"
     stage="$HOME/.claude/.stage.$$"
@@ -110,7 +110,7 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     chmod 755 "$stage"
     cp -R "$src/." "$stage/"
     if [ -e "$dest" ]; then
-      bak="$HOME/.claude/backups/easythinking.$(date +%s)"
+      bak="$HOME/.claude/backups/easythink.$(date +%s)"
       mv "$dest" "$bak"
       echo "已备份旧版至: $bak"
     fi
@@ -123,11 +123,11 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
   ```bash
   (
     set -euo pipefail
-    src="$HOME/.agents/skills/easythinking"
+    src="$HOME/.agents/skills/easythink"
     test -f "$src/SKILL.md"
     for parent in "$HOME/.gemini/config/skills" "$HOME/.gemini/antigravity-cli/skills"; do
       mkdir -p "$parent" "$HOME/.gemini/backups"
-      dest="$parent/easythinking"
+      dest="$parent/easythink"
       stage="$HOME/.gemini/.stage.$$"
       rm -rf "$stage"
       (
@@ -136,7 +136,7 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
         chmod 755 "$stage"
         cp -R "$src/." "$stage/"
         if [ -e "$dest" ]; then
-          bak="$HOME/.gemini/backups/easythinking.$(date +%s)"
+          bak="$HOME/.gemini/backups/easythink.$(date +%s)"
           mv "$dest" "$bak"
           echo "已备份旧版至: $bak"
         fi
@@ -151,20 +151,20 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
 
 直接告诉 agent：
 
-> 用 easythinking 帮我理清这个问题：……
+> 用 easythink 帮我理清这个问题：……
 
 例如：“这个判断靠谱吗？”“这两个方案怎么选？”“我是不是漏了什么关键证据？”“同事总针对我，我是不是想多了？”
 
-也可用快捷指令：Codex 输入 `$easythinking`，Pi 输入 `/skill:easythinking`。
+也可用快捷指令：Codex 输入 `$easythink`，Pi 输入 `/skill:easythink`。
 
 编码、医学、法律、投资等专业问题，可用它辅助梳理思路，但仍需专业验证。涉及重大不可逆决策或现实人身风险时，严格遵守安全优先与风险提示规则。
 
 ## 思考方法
 
-![EasyThinking 思考脑图：明确问题、梳理信息、概念与尺度、证据与推理、判断与取舍、行动与更新](assets/easythinking-mindmap.svg)
+![EasyThink 思考脑图：明确问题、梳理信息、概念与尺度、证据与推理、判断与取舍、行动与更新](assets/easythink-mindmap.svg)
 
 各分支按需使用，无需每次走完。更多内容见[方法说明](references/methods.md)、[应用示例](references/examples.md)、[行为用例](tests/behavior.md)和[更新日志](CHANGELOG.md)。
 
 ## 方法来源与致谢
 
-EasyThinking 的起点来自知乎作者“啥都不明白”的[回答](https://www.zhihu.com/question/9115866072/answer/2096187142615590644)，提炼其关于事实梳理、概念定义和程度澄清的思路。在此基础上，本技能增补了论证结构分解、证据分级、感受与价值保留、安全优先、不可逆高风险表态、多候选解释、风险偏好与承受力区分、检索默认核查及行动反馈闭环。
+EasyThink 的起点来自知乎作者“啥都不明白”的[回答](https://www.zhihu.com/question/9115866072/answer/2096187142615590644)，提炼其关于事实梳理、概念定义和程度澄清的思路。在此基础上，本技能增补了论证结构分解、证据分级、感受与价值保留、安全优先、不可逆高风险表态、多候选解释、风险偏好与承受力区分、检索默认核查及行动反馈闭环。

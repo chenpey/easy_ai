@@ -25,7 +25,7 @@ echo "OK: 已跟踪文件与工作区均无行尾空白或冲突标记"
 
 echo "=== 2. SKILL.md 体量与 Frontmatter 校验 ==="
 # 体量上限按技能分别声明；easydev 暂无体量政策，只校验 frontmatter。
-for SKILL_NAME in easythinking easydev; do
+for SKILL_NAME in easythink easydev; do
   SKILL_FILE="$SKILL_NAME/SKILL.md"
   if [ ! -f "$SKILL_FILE" ]; then
     echo "Error: $SKILL_FILE 不存在" >&2
@@ -33,7 +33,7 @@ for SKILL_NAME in easythinking easydev; do
   fi
   SKILL_SIZE=$(wc -c < "$SKILL_FILE" | tr -d ' ')
   case "$SKILL_NAME" in
-    easythinking) MAX_SIZE=12288 ;;
+    easythink) MAX_SIZE=12288 ;;
     *) MAX_SIZE=0 ;;
   esac
   if [ "$MAX_SIZE" -gt 0 ]; then
@@ -145,12 +145,12 @@ import glob, re, subprocess, sys
 # SKILL.md 的版本用 pattern=None 标记，由 scripts/skill_version.py 统一提取；
 # 不再用行首正则从全文猜第一个 version。
 groups = {
-    "easythinking": {
-        "root README": ("README.md", r"\|\s*\[EasyThinking\]\(easythinking/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
-        "easythinking README": ("easythinking/README.md", r"^版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
-        "SKILL.md": ("easythinking/SKILL.md", None),
-        "CHANGELOG.md": ("easythinking/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
-        "tests/behavior.md": ("easythinking/tests/behavior.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
+    "easythink": {
+        "root README": ("README.md", r"\|\s*\[EasyThink\]\(easythink/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
+        "easythink README": ("easythink/README.md", r"^版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
+        "SKILL.md": ("easythink/SKILL.md", None),
+        "CHANGELOG.md": ("easythink/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
+        "tests/behavior.md": ("easythink/tests/behavior.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
     },
     "easydev": {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
@@ -270,12 +270,12 @@ def extract_slugs(file_path):
 
 files = [
     "README.md",
-    "easythinking/README.md",
-    "easythinking/SKILL.md",
-    "easythinking/CHANGELOG.md",
-    "easythinking/references/methods.md",
-    "easythinking/references/examples.md",
-    "easythinking/tests/behavior.md"
+    "easythink/README.md",
+    "easythink/SKILL.md",
+    "easythink/CHANGELOG.md",
+    "easythink/references/methods.md",
+    "easythink/references/examples.md",
+    "easythink/tests/behavior.md"
 ] + sorted(glob.glob("easydev/**/*.md", recursive=True))
 
 file_slugs = {f: extract_slugs(f) for f in files}
@@ -313,7 +313,7 @@ echo "=== 5. README bash 代码块语法检查 (bash -n) ==="
 python3 -c '
 import re, subprocess, sys
 
-for readme in ("easythinking/README.md", "easydev/README.md"):
+for readme in ("easythink/README.md", "easydev/README.md"):
     with open(readme, "r", encoding="utf-8") as f:
         content = f.read()
 

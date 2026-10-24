@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-README="$ROOT_DIR/easythinking/README.md"
+README="$ROOT_DIR/easythink/README.md"
 
 if [ -n "${SMOKE_TMP:-}" ]; then
   TMP_HOME="$SMOKE_TMP"
@@ -110,8 +110,8 @@ assert_no_stage_residue() {
 assert_skills_root_clean() {
   local entries
   entries="$(ls -A "$TMP_HOME/.agents/skills")"
-  [ "$entries" = "easythinking" ] || fail "skills 根目录内容异常：$entries"
-  pass "skills 根目录只有 easythinking（easydev 场景尚未执行）"
+  [ "$entries" = "easythink" ] || fail "skills 根目录内容异常：$entries"
+  pass "skills 根目录只有 easythink（easydev 场景尚未执行）"
 }
 
 assert_backup_outside_skills() {
@@ -134,7 +134,7 @@ PY
 
 echo "=== 场景 1：全新安装（通用目录） ==="
 run_block block1.sh >/dev/null
-DEST="$TMP_HOME/.agents/skills/easythinking"
+DEST="$TMP_HOME/.agents/skills/easythink"
 [ -f "$DEST/SKILL.md" ] || fail "未安装 SKILL.md"
 [ -d "$DEST/references" ] || fail "未安装 references/"
 [ -d "$DEST/agents" ] || fail "未安装 agents/"
@@ -169,7 +169,7 @@ assert_skills_root_clean
 
 echo "=== 场景 4：Claude Code 专用目录同步 ==="
 run_block block2.sh >/dev/null
-CLAUDE_DEST="$TMP_HOME/.claude/skills/easythinking"
+CLAUDE_DEST="$TMP_HOME/.claude/skills/easythink"
 [ -f "$CLAUDE_DEST/SKILL.md" ] || fail "Claude Code 目录未同步"
 assert_perm_755 "$CLAUDE_DEST"
 assert_no_stage_residue
@@ -178,15 +178,15 @@ pass "Claude Code 目录同步通过"
 echo "=== 场景 5：Antigravity 两个用户级目录同步 ==="
 run_block block3.sh >/dev/null
 for parent in "$TMP_HOME/.gemini/config/skills" "$TMP_HOME/.gemini/antigravity-cli/skills"; do
-  [ -f "$parent/easythinking/SKILL.md" ] || fail "Antigravity 目录未同步：$parent"
-  assert_perm_755 "$parent/easythinking"
+  [ -f "$parent/easythink/SKILL.md" ] || fail "Antigravity 目录未同步：$parent"
+  assert_perm_755 "$parent/easythink"
 done
 assert_no_stage_residue
 pass "Antigravity 目录同步通过"
 
 echo "=== 场景 6：skills 目录为软链接时可安装并替换为实体目录 ==="
-mv "$DEST" "$TMP_HOME/.agents/skills-src-easythinking"
-ln -s "$TMP_HOME/.agents/skills-src-easythinking" "$DEST"
+mv "$DEST" "$TMP_HOME/.agents/skills-src-easythink"
+ln -s "$TMP_HOME/.agents/skills-src-easythink" "$DEST"
 run_block block1.sh >/dev/null
 [ ! -L "$DEST" ] || fail "软链接未被实体安装替换"
 [ -f "$DEST/SKILL.md" ] || fail "替换软链接后缺少 SKILL.md"
@@ -217,7 +217,7 @@ DEV_VERSION="$(python3 "$ROOT_DIR/scripts/skill_version.py" "$DEV_DEST/SKILL.md"
 grep -q "当前版本：\`$DEV_VERSION\`" "$DEV_SRC/README.md" || fail "easydev SKILL.md 版本 $DEV_VERSION 与 README 不一致"
 assert_perm_755 "$DEV_DEST"
 DEV_ENTRIES=$(ls -A "$TMP_HOME/.agents/skills" | sort | tr '\n' ' ')
-[ "$DEV_ENTRIES" = "easydev easythinking " ] || fail "skills 根目录内容异常：$DEV_ENTRIES"
+[ "$DEV_ENTRIES" = "easydev easythink " ] || fail "skills 根目录内容异常：$DEV_ENTRIES"
 assert_no_stage_residue
 pass "easydev 文件集完整，skills 根目录同时容纳两个技能"
 
