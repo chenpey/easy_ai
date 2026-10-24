@@ -7,6 +7,10 @@
     "model": "codex/gpt-6.1-sol",
     "reasoning_effort": "high"
   },
+  "designer": {
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "xhigh"
+  },
   "upgrades": [
     {
       "developer": {

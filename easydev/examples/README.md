@@ -4,7 +4,7 @@
 
 - `models.cross-provider.json`：跨供应商、跨模型示例，含角色分流、推理深度与升级阶段。
 
-内置默认值（`developer`、`reviewer` 均为 `inherit`，`upgrades` 为空）不依赖文件，也不单独提供模板文件；需要该结构时按 `references/models.md` 手写。
+内置默认值（`developer`、`reviewer` 与 `designer` 均为 `inherit`，`upgrades` 为空）不依赖文件，也不单独提供模板文件；需要该结构时按 `references/models.md` 手写。
 
 示例中的具体模型 ID 一律写成宿主模型表里的完整 ID（如 `codex/gpt-6.1-sol`），保留其命名空间前缀，裸写可能无法解析；`inherit` 与工具暴露的模型层级按各自规则使用。深度用 `reasoning_effort` 单独指定。
 

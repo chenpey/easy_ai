@@ -28,6 +28,9 @@ jobs:
       - name: 版本提取门禁用例
         run: bash easydev/tests/cases/version-gate/run.sh
 
+      - name: 独立设计环节确定性复验
+        run: bash easydev/tests/cases/design-gate/run.sh
+
       - name: 固定补丁复验
         timeout-minutes: 5
         working-directory: easydev

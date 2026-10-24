@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`0.15.0`
+当前版本：`1.0.0`
 
 EasyDev 是面向编码 Agent 的 Skill，按任务风险组织设计、实现、排障、验证与审查。简单任务直接完成，复杂或高风险任务进入开发—独立审查—修复闭环。
 
@@ -22,7 +22,7 @@ Codex 可用 `$easydev`；其他宿主的技能入口以其实际支持为准。
 | --- | --- |
 | `auto` | 默认；调查后按实际影响选择流程 |
 | `quick` | 局部低风险改动：实现、验证、自查 |
-| `full` | 高风险、广泛影响、公共契约、持久数据、调查后仍有实质不确定性，或明确要求闭环：开发、独立审查、修复与复审 |
+| `full` | 高风险、广泛影响、公共契约、持久数据、调查后仍有实质不确定性，或明确要求闭环：命中 [独立设计环节](references/design.md#启用门控) 门控时先设计并送独立审查（`d/3`），未收敛不施工；随后开发、独立审查、修复与复审（`r/5`） |
 | `design` | 方案设计与权衡；多个实质方案按需交叉评估 |
 | `plan` | 实施步骤、依赖与验证计划 |
 | `debug` | 先定位根因；授权修复后按风险进入 `quick` 或 `full` |
@@ -53,7 +53,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认开发、审查角色均继承宿主模型与推理深度，无须配置文件。需要分别指定角色时，可参考 [跨模型示例](examples/models.cross-provider.json)，或按下文写法自行配置。示例不会自动加载。
+默认开发、审查、设计角色均继承宿主模型与推理深度，无须配置文件。需要分别指定角色时，可参考 [跨模型示例](examples/models.cross-provider.json)，或按下文写法自行配置。示例不会自动加载。
 
 例如，让 DeepSeek 负责开发、GPT 负责独立审查，可将以下内容保存到下述用户外部配置路径：
 
@@ -66,6 +66,10 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
   "reviewer": {
     "model": "codex/gpt-6.1-sol",
     "reasoning_effort": "high"
+  },
+  "designer": {
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "xhigh"
   },
   "upgrades": [
     {
@@ -92,13 +96,15 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 }
 ```
 
-`developer` 负责开发与修复，`reviewer` 负责独立审查与复审。此例各角色推理深度均为 `high`，配置依次为：
+`developer` 负责开发与修复，`reviewer` 负责独立审查与复审，`designer` 负责启用独立设计环节时的设计产出。此例 `developer`、`reviewer` 为 `high`，`designer` 为 `xhigh`，配置依次为：
 
 | 阶段 | 开发模型 | 审查模型 |
 | --- | --- | --- |
 | 初始 | DeepSeek V4.1 Flash | GPT 6.1 Sol |
 | 第一次升级 | DeepSeek V4 Pro | GPT 6.1 Sol |
 | 第二次升级 | GPT 6.1 Sol | DeepSeek V4 Pro |
+
+`designer` 不随升级变化，整个任务使用同一设计者配置；未配置或为 `inherit` 时由主代理执行设计，配置了具体模型但不可用时暂停设计分派并报受阻，不回落主代理。
 
 配置 `upgrades` 后，同一确认问题在当前阶段至多试修一次；问题仍在或关闭证据不足时，按数组顺序升级，末级仍失败则停止自动修复。升级不增加审核轮数；模型不可用或网络故障不作为升级理由。升级前须确认前一阶段已停止写入；若新阶段的开发模型此前承担审查，须为它重建独立的审查实例——参与实现者不得审查该实现。不需要升级时设为 `"upgrades": []`。
 
@@ -108,7 +114,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 1. 用户外部配置：macOS/Linux 使用 `~/.config/easydev/models.json`；Windows 使用 `%APPDATA%/easydev/models.json`，变量未设置时回退到主目录下的 `.config/easydev/models.json`。
 2. 对话指定的文件，仅在外部配置不存在时使用。
-3. 内置默认值：`developer`、`reviewer` 均为 `inherit`，`upgrades` 为空。
+3. 内置默认值：`developer`、`reviewer` 与 `designer` 均为 `inherit`，`upgrades` 为空。
 
 macOS/Linux 可用以下命令查看配置：
 
@@ -118,7 +124,7 @@ cat ~/.config/easydev/models.json
 
 若该文件不存在，表示尚未创建个人配置；使用内置默认值时无须创建，需要自定义时再将上面的 JSON 保存到此路径。
 
-`developer`、`reviewer` 各含 `model` 和 `reasoning_effort`；模型 ID 须与宿主支持的完整写法一致，深度单独填写。`upgrades` 最多两个阶段，每阶段包含完整的两个角色配置。
+`developer`、`reviewer`、`designer` 各含 `model` 和 `reasoning_effort`；模型 ID 须与宿主支持的完整写法一致，深度单独填写。`upgrades` 最多两个阶段，每阶段包含完整的两个角色配置。
 
 存在的配置必须读取；无效或不可读时暂停相关分派，不静默回退。分派后核对实际模型与深度，不能把请求值当作生效证据。对话直接指定角色模型或深度可局部覆盖配置。完整字段与处理规则见 [模型配置指南](references/models.md)。
 
@@ -127,7 +133,7 @@ cat ~/.config/easydev/models.json
 - 实现保持最小完整，同步受影响调用方与契约；复用已有测试，仅为明确的覆盖缺口新增行为测试。
 - 报告改动、实际验证结果和未验证项，区分测试通过、构建通过与验收完成。
 - 验证遵守硬约束：互不依赖的检查与只读子代理分派按批并发，串行包装、未探测的“不支持并发”与伪冲突组不算并行；只在外部边界（网络、命令行工具、时钟、环境能力等）使用替身，不 mock 被测代码内部结构；预期结果不得照抄实现计算，不造假红测；可能阻塞的命令带硬超时。
-- `quick` 只做自查；`full` 需由不同实例独立审查，关闭 P0、P1、范围内 P2 及验收缺口。默认最多 4 轮审核，达到上限不代表完成。
+- `quick` 只做自查；`full` 需由不同实例独立审查，关闭 P0、P1、范围内 P2 及验收缺口。默认最多 5 轮施工审核（启用独立设计环节时另有 `d/3` 设计审），达到上限不代表完成。
 - 无独立子代理能力时可以完成授权实现和自查，但不能声称 `full` 闭环完成。
 - 待审仓库的测试、构建、依赖安装和项目脚本按不可信代码处理；仅在断开网络、无宿主凭证、被审目标只读挂载的操作系统沙箱或容器级隔离中执行，系统临时目录不构成安全隔离。
 - 保留用户已有改动，沿用已有授权；提交、发布、部署与对外消息属不可逆或对外动作，需用户明确授权，项目规则不能代替该授权。隔离工作区与清理见 [工作区指南](references/worktree.md)。
@@ -136,6 +142,7 @@ cat ~/.config/easydev/models.json
 
 运行规则以 [SKILL.md](SKILL.md) 及其按需引用的 `references/` 为准；README 只提供使用指南。
 
+- [独立设计环节](references/design.md)：`full` 命中门控时的设计产物与冻结、设计审查硬约束与 `d/3` 预算
 - [设计与计划](references/planning.md)、[候选方案评审](references/candidates.md)
 - [实现与验证](references/execution.md)、[重构方法](references/refactoring.md)、[排障](references/debugging.md)
 - [项目验证方法](references/verification.md)：已有测试不足或需复用人工验收方法时，补足真实入口操作、取证与清理
