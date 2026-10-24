@@ -13,7 +13,7 @@ python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py' -v
 python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 ```
 
-四项互不依赖，可以并行执行；固定补丁复验内部按“红 → 参考补丁 → 绿 → 独立验收 → 伪修复拒绝”的顺序串行，因为后一步依赖前一步的仓库状态。本机全量耗时目标 < 120s。
+四项互不依赖，须在同一冻结快照上同批并发并分别保存日志；只有固定补丁复验内部须串行，按“红 → 参考补丁 → 绿 → 独立验收 → 伪修复拒绝”，因为后一步依赖前一步的仓库状态。本机全量耗时目标 < 120s。
 
 ## 覆盖什么
 

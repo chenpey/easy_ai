@@ -2,6 +2,18 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.15.0 更新说明（2026-10-24）
+
+- 加固测试并行约束，关闭四类绕过（`SKILL.md` 测试硬约束）：一是自述“宿主/runner 不支持并发”或“上限为 1”即可串行的能力自述；二是把串行包装（`;`、`for`/`while` 循环、`xargs -P1`、逐项等待脚本）当作同批提交的伪批次；三是由单一包装器统一打印起止时间伪造重叠；四是把互不相关的检查并入一个“共享状态冲突组”。现要求先写本批清单与具体上限再同批发起，重叠以各检查自身的进程（PID、独立起止时间）或工具事件为证（总墙钟明显短于各项耗时之和只作重叠旁证，长于总和不能单独证明串行），能力限制须附工具说明、配置/用户额度或带硬超时的最小探测（自行选择的 `-n 1` 与核数不算证据），冲突组须最小且先尝试廉价隔离。
+- `references/orchestration.md` 新增「并行分派」：只读调查、按模块或维度拆分的审查、候选交叉评估、交给子代理的独立检查须同批发起；共享快照、仓库或模型不构成串行理由，单一写入者只约束写入；串行仅限写冲突、真实依赖、具体实例额度与宿主确实不支持并发，并发以子代理自身起止事件为证，批次清单写入交接或账本。
+- `references/execution.md` 的验证调度同步：发起前写批次清单，声明能力限制前先做最小探测，串行只保留最小冲突组，证据要求补各检查自身的重叠凭据。
+- `tests/behavior.md` 新增文字场景 B58（子代理独立分派并行）与 B59（并行绕过的识别），并把分派规则纳入维护对应关系；两项暂无执行载体，未执行时不宣称已受回归保护。
+- `tests/README.md` 与 `easydev/README.md` 同步：维护检查须同批并发，串行包装、未探测的能力自述与伪冲突组不算并行。
+
+验证：本机 macOS、10 核，检查在冻结快照上同批并发、分别保存日志（`/tmp/easydev-verify.hjWHGv`，各检查自身区间与 PID 记在 `.meta`）。第一批六项（`check.sh`、`public-contract-callers/run.sh`、`version-gate/run.sh`、agent_runner、SWE-bench、`smoke-install.sh`）最早开始到最晚结束 81.8s，各检查自身区间之和 146.4s；agent_runner 29 项 OK（81.8s）、SWE-bench 48 项 OK（62.8s）、public-contract-callers 与 version-gate 退出 0。该批 PID 字段全为 18730（bash 3.2 下 `$$` 在子 shell 中不独立），只能作区间旁证；`check.sh` 退出 1 属预期中间态（根 README 与 `CHANGELOG.md` 尚未同步 0.15.0），`smoke-install.sh` 因工具沙箱拒绝 TMPDIR 内 `mktemp -d` 失败，属环境故障，改 `SMOKE_TMP` 指向可用临时目录后通过。第二批把 `check.sh`、`version-gate`、`smoke-install`（`SMOKE_TMP`）同批并发重跑，三项各由独立进程记录起止（PID 22144/22145/22146，区间均在 603.56–605.62s），均退出 0。第三批在版本同步后的文本上单跑 `check.sh`（PID 22730）退出 0。第四批在按独立审查两项 P2 修复后的文本上同批并发重跑 `check.sh` 与 `version-gate`（PID 23856/23857），均退出 0，`git diff --check` 通过。第五批在按复审意见区分额度 1 与 2–3 的措辞修正后同批重跑同样两项（PID 24533/24534），均退出 0。条文与验证日志同目录可回查；本段写入后未再改规则文本。
+
+未验证项：本机未安装 PyYAML，版本提取的 PyYAML 分支未跑；B58/B59 目前只有文字规约，本轮未做真实模型行为回归，也未在 Linux CI 上运行；规则仍依赖执行者诚实取证，只降低绕过概率，不构成强制机制。
+
 ## 0.14.5 更新说明（2026-10-24）
 
 - SWE-bench runner 的补丁应用失败不再被结果读取器丢弃（P2）：`protocol.is_valid_result` 只对一种终态放宽 `test_contract_consistent` 与 `p2p_evidence`——`resolved=false`、`f2p_pass=false`、`patch_applied=false`、`test_statuses={}`、`f2p_status` 全为 `MISSING`、`p2p_regressions=[]`；其它形状（含伪造 resolved 或携带测试结果）仍严格拒绝。`grade_patch` 的 test patch 失败分支同样报 `patch_applied=false`，因此两种补丁失败共享这一终态：`run` 的下次调度视为 complete（不重复调用模型），`arm_summary.patch_apply_failures` 真实计数。
