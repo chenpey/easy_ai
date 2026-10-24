@@ -88,8 +88,8 @@ if yaml is not None:
         print(f"Error: {path} frontmatter 缺少非空 description", file=sys.stderr)
         sys.exit(1)
     meta = data.get("metadata")
-    if not isinstance(meta, dict) or not re.fullmatch(r"\d+\.\d+\.\d+", str(meta.get("version", ""))):
-        print("Error: metadata.version 缺失或格式不为 x.y.z", file=sys.stderr)
+    if not isinstance(meta, dict):
+        print(f"Error: {path} frontmatter 缺少 metadata 映射", file=sys.stderr)
         sys.exit(1)
     print(f"description 长度: {len(desc)} 字符 (上限 1024) [PyYAML 已解析]")
     if len(desc) > 1024:
@@ -117,9 +117,6 @@ else:
     if not re.search(r"^metadata:[ \t]*$", fm, re.MULTILINE):
         print("Error: frontmatter 缺少 metadata 映射", file=sys.stderr)
         sys.exit(1)
-    if not re.search(r"^[ \t]+version:[ \t]*\"?\d+\.\d+\.\d+\"?[ \t]*$", fm, re.MULTILINE):
-        print("Error: metadata.version 缺失或格式不为 x.y.z", file=sys.stderr)
-        sys.exit(1)
     lines = body.strip().splitlines()
     if lines and lines[0].lstrip().startswith((">", "|")):
         lines = lines[1:]
@@ -134,25 +131,31 @@ else:
 
 print(f"OK: {path} frontmatter 校验通过")
 PY
+  # 版本只由 scripts/skill_version.py 提取：与第 3 节比较的是同一个解析结果，
+  # 重复 version 键与错位的 version 在提取处就被拒绝。
+  SKILL_VERSION="$(python3 scripts/skill_version.py "$SKILL_FILE")"
+  echo "OK: $SKILL_FILE metadata.version = $SKILL_VERSION (scripts/skill_version.py)"
 done
 
 echo "=== 3. 版本号跨文件一致性检查 ==="
 python3 -c '
-import glob, re, sys
+import glob, re, subprocess, sys
 
 # 版本一致性按子项目分组校验：项目内部必须一致，跨项目不要求相同版本。
+# SKILL.md 的版本用 pattern=None 标记，由 scripts/skill_version.py 统一提取；
+# 不再用行首正则从全文猜第一个 version。
 groups = {
     "easythinking": {
         "root README": ("README.md", r"\|\s*\[EasyThinking\]\(easythinking/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
         "easythinking README": ("easythinking/README.md", r"^版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
-        "SKILL.md": ("easythinking/SKILL.md", r"version:\s*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?"),
+        "SKILL.md": ("easythinking/SKILL.md", None),
         "CHANGELOG.md": ("easythinking/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
         "tests/behavior.md": ("easythinking/tests/behavior.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
     },
     "easydev": {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
         "README.md": ("easydev/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
-        "SKILL.md": ("easydev/SKILL.md", r"version:\s*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?"),
+        "SKILL.md": ("easydev/SKILL.md", None),
         "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明")
     }
 }
@@ -168,6 +171,18 @@ errors = []
 for project, spec in groups.items():
     versions = {}
     for name, (path, pattern) in spec.items():
+        if pattern is None:
+            proc = subprocess.run(
+                [sys.executable, "scripts/skill_version.py", path],
+                capture_output=True, text=True,
+            )
+            if proc.returncode != 0:
+                errors.append(
+                    f"无法在 {path} ({name}) 中提取版本号: {proc.stderr.strip()}"
+                )
+                continue
+            versions[name] = proc.stdout.strip()
+            continue
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         m = re.search(pattern, content, re.MULTILINE)

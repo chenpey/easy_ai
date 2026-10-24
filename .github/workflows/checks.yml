@@ -24,3 +24,21 @@ jobs:
 
       - name: 安装脚本冒烟测试
         run: bash scripts/smoke-install.sh
+
+      - name: 版本提取门禁用例
+        run: bash easydev/tests/cases/version-gate/run.sh
+
+      - name: 固定补丁复验
+        timeout-minutes: 5
+        working-directory: easydev
+        run: bash tests/cases/public-contract-callers/run.sh
+
+      - name: 行为 runner 与进程清理回归
+        timeout-minutes: 10
+        working-directory: easydev
+        run: python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py'
+
+      - name: SWE-bench runner 与事件归因回归
+        timeout-minutes: 10
+        working-directory: easydev
+        run: python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py'

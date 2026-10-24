@@ -248,6 +248,47 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         self.assertFalse(run["event_stream_valid"])
         self.assertEqual(payload["summary"]["malformed_event_lines"], 1)
 
+    def test_null_receiver_ids_are_missing_not_crashing(self) -> None:
+        # The protocol accepts "receiver_thread_ids": null as a nullable field, so
+        # readers must treat it like an absent key instead of iterating None.
+        experiment = self.root / "null-receiver"
+        self.write_run(
+            experiment,
+            "null-ids",
+            [
+                agent_message(0, "采用 full。"),
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "spawn-null",
+                        "type": "collab_tool_call",
+                        "tool": "spawn_agent",
+                        "receiver_thread_ids": None,
+                        "prompt": "独立只读审查 independent read-only reviewer",
+                    },
+                },
+                spawn(),
+                reviewer_state("**[P2]** 边界未覆盖 app/orders.py:3"),
+                turn(),
+            ],
+        )
+        markdown = self.analyze(experiment)
+        self.assertEqual(markdown.returncode, 0, markdown.stderr)
+        report = experiment / "report.md"
+        written = self.analyze(experiment, output=report)
+        self.assertEqual(written.returncode, 0, written.stderr)
+        self.assertIn("Reviewer", report.read_text(encoding="utf-8"))
+
+        run = self.run_by_task(self.payload(experiment), "null-ids")
+        self.assertEqual(run["malformed_event_lines"], 0)
+        self.assertEqual(run["reviewer_instances"], 1)
+        self.assertEqual(run["reviewer_completed_instances"], 1)
+        self.assertEqual(run["reviewer_reports"], 1)
+        self.assertEqual(
+            run["findings"],
+            [{"severity": "P2", "title": "边界未覆盖 app/orders.py:3"}],
+        )
+
     def test_output_file_matches_stdout(self) -> None:
         experiment = self.root / "output"
         self.write_run(experiment, "output", [agent_message(0, "完成。"), turn()])

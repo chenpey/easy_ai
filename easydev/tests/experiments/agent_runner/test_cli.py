@@ -361,6 +361,67 @@ class RunnerCliTest(unittest.TestCase):
         patch = (self.run_dir(fixture, "b01") / "agent.patch").read_text(encoding="utf-8")
         self.assertIn("README.md", patch)
 
+    def test_run_b01_judges_the_label_by_runtime_import(self) -> None:
+        # The prompt fixes the text, not the quoting or spacing, so only the
+        # imported value decides whether the label was updated.
+        cases = (
+            ("single quotes", "BUTTON_LABEL='保存'\n", {}, 0),
+            ("no spaces", 'BUTTON_LABEL="保存"\n', {}, 0),
+            ("unchanged label", 'BUTTON_LABEL = "提交"\n# touched\n', {}, 1),
+            # A module that exits normally during import produces returncode 0
+            # without ever exposing the label, so the exit status alone cannot
+            # stand for the runtime check.
+            ("system exit on import", "raise SystemExit(0)\n", {}, 1),
+            (
+                "forged marker before system exit",
+                'print("ok")\nraise SystemExit(0)\n',
+                {},
+                1,
+            ),
+            ("printed marker without label", 'print("ok")\n', {}, 1),
+            (
+                "printed marker with unchanged label",
+                'print("ok")\nBUTTON_LABEL = "提交"\n',
+                {},
+                1,
+            ),
+            (
+                "forged marker before process exit",
+                'import os\nprint("ok", flush=True)\nos._exit(0)\n',
+                {},
+                1,
+            ),
+            (
+                "extra stdout around completion marker",
+                'print()\nBUTTON_LABEL = "保存"\n',
+                {},
+                1,
+            ),
+            # PYTHONOPTIMIZE=1 strips asserts; the runtime check must still fail
+            # on an unchanged label.
+            (
+                "optimized interpreter keeps the old label",
+                'BUTTON_LABEL = "提交"\n# touched\n',
+                {"PYTHONOPTIMIZE": "1"},
+                1,
+            ),
+        )
+        for label, content, extra_env, expected in cases:
+            with self.subTest(case=label):
+                plan = self.b01_plan()
+                plan["mutations"] = [{"path": "src/ui.py", "content": content}]
+                fixture = self.stub_environment(
+                    "b01-label-" + label.replace(" ", "-"), plan
+                )
+                fixture.env.update(extra_env)
+                completed = self.run_scenario(fixture, "b01")
+                self.assertEqual(
+                    completed.returncode, expected, completed.stdout + completed.stderr
+                )
+                result = self.result(fixture, "b01")
+                if expected:
+                    self.assertIn("runtime import passes", self.failed_checks(result))
+
     def test_run_b01_detects_runtime_skill_tampering(self) -> None:
         fixture = self.stub_environment(
             "b01-skill-edit", self.b01_plan(runtime_skill_edit=True)

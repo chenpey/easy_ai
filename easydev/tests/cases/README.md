@@ -16,5 +16,6 @@
 | 用例 | 验证目标 | 入口 |
 | --- | --- | --- |
 | `public-contract-callers` | 公共契约变更、对象级所有权校验和调用方适配 | `bash tests/cases/public-contract-callers/run.sh` |
+| `version-gate` | `SKILL.md` 版本提取：合法、重复键（含双引号转义键）、错位、描述文本内的 `version:` 与非法引号；降级分支拒绝键转义 | `bash tests/cases/version-gate/run.sh` |
 
 其余行为场景由 [tests/behavior.md](../behavior.md) 定义；其中 B01、B02、B16 与 `public-contract-callers` 已有离线可执行载体，由 `tests/experiments/agent_runner/` 的替身驱动。只有需要固定仓库材料、参考补丁或独立验收的场景才在此建立目录。

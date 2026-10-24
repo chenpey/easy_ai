@@ -735,8 +735,13 @@ def grade_patch(
     try:
         apply_patch(workdir, task["test_patch"], "test")
     except RuntimeError as error:
+        # The test patch is the second half of the same patch step, and a fresh
+        # template reproduces it on every retry. Reporting patch_applied here
+        # keeps this terminal shape identical to a failed agent patch (no test
+        # outcomes at all), so the reader stores it instead of dropping it and
+        # the run is not sent to the model again.
         return {
-            "patch_applied": True,
+            "patch_applied": False,
             "error": f"test patch failed after agent patch: {error}",
             "f2p_pass": False,
             "f2p_status": {
@@ -1027,6 +1032,10 @@ def run_one(
 
 def restore_protected_modes(record_path: Path) -> None:
     """Reopen paths a previous interrupted run left locked at mode 0."""
+    # Refuse a symlinked record before reading it: the target may list mode-0
+    # paths, and chmod-ing through the link would change files for a record this
+    # run then refuses to use.
+    reject_symlinked_record(record_path)
     if not record_path.exists():
         return
     try:
@@ -1151,8 +1160,24 @@ def lock_protected_paths(paths: Iterable[Path], record_path: Path) -> Iterator[N
     # Record the modes before locking the paths: an interrupted run would
     # otherwise leave them at mode 0 with no way to recover them.
     write_json(record_path, {str(path): mode for path, mode in original_modes.items()})
-    for path in original_modes:
-        path.chmod(0)
+    # A chmod that fails midway must not leave the paths locked so far at mode 0
+    # while the error escapes. os.chmod keeps the failure branch observable on
+    # every supported Python: on 3.9 pathlib routes its own chmod through a
+    # per-version accessor, so patching os would not intercept it.
+    locked: List[Path] = []
+    try:
+        for path in original_modes:
+            os.chmod(path, 0)
+            locked.append(path)
+    except OSError:
+        for path in locked:
+            try:
+                os.chmod(path, original_modes[path])
+            except OSError:
+                # Keep the original error: the record still lists every path, so
+                # the next start retries the recovery.
+                pass
+        raise
     try:
         yield
     finally:
@@ -1389,10 +1414,49 @@ def arm_summary(results: Sequence[Dict[str, Any]], arm: str) -> Dict[str, Any]:
     }
 
 
+def markdown_cell(value: str) -> str:
+    """Keep a value inside one GFM table cell: pipes split cells, newlines rows."""
+    return " ".join(str(value).split()).replace("|", "\\|")
+
+
+def p2p_disclosure_lines(
+    experiment: Path, task_ids: Sequence[str]
+) -> List[str]:
+    """State each task's P2P denominator from the validated task baselines."""
+    contracts = load_task_contracts(experiment, task_ids=list(task_ids))
+    if contracts is None:
+        return []
+    lines = [
+        "## PASS_TO_PASS 排除",
+        "",
+        "本机基线无法通过的 PASS_TO_PASS 不进入回归分母；每任务的排除项与原因如下。",
+        "",
+        "| Task | eligible P2P | excluded P2P | 排除原因 |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for task_id in task_ids:
+        baseline = read_json_object(
+            experiment / "task-baselines" / f"{task_id}.json"
+        )
+        excluded = baseline.get("excluded_p2p") or []
+        # A parametrized node id can contain `|`, and a damaged baseline can hold
+        # a newline; both would break the table row if they reached it raw.
+        reasons = "、".join(
+            f"`{markdown_cell(item['nodeid'])}`（{markdown_cell(item['status'])}）"
+            for item in excluded
+        ) or "无"
+        lines.append(
+            f"| {markdown_cell(task_id)} | {len(contracts[task_id][1])} | "
+            f"{len(excluded)} | {reasons} |"
+        )
+    return lines
+
+
 def markdown_report(experiment: Path, results: Sequence[Dict[str, Any]]) -> str:
     arms = sorted({result["arm"] for result in results})
     summaries = {arm: arm_summary(results, arm) for arm in arms}
-    task_count = len({result["task_id"] for result in results})
+    task_ids = sorted({result["task_id"] for result in results})
+    task_count = len(task_ids)
     lines = [
         "# SWE-bench Lite 小样本实验报告",
         "",
@@ -1427,10 +1491,16 @@ def markdown_report(experiment: Path, results: Sequence[Dict[str, Any]]) -> str:
             "- 配对区间使用 10,000 次任务级 bootstrap；"
             f"{task_count} 个任务下区间很粗，只用于显示不确定性，不作显著性声明。",
             "",
+        ]
+    )
+    lines.extend(p2p_disclosure_lines(experiment, task_ids))
+    lines.extend(
+        [
+            "",
             "## 主结果",
             "",
-            "| Arm | runs | resolved | resolved rate | F2P pass | P2P regression | mean wall (s) | mean input tokens | mean tool calls |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Arm | runs | resolved | resolved rate | F2P pass | P2P regression | mean wall (s) | mean input tokens | mean tool calls | patch apply failures |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for arm in arms:
@@ -1441,7 +1511,8 @@ def markdown_report(experiment: Path, results: Sequence[Dict[str, Any]]) -> str:
             f"{summary['p2p_regression_rate']:.1%} | "
             f"{summary['mean_wall_seconds']:.1f} | "
             f"{summary['mean_input_tokens']:.0f} | "
-            f"{summary['mean_tool_calls']:.1f} |"
+            f"{summary['mean_tool_calls']:.1f} | "
+            f"{summary['patch_apply_failures']} |"
         )
 
     lines.extend(
@@ -1501,7 +1572,6 @@ def markdown_report(experiment: Path, results: Sequence[Dict[str, Any]]) -> str:
             )
 
     lines.extend(["", "## 分任务", ""])
-    task_ids = sorted({result["task_id"] for result in results})
     header = "| Task | " + " | ".join(arms) + " |"
     separator = "| --- | " + " | ".join("---:" for _ in arms) + " |"
     lines.extend([header, separator])

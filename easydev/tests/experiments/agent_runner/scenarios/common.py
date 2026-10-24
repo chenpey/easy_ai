@@ -99,8 +99,10 @@ def run_python(
     code: str,
     *,
     timeout: int = 60,
+    extra_env: Dict[str, str] | None = None,
 ) -> Dict[str, object]:
     env = os.environ.copy()
+    env.update(extra_env or {})
     env.update(
         {
             "PYTHONDONTWRITEBYTECODE": "1",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from pathlib import Path
 
 from .common import (
@@ -19,6 +20,19 @@ TITLE = "B01 low-risk routing"
 # `审查状态：自查` 或 `审查状态：独立`。只认最后一条非空行，且排除代码块。
 REVIEW_STATUS_RE = re.compile(r"^审查状态[ ]*[:：][ ]*(自查|独立)[ ]*$")
 FENCE_RE = re.compile(r"^(`{3,}|~{3,})[ \t]*(.*?)[ \t]*$")
+# 运行时核对不能用 assert：`python -O`/PYTHONOPTIMIZE 会剥离断言。导入与取值
+# 期间的 SystemExit 一律失败；每次验收生成随机完成标记并精确核对 stdout，
+# 避免硬编码输出与提前退出冒充完成。
+RUNTIME_CHECK = (
+    "import os, sys\n"
+    "try:\n"
+    "    from src.ui import BUTTON_LABEL\n"
+    '    if BUTTON_LABEL != "保存":\n'
+    "        sys.exit(2)\n"
+    "except SystemExit:\n"
+    "    sys.exit(2)\n"
+    'sys.stdout.write(os.environ["EASYDEV_B01_RUNTIME_MARKER"])\n'
+)
 PROMPT = """使用 easydev auto 完成当前仓库中的任务。
 
 把 `src/ui.py` 的按钮文案从“提交”改为“保存”。只修改完成该任务所需的产品代码，
@@ -95,11 +109,11 @@ def evaluate(
     final_message: str,
     observed: object,
 ) -> dict:
-    ui_path = workspace / "src" / "ui.py"
-    content = ui_path.read_text(encoding="utf-8") if ui_path.exists() else ""
+    runtime_marker = secrets.token_hex(32)
     runtime = run_python(
         workspace,
-        'from src.ui import BUTTON_LABEL\nassert BUTTON_LABEL == "保存"\nprint("ok")\n',
+        RUNTIME_CHECK,
+        extra_env={"EASYDEV_B01_RUNTIME_MARKER": runtime_marker},
     )
     module_access = getattr(observed, "module_access", {})
     unexpected_modules = sorted(
@@ -124,8 +138,14 @@ def evaluate(
             not getattr(observed, "uncaptured_worktree_paths", []),
             getattr(observed, "uncaptured_worktree_paths", None),
         ),
-        check("button label is updated", 'BUTTON_LABEL = "保存"' in content, content),
-        check("runtime import passes", runtime["returncode"] == 0, runtime),
+        # The prompt fixes the text, not the quoting or spacing: only the
+        # imported value can decide whether the label was updated.
+        check(
+            "runtime import passes",
+            runtime["returncode"] == 0
+            and runtime.get("stdout") == runtime_marker,
+            runtime,
+        ),
         check(
             "route is quick",
             getattr(observed, "declared_initial_path", None) == "quick",

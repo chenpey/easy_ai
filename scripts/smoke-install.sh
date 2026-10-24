@@ -32,9 +32,12 @@ pass() {
 SNAPSHOT="$TMP_HOME/src"
 mkdir -p "$SNAPSHOT"
 tar -c --exclude=.git --exclude=.smoke-tmp --exclude=.mut -C "$ROOT_DIR" . | tar -x -C "$SNAPSHOT"
-git -c user.name=smoke -c user.email=smoke@example.com -C "$SNAPSHOT" init --quiet
-git -c user.name=smoke -c user.email=smoke@example.com -C "$SNAPSHOT" add -A
-git -c user.name=smoke -c user.email=smoke@example.com -C "$SNAPSHOT" commit --quiet -m "smoke snapshot"
+# 快照提交不调用签名程序：维护者的全局 commit.gpgsign / gpg.program 配置
+# 会让这里假失败，而签名对一次性快照没有任何价值。
+GIT_SNAPSHOT=(git -c commit.gpgsign=false -c tag.gpgsign=false -c user.name=smoke -c user.email=smoke@example.com)
+"${GIT_SNAPSHOT[@]}" -C "$SNAPSHOT" init --quiet
+"${GIT_SNAPSHOT[@]}" -C "$SNAPSHOT" add -A
+"${GIT_SNAPSHOT[@]}" -C "$SNAPSHOT" commit --quiet -m "smoke snapshot"
 REPO_URL="file://$SNAPSHOT"
 BROKEN_URL="file://$TMP_HOME/does-not-exist/easy_ai"
 
@@ -209,7 +212,8 @@ DEV_SRC_REFS=$(ls "$DEV_SRC/references"/*.md | wc -l | tr -d ' ')
 DEV_DEST_REFS=$(ls "$DEV_DEST/references"/*.md | wc -l | tr -d ' ')
 [ "$DEV_SRC_REFS" = "$DEV_DEST_REFS" ] || fail "easydev references 数量不一致：$DEV_DEST_REFS != $DEV_SRC_REFS"
 grep -q '^name: easydev$' "$DEV_DEST/SKILL.md" || fail "easydev SKILL.md 的 frontmatter name 不是 easydev"
-DEV_VERSION=$(grep -m1 '^  version:' "$DEV_DEST/SKILL.md" | sed 's/.*"\(.*\)".*/\1/')
+# 版本只由 scripts/skill_version.py 提取：拒绝重复 version 键与错位的 version。
+DEV_VERSION="$(python3 "$ROOT_DIR/scripts/skill_version.py" "$DEV_DEST/SKILL.md")" || fail "无法从 easydev SKILL.md 提取 metadata.version"
 grep -q "当前版本：\`$DEV_VERSION\`" "$DEV_SRC/README.md" || fail "easydev SKILL.md 版本 $DEV_VERSION 与 README 不一致"
 assert_perm_755 "$DEV_DEST"
 DEV_ENTRIES=$(ls -A "$TMP_HOME/.agents/skills" | sort | tr '\n' ' ')

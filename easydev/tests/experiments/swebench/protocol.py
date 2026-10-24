@@ -175,8 +175,23 @@ def is_valid_result(
             for key, status in f2p_status.items()
         )
     )
+    # A patch that never applied has no test outcomes at all: every F2P is
+    # MISSING, the status map is empty and nothing regressed. Without this
+    # terminal shape the reader would reject the run, so the next start would
+    # call the model again for the same failure and the arm summary could not
+    # count it. Any other shape still needs the full test contract.
+    patch_apply_failed = bool(
+        result.get("patch_applied") is False
+        and result.get("f2p_pass") is False
+        and result.get("resolved") is False
+        and valid_f2p_status
+        and all(status == "MISSING" for status in f2p_status.values())
+        and test_statuses == {}
+        and p2p_regressions == []
+    )
     test_contract_consistent = bool(
-        expected_f2p is None
+        patch_apply_failed
+        or expected_f2p is None
         or expected_p2p is None
         or (
             valid_test_statuses
@@ -222,11 +237,14 @@ def is_valid_result(
         and test_statuses[key] not in NON_REGRESSION_STATUSES
     }
     p2p_evidence = bool(
-        valid_p2p_regressions
-        and valid_test_statuses
-        and p2p_keys.issubset(test_statuses)
-        and len(p2p_regressions) == len(set(p2p_regressions))
-        and set(p2p_regressions) == expected_p2p_regressions
+        patch_apply_failed
+        or (
+            valid_p2p_regressions
+            and valid_test_statuses
+            and p2p_keys.issubset(test_statuses)
+            and len(p2p_regressions) == len(set(p2p_regressions))
+            and set(p2p_regressions) == expected_p2p_regressions
+        )
     )
     valid = bool(
         isinstance(result.get("task_id"), str)

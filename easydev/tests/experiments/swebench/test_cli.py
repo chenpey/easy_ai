@@ -48,6 +48,21 @@ TASK2 = {
 TASK3 = {"id": "demo__task-3", "f2p": "tests/test_f2p.py::test_f2p", "p2p": "tests/test_p2p.py::test_p2p"}
 TASK4 = {"id": "demo__task-4", "f2p": "tests/test_f2p.py::test_f2p", "p2p": "tests/test_p2p.py::test_p2p"}
 TASK5 = {"id": "demo__task-5", "f2p": "tests/test_f2p.py::test_f2p", "p2p": "tests/test_p2p.py::test_p2p"}
+TASK6 = {"id": "demo__task-6", "f2p": "tests/test_f2p.py::test_f2p", "p2p": "tests/test_p2p.py::test_p2p"}
+BROKEN_TEST_PATCH = (
+    "diff --git a/tests/missing.py b/tests/missing.py\n"
+    "--- a/tests/missing.py\n"
+    "+++ b/tests/missing.py\n"
+    "@@ -1,1 +1,1 @@\n"
+    "-old\n"
+    "+new\n"
+)
+TASK7 = {
+    "id": "demo__task-7",
+    "f2p": "tests/test_f2p.py::test_f2p",
+    "p2p": "tests/test_p2p.py::test_p2p",
+    "test_patch": BROKEN_TEST_PATCH,
+}
 
 
 def new_file_patch(path: str, content: str) -> str:
@@ -79,7 +94,7 @@ def write_dataset(path: Path, tasks) -> None:
             "FAIL_TO_PASS": json.dumps([task["f2p"]]),
             "PASS_TO_PASS": json.dumps([task["p2p"]]),
             "patch": "",
-            "test_patch": TEST_PATCH,
+            "test_patch": task.get("test_patch", TEST_PATCH),
             "problem_statement": "Fix the module.",
         }
         for task in tasks
@@ -149,6 +164,14 @@ def read_only_template(path: Path) -> None:
         add_file(archive, "pkg/data.txt", "readable\n")
         add_dir(archive, "pkg/nested", 0o500)
         add_file(archive, "pkg/nested/inner.txt", "inner\n")
+
+
+def locked_dir_template(path: Path) -> None:
+    """A template whose read-only directory survives extraction as read-only."""
+    with tarfile.open(path, "w") as archive:
+        add_dir(archive, "pkg", 0o555)
+        add_file(archive, "pkg/data.txt", "readable\n")
+        add_file(archive, "src/mod.py", "VALUE = 1\n")
 
 
 def force_remove(path: str) -> None:
@@ -701,6 +724,146 @@ class SwebenchCliTest(unittest.TestCase):
         self.assertTrue((run_path / "grade" / "junit.xml").is_file())
         self.assertIn("src/mod.py", (run_path / "agent.patch").read_text(encoding="utf-8"))
 
+    def test_patch_apply_failure_is_a_stored_terminal_result(self) -> None:
+        # The Agent can write into pkg/ only after chmod-ing the copy in its own
+        # worktree, so the captured patch applies to that copy but not to the
+        # read-only directory of a fresh template: grading reports the agent
+        # patch as unapplied without running pytest.
+        assets = self.make_assets("patch-failure", tasks=(TASK6, TASK))
+        locked_dir_template(assets.templates / f"{TASK6['id']}.tar")
+        experiment = self.install_experiment(assets, "experiment", tasks=(TASK6, TASK))
+        stub = self.make_stub("patch-failure-stub")
+        failed_plan = {
+            "events": 2,
+            "agent_messages": ["Implemented the fix."],
+            "chmod_files": [{"path": "pkg", "mode": 0o755}],
+            "git_commands": [["git", "mv", "src/mod.py", "pkg/mod.py"]],
+        }
+        failed = self.run_command(
+            stub,
+            experiment,
+            plan=failed_plan,
+            statuses={TASK6["f2p"]: "PASSED", TASK6["p2p"]: "PASSED"},
+            tasks=(TASK6,),
+        )
+        self.assertEqual(failed.returncode, 0, failed.stdout)
+        result = self.result(experiment, TASK6)
+        self.assertFalse(result["patch_applied"])
+        self.assertFalse(result["resolved"])
+        self.assertEqual(result["test_statuses"], {})
+        self.assertEqual(result["f2p_status"], {TASK6["f2p"]: "MISSING"})
+        self.assertEqual(result["p2p_regressions"], [])
+
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+            tasks=(TASK,),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertTrue(self.result(experiment, TASK)["resolved"])
+
+        summarized = self.summarize(experiment)
+        self.assertEqual(summarized.returncode, 0, summarized.stdout)
+        summary = json.loads(
+            (experiment / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary["baseline"]["runs"], 2)
+        self.assertEqual(summary["baseline"]["resolved_rate"], 0.5)
+        self.assertEqual(summary["baseline"]["patch_apply_failures"], 1)
+        report = (experiment / "report.md").read_text(encoding="utf-8")
+        self.assertIn("patch apply failures", report)
+        baseline_row = next(
+            line
+            for line in report.splitlines()
+            if line.startswith("| baseline |")
+        )
+        self.assertTrue(
+            baseline_row.endswith("| 1 |"), f"报告未展示补丁失败数: {baseline_row}"
+        )
+
+        marker = self.root / "patch-failure-rerun.txt"
+        rerun_plan = self.complete_plan()
+        rerun_plan["marker_file"] = str(marker)
+        rerun = self.run_command(
+            stub,
+            experiment,
+            plan=rerun_plan,
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+            tasks=(TASK6, TASK),
+        )
+        self.assertEqual(rerun.returncode, 0, rerun.stdout)
+        self.assertIn("running 0 jobs", rerun.stdout)
+        self.assertFalse(marker.exists(), "a complete failure result was re-run")
+
+        # Any other shape stays rejected: a failed patch cannot carry test
+        # outcomes or claim success.
+        forged = self.clone_experiment(experiment, "forged-patch-failure")
+        result_path = (
+            forged / "runs" / TASK["id"] / "baseline" / "r1" / "result.json"
+        )
+        value = json.loads(result_path.read_text(encoding="utf-8"))
+        value.update(
+            {
+                "patch_applied": False,
+                "resolved": False,
+                "f2p_pass": False,
+                "f2p_status": {TASK["f2p"]: "MISSING"},
+                "p2p_regressions": [],
+            }
+        )
+        result_path.write_text(json.dumps(value), encoding="utf-8")
+        rejected = self.summarize(forged)
+        self.assertEqual(rejected.returncode, 0, rejected.stdout)
+        forged_summary = json.loads(
+            (forged / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(forged_summary["baseline"]["runs"], 1)
+
+    def test_test_patch_failure_is_a_stored_terminal_result(self) -> None:
+        # The dataset's test patch cannot apply to the template, so grading stops
+        # before pytest. That must be a stored failure, not a result the reader
+        # drops and the next start retries against the same template.
+        assets = self.make_assets("test-patch-failure", tasks=(TASK7,))
+        experiment = self.install_experiment(assets, "experiment", tasks=(TASK7,))
+        stub = self.make_stub("test-patch-failure-stub")
+        plan = {"events": 2, "agent_messages": ["No source change needed."]}
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=plan,
+            statuses={TASK7["f2p"]: "PASSED", TASK7["p2p"]: "PASSED"},
+            tasks=(TASK7,),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        result = self.result(experiment, TASK7)
+        self.assertFalse(result["patch_applied"])
+        self.assertFalse(result["resolved"])
+        self.assertIn("test patch failed", result["grade_error"])
+        self.assertEqual(result["test_statuses"], {})
+        self.assertEqual(result["f2p_status"], {TASK7["f2p"]: "MISSING"})
+
+        summarized = self.summarize(experiment)
+        self.assertEqual(summarized.returncode, 0, summarized.stdout)
+        summary = json.loads(
+            (experiment / "summary.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(summary["baseline"]["patch_apply_failures"], 1)
+
+        marker = self.root / "test-patch-rerun.txt"
+        plan["marker_file"] = str(marker)
+        rerun = self.run_command(
+            stub,
+            experiment,
+            plan=plan,
+            statuses={TASK7["f2p"]: "PASSED", TASK7["p2p"]: "PASSED"},
+            tasks=(TASK7,),
+        )
+        self.assertEqual(rerun.returncode, 0, rerun.stdout)
+        self.assertIn("running 0 jobs", rerun.stdout)
+        self.assertFalse(marker.exists(), "a complete failure result was re-run")
+
     def test_failed_test_cannot_be_overwritten_by_stdout(self) -> None:
         assets = self.make_assets("spoof-output")
         experiment = self.install_experiment(assets, "experiment")
@@ -855,7 +1018,54 @@ class SwebenchCliTest(unittest.TestCase):
         self.assertEqual(summary["baseline"]["resolved_rate"], 1.0)
         self.assertTrue((experiment / "results.jsonl").is_file())
 
-
+    def test_summarize_discloses_excluded_p2p_counts_and_reasons(self) -> None:
+        # A parametrized node id may contain a pipe; the report must escape it so
+        # the table cell keeps the whole name and status.
+        extra_p2p = "tests/test_parser.py::test_pattern[a|b]"
+        task = {
+            "id": "demo__task-excluded",
+            "f2p": "tests/test_f2p.py::test_f2p",
+            "p2p": "tests/test_p2p.py::test_p2p",
+        }
+        assets = self.make_assets("excluded-p2p", tasks=(task,))
+        experiment = self.install_experiment(assets, "experiment", tasks=(task,))
+        dataset = json.loads(
+            (experiment / "dataset.json").read_text(encoding="utf-8")
+        )
+        dataset[0]["PASS_TO_PASS"] = json.dumps([task["p2p"], extra_p2p])
+        (experiment / "dataset.json").write_text(
+            json.dumps(dataset), encoding="utf-8"
+        )
+        # The local baseline could not run one of the two PASS_TO_PASS tests, so
+        # the report has to state the reduced denominator and why.
+        (experiment / "task-baselines" / f"{task['id']}.json").write_text(
+            json.dumps(
+                {
+                    "eligible_p2p": [task["p2p"]],
+                    "excluded_p2p": [{"nodeid": extra_p2p, "status": "MISSING"}],
+                    "statuses": {task["p2p"]: "PASSED"},
+                    "pytest_returncode": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        stub = self.make_stub("excluded-p2p-stub")
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={task["f2p"]: "PASSED", task["p2p"]: "PASSED"},
+            tasks=(task,),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        summarized = self.summarize(experiment)
+        self.assertEqual(summarized.returncode, 0, summarized.stdout)
+        report = (experiment / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## PASS_TO_PASS 排除", report)
+        escaped = extra_p2p.replace("|", "\\|")
+        self.assertIn(
+            f"| {task['id']} | 1 | 1 | `{escaped}`（MISSING） |", report
+        )
 
     # -- F1: stored-result and asset rejection ---------------------------
     def test_summarize_and_attribution_reject_corrupt_results(self) -> None:
@@ -1284,6 +1494,38 @@ class SwebenchCliTest(unittest.TestCase):
                     )
                     self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o640)
 
+        with self.subTest(case="symlink target listing a mode-0 path"):
+            # Reading the link first would chmod the target's mode-0 path before
+            # the symlink itself is refused, leaving a mode the tool never
+            # promised to restore.
+            assets = self.make_assets("record-symlink-mode-zero")
+            experiment = self.install_experiment(assets, "experiment")
+            stub = self.make_stub("record-symlink-mode-zero-stub")
+            sentinel = assets.root / "sentinel.txt"
+            sentinel.write_text("keep\n", encoding="utf-8")
+            sentinel.chmod(0)
+            outside = assets.root / "outside-record.json"
+            outside.write_text(
+                json.dumps({str(sentinel): 0o644}), encoding="utf-8"
+            )
+            record = experiment / "protected-modes.json"
+            record.symlink_to(outside)
+            completed = self.run_command(
+                stub,
+                experiment,
+                plan=self.complete_plan(),
+                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+            )
+            self.assertNotEqual(completed.returncode, 0, completed.stdout)
+            self.assertIn("refusing to use the protected mode record", completed.stdout)
+            self.assertIn("symlink", completed.stdout)
+            self.assertTrue(record.is_symlink())
+            self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0)
+            self.assertEqual(
+                outside.read_text(encoding="utf-8"),
+                json.dumps({str(sentinel): 0o644}),
+            )
+
     def test_restore_order_parent_child_and_merged_protection(self) -> None:
         assets = self.make_assets("restore-order")
         experiment = self.install_experiment(assets, "experiment")
@@ -1355,6 +1597,64 @@ class SwebenchCliTest(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
         self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o640)
         self.assertTrue((experiment / "protected-modes.json").exists())
+
+    def test_lock_failure_restores_paths_already_locked(self) -> None:
+        # A chmod failure halfway through the lock loop must not leave the paths
+        # locked so far at mode 0 while the error escapes; the record stays so
+        # the next start can still recover whatever remains locked.
+        root = self.root / "lock-failure"
+        root.mkdir()
+        first = root / "first.txt"
+        second = root / "second.txt"
+        first.write_text("first\n", encoding="utf-8")
+        second.write_text("second\n", encoding="utf-8")
+        first.chmod(0o644)
+        second.chmod(0o640)
+        record = root / "protected-modes.json"
+        script = root / "lock_failure.py"
+        script.write_text(
+            "import os\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from unittest import mock\n"
+            f"sys.path.insert(0, {str(SWEBENCH)!r})\n"
+            "import run\n"
+            f"first = Path({str(first)!r}).resolve()\n"
+            f"second = Path({str(second)!r}).resolve()\n"
+            f"record = Path({str(record)!r})\n"
+            "real_chmod = os.chmod\n"
+            "def flaky_chmod(path, mode, *args, **kwargs):\n"
+            "    if Path(path) == second and mode == 0:\n"
+            "        raise OSError(13, 'denied', str(path))\n"
+            "    return real_chmod(path, mode, *args, **kwargs)\n"
+            "with mock.patch.object(run.os, 'chmod', flaky_chmod):\n"
+            "    try:\n"
+            "        with run.lock_protected_paths([first, second], record):\n"
+            "            pass\n"
+            "    except OSError as error:\n"
+            "        print('error', error.errno)\n"
+            "    else:\n"
+            "        raise SystemExit('lock did not fail')\n"
+            "print('first', oct(first.stat().st_mode & 0o777))\n"
+            "print('second', oct(second.stat().st_mode & 0o777))\n"
+            "print('record', record.exists())\n",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            [sys.executable, "-B", str(script)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            timeout=60,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertIn("error 13", completed.stdout)
+        self.assertIn("first 0o644", completed.stdout)
+        self.assertIn("second 0o640", completed.stdout)
+        self.assertIn("record True", completed.stdout)
 
     def test_restart_from_another_cwd_only_restores_recorded_paths(self) -> None:
         assets = self.make_assets("cwd-restart")

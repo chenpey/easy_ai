@@ -1144,7 +1144,9 @@ def analyze_run(
             and any(marker in prompt.lower() for marker in REVIEW_PROMPT_MARKERS)
         ):
             reviewer_ids.update(
-                str(value) for value in item.get("receiver_thread_ids", []) if value
+                str(value)
+                for value in (item.get("receiver_thread_ids") or [])
+                if value
             )
 
         if tool not in {"wait", "close_agent"}:

@@ -11,7 +11,9 @@ resolved = 全部 FAIL_TO_PASS 通过
            且环境基线可通过的 PASS_TO_PASS 无回归
 ```
 
-`PASS_TO_PASS` 先在本机环境跑基线；环境本身无法通过的测试不进入回归分母。这评分从 JUnit XML 读取结果（重复条目取失败优先），拒绝缺失/损坏结果和异常退出；stdout 只辅助关联测试名称。采集排除 `conftest.py`、pytest 及构建配置，避免修改验收驱动。此运行器不是官方 SWE-bench Docker harness 的完整替代，报告必须披露排除数量与原因。
+`PASS_TO_PASS` 先在本机环境跑基线；环境本身无法通过的测试不进入回归分母。这评分从 JUnit XML 读取结果（重复条目取失败优先），拒绝缺失/损坏结果和异常退出；stdout 只辅助关联测试名称。采集排除 `conftest.py`、pytest 及构建配置，避免修改验收驱动。此运行器不是官方 SWE-bench Docker harness 的完整替代，报告必须披露排除数量与原因；`report.md` 的「PASS_TO_PASS 排除」小节按已校验的 `task-baselines` 列出每任务 eligible/excluded 数量与状态原因；nodeid 与状态写入表格前会转义 `|` 并折叠换行，因此含 `|` 的参数化 nodeid 不会截断表格。
+
+补丁应用失败（agent patch 或 test patch）是终态而不是可重试错误：结果记录 `patch_applied=false`、`f2p_status` 全为 `MISSING`、`test_statuses` 为空、`p2p_regressions` 为空，读取器只对这一形状放宽测试契约与 P2P 证据，其它形状仍严格拒绝。该终态让下次 `run` 视为已完成（不重复调用模型），并在 `summary.json` 与报告的 `patch apply failures` 列中计数。
 
 ## 前提
 

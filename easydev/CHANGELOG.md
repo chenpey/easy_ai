@@ -2,6 +2,34 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.14.5 更新说明（2026-10-24）
+
+- SWE-bench runner 的补丁应用失败不再被结果读取器丢弃（P2）：`protocol.is_valid_result` 只对一种终态放宽 `test_contract_consistent` 与 `p2p_evidence`——`resolved=false`、`f2p_pass=false`、`patch_applied=false`、`test_statuses={}`、`f2p_status` 全为 `MISSING`、`p2p_regressions=[]`；其它形状（含伪造 resolved 或携带测试结果）仍严格拒绝。`grade_patch` 的 test patch 失败分支同样报 `patch_applied=false`，因此两种补丁失败共享这一终态：`run` 的下次调度视为 complete（不重复调用模型），`arm_summary.patch_apply_failures` 真实计数。
+- 事件归因的 `receiver_thread_ids: null` 按「等同缺失」处理（读取处 `or []`），`analyze_events.py` 不再因 `TypeError` 崩溃；畸形行仍计入统计且不中断（P2）。
+- 保护模式的软链拒绝收敛到 `restore_protected_modes` 入口（与 `lock_protected_paths` 共用）：软链记录在读取与 chmod 之前就被拒绝，不再先改目标里的 mode-0 路径（P2）。
+- `lock_protected_paths` 的 chmod 循环中途失败时立即恢复本次已锁定的路径并保留原异常；`protected-modes.json` 仍保留供下次恢复（P2）。
+- B01 场景删除源码精确字符串条件 `'BUTTON_LABEL = "保存"' in content`，只以运行时导入结果判定；prompt 未规定引号与空格，单引号/无空格等合法变体通过，文案未改的负例仍失败（P2）。
+- 复审 N1：B01 的运行时核对保留 `if BUTTON_LABEL != "保存": sys.exit(2)` 显式比较，并捕获导入、取值与比较期间的 `SystemExit`，统一以非零码失败。每次 `evaluate` 用 `secrets.token_hex` 生成随机完成标记，经子进程环境变量传入；通过条件为「退出码 0 且 stdout 精确等于本次标记」，不去除首尾空白。表驱动 CLI 回归拒绝硬编码 `print("ok")` 后提前退出、只打印标记、打印标记但文案未改、直接退出与多余 stdout；`PYTHONOPTIMIZE=1` 下文案未改仍失败，单引号/无空格与正常改动通过（P2）。
+- `markdown_report` 新增「PASS_TO_PASS 排除」小节：按已校验的 `task-baselines` 披露每任务 eligible/excluded P2P 数量与排除状态原因，补齐 `tests/experiments/swebench/README.md` 的披露要求（P3）。
+- 复审 N3：该小节的表格单元格在渲染前转义 `|` 并把换行折叠为空格，含 `|` 的合法参数化 nodeid（如 `tests/test_parser.py::test_pattern[a|b]`）不再截断 GFM 表格，完整名称与状态仍出现在报告里（P3）。
+- 新增 `scripts/skill_version.py` 作为唯一版本提取实现：有 PyYAML 时用拒绝重复键的 loader；无 PyYAML 时用严格行匹配（`version` 必须直接隶属 `metadata`、拒绝重复、忽略块标量内容，不把其他映射下的 `version` 当作 `metadata.version`）。`scripts/check.sh` 与 `scripts/smoke-install.sh` 都调用它，提取与比较使用同一次解析结果（P3）。
+- 新增 `easydev/tests/cases/version-gate/run.sh`：在临时目录构造九组 fixture（合法、`description` 内含 `version:` 但 `metadata.version` 合法、重复 `version` 键、`version` 错位到其他映射、只在 `description` 里出现 `version`、带引号的重复 `version` 键、双引号转义后的重复 `version` 键、值内嵌套引号、未闭合引号），断言前两组通过、其余被拒绝，并对降级分支与 PyYAML 分支（已安装时）分别执行；CI 增加该步骤（P3）。
+- 复审 N2：`scripts/skill_version.py` 的降级分支支持单/双引号子键，解引号后检测重复 `version`，并拒绝无法解释的 2 空格映射行（注释、序列项除外，更深缩进跳过）。严格子集不解释双引号键中的反斜杠转义，遇到即明确报错，避免把 `"vers\u0069on"` 静默当成无关键；单引号键保持字面语义。版本值只接受恰好一对正确闭合的同类引号，解引号后仍含引号或未闭合即拒绝，其余按 `x.y.z` 校验。新增转义重复键 fixture 在降级分支被拒绝，PyYAML 分支仍由 StrictLoader 按解码后的重复键拒绝，未引入新依赖（P3）。
+- 安装冒烟测试的快照 `git init/add/commit` 统一加 `-c commit.gpgsign=false -c tag.gpgsign=false`：维护者全局 `commit.gpgsign`/`gpg.program` 配置不再造成假失败，也不调用签名程序（P3）。
+- 0.14.4 条目里的本机绝对路径改写为「macOS 本机，仓库根目录」表述（P3）。
+
+验证：阶段 1 先扩展 B01 表驱动 CLI 负例与转义重复键 fixture，在未改实现时确认红测：B01 有三项子例误通过（伪造标记后 `SystemExit(0)`、伪造标记后 `os._exit(0)`、完成标记前多余空行），版本降级分支错误输出 `0.14.5`；修复后同一组回归全部通过，单引号版本键与单引号内字面反斜杠的 CLI 检查也保持通过。交付检查在 macOS、Python 3.9 同批并行执行，分别保存日志：`bash scripts/check.sh`、`bash easydev/tests/cases/public-contract-callers/run.sh`、`bash easydev/tests/cases/version-gate/run.sh`、`bash scripts/smoke-install.sh`、agent_runner unittest（29 项）与 SWE-bench unittest（48 项）均退出 0；版本降级分支九组 fixture 为两组通过、七组拒绝。`git status --short --untracked-files=all` 与暂存区核对确认未暂存，`git diff --check` 通过。安装冒烟本轮裸 `mktemp -d` 预检通过，直接执行原命令；此前全局签名配置的隔离验证保留为前两轮证据。
+
+未验证项：本机未安装 PyYAML，`skill_version.py` 与版本门禁的 PyYAML 分支留待已安装 PyYAML 的 CI 执行；本轮未在 Linux runner 上运行，`ubuntu-latest` 的 `/proc` 进程枚举差异仍待 CI 补充。本轮只完成实现与离线验证，独立复审由主代理继续调度；真实 Codex CLI、真实 pytest 与真实 SWE-bench 数据未运行，测试只用替身验证验收机制。随机完成标记用于拒绝硬编码输出，仍不能替代执行任意不可信代码所需的系统级隔离。
+
+## 0.14.4 更新说明（2026-10-24）
+
+- 修复深度审计确认的运行时规则冲突：`references/planning.md` 的「继续实施」补上不适用于「必须提问」情形的限定，消除可逆低成本默认与可见行为选择的重叠；`references/worktree.md` 收尾先核对授权基线（已获明确集成授权时按授权执行，推送、PR 与发布仍需明确授权），清理回退改为按路径 `git worktree remove`，不再附带仓库级 `git worktree prune`。
+- CI 补上三套离线维护检查（`easydev/tests/cases/public-contract-callers/run.sh`、agent_runner 与 SWE-bench 单元测试）：此前 CI 只跑 `scripts/check.sh` 与 `scripts/smoke-install.sh`，而 `tests/` 下文档已按 CI 会运行它们来陈述，Linux `/proc` 差异也指望 CI 补充。
+- 修正 `tests/README.md` 两处失实与漂移：固定补丁复验的红绿两段仍运行夹具自带的 `check_orders.py`（不依赖它的是独立验收 `acceptance.py`）；目录树补上 `audit-0.12.1.md` 与 `agent_runner/test_process_control.py`。
+
+验证：在 macOS 本机，仓库根目录按序实跑：`bash scripts/check.sh` 退出 0（版本一致性 0.14.4、链接与锚点、README bash 代码块、模型配置示例均 OK）；`bash easydev/tests/cases/public-contract-callers/run.sh` 退出 0（红/绿/独立验收通过，11 类伪修复被拒绝，无 `__pycache__` 残留）；`cd easydev && python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py'` 退出 0，28 项通过（66.9s）；`cd easydev && python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py'` 退出 0，43 项通过（55.6s）；`ruby -ryaml -e 'YAML.load_file(".github/workflows/checks.yml")'` 退出 0；`git status --short --untracked-files=all` 列出 8 个已修改文件且无未跟踪文件，`git diff --check` 退出 0。新增的三步作业未在 Linux runner 上实跑，本机无 PyYAML、CI 的 PyYAML 分支也未实跑；`ubuntu-latest` 上的 `/proc` 进程枚举差异仍待 CI 结果补充，本机验证只代表 macOS。维护规约要求的 B40/B49/B46 场景本轮未做决策回放或真实行为验证，只完成静态原文对照；这三项在补齐回放前不计为已通过，按用户决定先记录、暂缓补做。
+
 ## 0.14.3 更新说明（2026-10-24）
 
 - 按 0.14.2 的深度审计补齐门禁：根 `README.md` 的 EasyDev 版本行纳入 easydev 组（该行此前仍停在 0.14.0）；`SKILL.md` frontmatter 校验扩展到 easydev（体量不设上限，沿用无政策状态）；新增"技能目录必须登记版本来源"的覆盖断言；版本问题改为一次列全，不再在首个失败项目处退出。
