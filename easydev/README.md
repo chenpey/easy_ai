@@ -55,12 +55,12 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 默认开发、审查角色均继承宿主模型与推理深度，无须配置文件。需要分别指定角色时，可参考 [跨模型示例](examples/models.cross-provider.json)，或按下文写法自行配置。示例不会自动加载。
 
-例如，让 Gemini 负责开发、GPT 负责独立审查，可将以下内容保存到下述用户外部配置路径：
+例如，让 DeepSeek 负责开发、GPT 负责独立审查，可将以下内容保存到下述用户外部配置路径：
 
 ```json
 {
   "developer": {
-    "model": "antigravity-acp/gemini-3.8-flash",
+    "model": "opencode-go/deepseek-v4.1-flash",
     "reasoning_effort": "high"
   },
   "reviewer": {
@@ -70,7 +70,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
   "upgrades": [
     {
       "developer": {
-        "model": "antigravity-acp/gemini-4-argon",
+        "model": "opencode-go/deepseek-v4-pro",
         "reasoning_effort": "high"
       },
       "reviewer": {
@@ -84,7 +84,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
         "reasoning_effort": "high"
       },
       "reviewer": {
-        "model": "zed/claude-sonnet-5-5",
+        "model": "opencode-go/deepseek-v4-pro",
         "reasoning_effort": "high"
       }
     }
@@ -96,9 +96,9 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 | 阶段 | 开发模型 | 审查模型 |
 | --- | --- | --- |
-| 初始 | Gemini 3.8 Flash | GPT 6.1 Sol |
-| 第一次升级 | Gemini 4 Argon | GPT 6.1 Sol |
-| 第二次升级 | GPT 6.1 Sol | Claude Sonnet 5.5 |
+| 初始 | DeepSeek V4.1 Flash | GPT 6.1 Sol |
+| 第一次升级 | DeepSeek V4 Pro | GPT 6.1 Sol |
+| 第二次升级 | GPT 6.1 Sol | DeepSeek V4 Pro |
 
 配置 `upgrades` 后，同一确认问题在当前阶段至多试修一次；问题仍在或关闭证据不足时，按数组顺序升级，末级仍失败则停止自动修复。升级不增加审核轮数；模型不可用或网络故障不作为升级理由。不需要升级时设为 `"upgrades": []`。
 
