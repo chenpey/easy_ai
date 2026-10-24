@@ -1,6 +1,6 @@
 # EasyThinking
 
-版本：`0.3.0`
+版本：`0.3.2`
 
 帮助你理清问题、检查证据、比较选择，并找到可验证的下一步。简单问题直接回答，复杂问题按需分析，不套固定模板，也不替你做决定。
 
@@ -43,6 +43,8 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     mkdir -p "$stage"
     chmod 755 "$stage"
     cp -R "$tmp/repo/easythinking/SKILL.md" "$tmp/repo/easythinking/references" "$tmp/repo/easythinking/agents" "$stage/"
+    test -f "$stage/SKILL.md"
+    test -d "$stage/references"
     dest="$HOME/.agents/skills/easythinking"
     if [ -e "$dest" ]; then
       bak="$HOME/.agents/backups/easythinking.$(date +%s)"
@@ -71,6 +73,10 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     Copy-Item "$tmp\repo\easythinking\SKILL.md" $stage
     Copy-Item -Recurse "$tmp\repo\easythinking\references", "$tmp\repo\easythinking\agents" $stage
+    if (-not (Test-Path -Path (Join-Path $stage "SKILL.md") -PathType Leaf) -or
+        -not (Test-Path -Path (Join-Path $stage "references") -PathType Container)) {
+      throw "暂存目录不完整：缺少 SKILL.md 或 references/"
+    }
     if (Test-Path $dest) {
       $bak = Join-Path $bakDir ("easythinking." + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
       Move-Item $dest $bak
@@ -122,7 +128,7 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     for parent in "$HOME/.gemini/config/skills" "$HOME/.gemini/antigravity-cli/skills"; do
       mkdir -p "$parent" "$HOME/.gemini/backups"
       dest="$parent/easythinking"
-      stage="$parent/.stage.$$"
+      stage="$HOME/.gemini/.stage.$$"
       rm -rf "$stage"
       (
         trap 'rm -rf "$stage"' EXIT
