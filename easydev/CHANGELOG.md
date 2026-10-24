@@ -2,6 +2,13 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.14.2 更新说明（2026-10-24）
+
+- 门禁补上 easydev：`scripts/check.sh` 的版本一致性改为按子项目分组（easythinking 与 easydev 各自内部一致，不再要求跨项目同版本），新增 `easydev/README.md`、`easydev/SKILL.md`、`easydev/CHANGELOG.md` 三处版本提取；链接与锚点检查覆盖 `easydev/**/*.md`，bash 代码块语法检查同覆盖两个 README。
+- `README.md` 补上实现已有但此前未写明的约束：升级换角色后须为接管开发的模型重建独立审查实例、`ultra` 仅按明确要求启用、验证硬约束摘要，以及提交/发布/部署需显式授权（项目规则不能替代）。只改说明与门禁，运行规则未变。
+
+验证：`bash scripts/check.sh` 通过，并用临时改坏版本号与链接的反例确认新增覆盖会失败；easydev 仅改 `SKILL.md` 版本号，其余运行时文件未变。
+
 ## 0.14.1 更新说明（2026-10-24）
 
 - 删除 `examples/models.default.json`：它与内置 `inherit` 默认值语义重复，且无自动校验可防漂移；默认结构改由 `references/models.md` 描述，示例目录只保留能力演示性的 `models.cross-provider.json`。同步更新 `README.md`、`references/models.md` 与 `examples/README.md`。

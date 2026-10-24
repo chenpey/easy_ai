@@ -126,45 +126,43 @@ echo "=== 3. 版本号跨文件一致性检查 ==="
 python3 -c '
 import re, sys
 
-files = {
-    "root README": "README.md",
-    "easythinking README": "easythinking/README.md",
-    "SKILL.md": "easythinking/SKILL.md",
-    "CHANGELOG.md": "easythinking/CHANGELOG.md",
-    "tests/behavior.md": "easythinking/tests/behavior.md"
+# 版本一致性按子项目分组校验：项目内部必须一致，跨项目不要求相同版本。
+groups = {
+    "easythinking": {
+        "root README": ("README.md", r"\|\s*\[EasyThinking\]\(easythinking/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
+        "easythinking README": ("easythinking/README.md", r"^版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
+        "SKILL.md": ("easythinking/SKILL.md", r"version:\s*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?"),
+        "CHANGELOG.md": ("easythinking/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
+        "tests/behavior.md": ("easythinking/tests/behavior.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
+    },
+    "easydev": {
+        "README.md": ("easydev/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
+        "SKILL.md": ("easydev/SKILL.md", r"version:\s*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?"),
+        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明")
+    }
 }
 
-version_patterns = {
-    "root README": r"\|\s*\[EasyThinking\]\(easythinking/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|",
-    "easythinking README": r"^版本：`([0-9]+\.[0-9]+\.[0-9]+)`",
-    "SKILL.md": r"version:\s*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?",
-    "CHANGELOG.md": r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明",
-    "tests/behavior.md": r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"
-}
-
-versions = {}
-for name, path in files.items():
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    pattern = version_patterns[name]
-    m = re.search(pattern, content, re.MULTILINE)
-    if not m:
-        print(f"Error: 无法在 {path} ({name}) 中提取版本号", file=sys.stderr)
+for project, spec in groups.items():
+    versions = {}
+    for name, (path, pattern) in spec.items():
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        m = re.search(pattern, content, re.MULTILINE)
+        if not m:
+            print(f"Error: 无法在 {path} ({name}) 中提取版本号", file=sys.stderr)
+            sys.exit(1)
+        versions[name] = m.group(1)
+    print(f"提取版本号 [{project}]: {versions}")
+    unique_versions = set(versions.values())
+    if len(unique_versions) != 1:
+        print(f"Error: {project} 版本号不一致: {versions}", file=sys.stderr)
         sys.exit(1)
-    versions[name] = m.group(1)
-
-print(f"提取版本号: {versions}")
-unique_versions = set(versions.values())
-if len(unique_versions) != 1:
-    print(f"Error: 版本号不一致: {versions}", file=sys.stderr)
-    sys.exit(1)
-
-print(f"OK: 所有文件版本号一致 -> {unique_versions.pop()}")
+    print(f"OK: {project} 版本号一致 -> {unique_versions.pop()}")
 '
 
 echo "=== 4. Markdown 相对链接与 GitHub Slug 标题锚点精确检查 ==="
 python3 -c '
-import os, re, sys
+import glob, os, re, sys
 
 FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
 
@@ -234,7 +232,7 @@ files = [
     "easythinking/references/methods.md",
     "easythinking/references/examples.md",
     "easythinking/tests/behavior.md"
-]
+] + sorted(glob.glob("easydev/**/*.md", recursive=True))
 
 file_slugs = {f: extract_slugs(f) for f in files}
 link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -271,20 +269,21 @@ echo "=== 5. README bash 代码块语法检查 (bash -n) ==="
 python3 -c '
 import re, subprocess, sys
 
-with open("easythinking/README.md", "r", encoding="utf-8") as f:
-    content = f.read()
+for readme in ("easythinking/README.md", "easydev/README.md"):
+    with open(readme, "r", encoding="utf-8") as f:
+        content = f.read()
 
-bash_blocks = re.findall(r"^[ \t]*```bash\r?\n(.*?)\r?\n[ \t]*```", content, re.DOTALL | re.MULTILINE)
-print(f"找到 {len(bash_blocks)} 个 bash 代码块，正在逐个运行 bash -n 语法解析...")
-if len(bash_blocks) == 0:
-    print("Error: 未在 README.md 中找到任何 bash 代码块", file=sys.stderr)
-    sys.exit(1)
-
-for i, block in enumerate(bash_blocks, 1):
-    proc = subprocess.run(["bash", "-n"], input=block, text=True, capture_output=True)
-    if proc.returncode != 0:
-        print(f"Error: README.md 第 {i} 个 bash 代码块语法错误:\n{proc.stderr}", file=sys.stderr)
+    bash_blocks = re.findall(r"^[ \t]*```bash\r?\n(.*?)\r?\n[ \t]*```", content, re.DOTALL | re.MULTILINE)
+    print(f"{readme}: 找到 {len(bash_blocks)} 个 bash 代码块，正在逐个运行 bash -n 语法解析...")
+    if len(bash_blocks) == 0:
+        print(f"Error: 未在 {readme} 中找到任何 bash 代码块", file=sys.stderr)
         sys.exit(1)
+
+    for i, block in enumerate(bash_blocks, 1):
+        proc = subprocess.run(["bash", "-n"], input=block, text=True, capture_output=True)
+        if proc.returncode != 0:
+            print(f"Error: {readme} 第 {i} 个 bash 代码块语法错误:\n{proc.stderr}", file=sys.stderr)
+            sys.exit(1)
 
 print("OK: 所有 README bash 代码块语法均合法")
 '
