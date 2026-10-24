@@ -2,6 +2,14 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.14.1 更新说明（2026-10-24）
+
+- 删除 `examples/models.default.json`：它与内置 `inherit` 默认值语义重复，且无自动校验可防漂移；默认结构改由 `references/models.md` 描述，示例目录只保留能力演示性的 `models.cross-provider.json`。同步更新 `README.md`、`references/models.md` 与 `examples/README.md`。
+- `examples/README.md` 的配置优先级不再写模糊的 `easydev/models.json`，改为完整路径（macOS/Linux `~/.config/easydev/models.json`、Windows `%APPDATA%/easydev/models.json` 及回退），与 `references/models.md` 保持一致。
+- 跨供应商示例改用当前可用的完整模型 ID，升级阶段收敛为一档（开发 `codex/gpt-6.1-sol`、审查 `opencode-go/deepseek-v4.1-flash`，深度 `max`）。
+
+验证：`examples/` 下 JSON 解析通过；文档相对链接与锚点、版本号（`SKILL.md`、`README.md`、本文件）一致性检查通过；未执行真实 Agent 行为回归。
+
 ## 0.14.0 更新说明（2026-10-24）
 
 - 复核 0.13.0 技能内容审计，修复候选评审第二轮缺少委派额度的问题：新增实例上限为 `N + 2N + 2`，为第二轮保留最多两个复核实例；优先复用符合作者隔离条件的评估者，分别记录实例数与审核轮次，明确该额度不包含后续开发和最终审查。

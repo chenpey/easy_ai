@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`0.14.0`
+当前版本：`0.14.1`
 
 EasyDev 是面向编码 Agent 的 Skill，按任务风险组织设计、实现、排障、验证与审查。简单任务直接完成，复杂或高风险任务进入开发—独立审查—修复闭环。
 
@@ -53,7 +53,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认开发、审查角色均继承宿主模型与推理深度，无须配置文件。需要分别指定角色时，参考 [默认模板](examples/models.default.json) 或 [跨模型示例](examples/models.cross-provider.json)。示例不会自动加载。
+默认开发、审查角色均继承宿主模型与推理深度，无须配置文件。需要分别指定角色时，可参考 [跨模型示例](examples/models.cross-provider.json)，或按下文写法自行配置。示例不会自动加载。
 
 例如，让 Gemini 负责开发、GPT 负责独立审查，可将以下内容保存到下述用户外部配置路径：
 

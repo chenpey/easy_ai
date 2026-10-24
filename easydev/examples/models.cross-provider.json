@@ -1,6 +1,6 @@
 {
   "developer": {
-    "model": "antigravity-acp/gemini-3.8-flash",
+    "model": "opencode-go/deepseek-v4.1-flash",
     "reasoning_effort": "high"
   },
   "reviewer": {
@@ -10,22 +10,12 @@
   "upgrades": [
     {
       "developer": {
-        "model": "antigravity-acp/gemini-4-argon",
-        "reasoning_effort": "high"
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "max"
       },
       "reviewer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "high"
-      }
-    },
-    {
-      "developer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "high"
-      },
-      "reviewer": {
-        "model": "zed/claude-sonnet-5-5",
-        "reasoning_effort": "high"
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "reasoning_effort": "max"
       }
     }
   ]
