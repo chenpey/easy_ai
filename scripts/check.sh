@@ -4,14 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-echo "=== 1. Git diff formatting check (HEAD~1 + working tree) ==="
-if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-  git diff --check HEAD~1
-else
-  git diff --check HEAD
+echo "=== 1. 已跟踪文件行尾空白检查（不依赖提交深度） ==="
+# 直接扫描已跟踪文本文件：浅克隆（fetch-depth=1）或干净工作区都不会退化为空检查。
+# 新增文件类型时同步补充扩展名，否则该类型不受门禁覆盖。
+# *.patch 等格式文件含语义化行尾空格，不纳入扫描。
+WS_PATHS=('*.md' '*.sh' '*.yml' '*.yaml' '*.json' '*.py' '*.svg' '*.txt')
+ws_status=0
+ws_report="$(git grep -nI -E $'[ \t]+$' -- "${WS_PATHS[@]}")" || ws_status=$?
+if [ "$ws_status" -gt 1 ]; then
+  echo "Error: git grep 执行失败 (exit $ws_status)" >&2
+  exit 1
+fi
+if [ -n "$ws_report" ]; then
+  printf '%s\n' "$ws_report" >&2
+  echo "Error: 上述行存在行尾空白" >&2
+  exit 1
 fi
 git diff --check
-echo "OK: 无空白或冲突格式问题"
+echo "OK: 已跟踪文件与工作区均无行尾空白或冲突标记"
 
 echo "=== 2. SKILL.md 体量与 Frontmatter 校验 ==="
 SKILL_FILE="easythinking/SKILL.md"
@@ -40,23 +50,74 @@ if not m:
 
 fm = m.group(1)
 
-# 校验 name
-m_name = re.search(r"^name:\s*([^\s]+)", fm, re.MULTILINE)
-if not m_name or m_name.group(1) != "easythinking":
-    print("Error: frontmatter 中的 name 必须为 easythinking", file=sys.stderr)
-    sys.exit(1)
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
-# 校验 description 存在且长度 <= 1024
-m_desc = re.search(r"^description:\s*(.*?)(?=\n[a-zA-Z0-9_-]+:|\Z)", fm, re.DOTALL | re.MULTILINE)
-if not m_desc:
-    print("Error: frontmatter 缺少 description", file=sys.stderr)
-    sys.exit(1)
-desc = m_desc.group(1).strip()
-desc_len = len(desc)
-print(f"description 长度: {desc_len} 字符 (上限 1024)")
-if desc_len == 0 or desc_len > 1024:
-    print(f"Error: description 长度不合规 ({desc_len})", file=sys.stderr)
-    sys.exit(1)
+if yaml is not None:
+    try:
+        data = yaml.safe_load(fm)
+    except Exception as exc:  # yaml.YAMLError 或标量类型错误
+        print(f"Error: frontmatter 不是合法 YAML: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(data, dict):
+        print("Error: frontmatter 必须是 YAML 映射", file=sys.stderr)
+        sys.exit(1)
+    unknown = set(data) - {"name", "description", "metadata"}
+    if unknown:
+        print(f"Error: frontmatter 含未知顶层字段: {sorted(unknown)}", file=sys.stderr)
+        sys.exit(1)
+    if data.get("name") != "easythinking":
+        print("Error: frontmatter 中的 name 必须为 easythinking", file=sys.stderr)
+        sys.exit(1)
+    desc = data.get("description")
+    if not isinstance(desc, str) or not desc.strip():
+        print("Error: frontmatter 缺少非空 description", file=sys.stderr)
+        sys.exit(1)
+    meta = data.get("metadata")
+    if not isinstance(meta, dict) or not re.fullmatch(r"\d+\.\d+\.\d+", str(meta.get("version", ""))):
+        print("Error: metadata.version 缺失或格式不为 x.y.z", file=sys.stderr)
+        sys.exit(1)
+    print(f"description 长度: {len(desc)} 字符 (上限 1024) [PyYAML 已解析]")
+    if len(desc) > 1024:
+        print(f"Error: description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
+        sys.exit(1)
+else:
+    print("提示: 未安装 PyYAML，启用严格降级校验（拒绝 description 中的 ASCII \": \" 与非法顶层行）")
+    m_name = re.search(r"^name:[ \t]*(\S+)[ \t]*$", fm, re.MULTILINE)
+    if not m_name or m_name.group(1) != "easythinking":
+        print("Error: frontmatter 中的 name 必须为 easythinking", file=sys.stderr)
+        sys.exit(1)
+    m_desc = re.search(r"^description:[ \t]*(.*?)(?=\n[a-zA-Z0-9_-]+:|\Z)", fm, re.DOTALL | re.MULTILINE)
+    if not m_desc:
+        print("Error: frontmatter 缺少 description", file=sys.stderr)
+        sys.exit(1)
+    body = m_desc.group(1)
+    if re.search(r":\s", body):
+        print("Error: description 含 ASCII \": \"，会被 YAML 当作键值分隔而解析失败", file=sys.stderr)
+        sys.exit(1)
+    for line in fm.splitlines():
+        if line and not line[0].isspace() and not re.match(r"^[a-zA-Z0-9_-]+:", line):
+            print(f"Error: frontmatter 存在非法顶层行: {line!r}", file=sys.stderr)
+            sys.exit(1)
+    if not re.search(r"^metadata:[ \t]*$", fm, re.MULTILINE):
+        print("Error: frontmatter 缺少 metadata 映射", file=sys.stderr)
+        sys.exit(1)
+    if not re.search(r"^[ \t]+version:[ \t]*\"?\d+\.\d+\.\d+\"?[ \t]*$", fm, re.MULTILINE):
+        print("Error: metadata.version 缺失或格式不为 x.y.z", file=sys.stderr)
+        sys.exit(1)
+    lines = body.strip().splitlines()
+    if lines and lines[0].lstrip().startswith((">", "|")):
+        lines = lines[1:]
+    desc = " ".join(part.strip() for part in lines).strip()
+    print(f"description 长度: {len(desc)} 字符 (上限 1024) [降级校验]")
+    if not desc:
+        print("Error: frontmatter 缺少非空 description", file=sys.stderr)
+        sys.exit(1)
+    if len(desc) > 1024:
+        print(f"Error: description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
+        sys.exit(1)
 
 print("OK: SKILL.md frontmatter 校验通过")
 '
@@ -103,7 +164,28 @@ print(f"OK: 所有文件版本号一致 -> {unique_versions.pop()}")
 
 echo "=== 4. Markdown 相对链接与 GitHub Slug 标题锚点精确检查 ==="
 python3 -c '
-import os, re, sys, unicodedata
+import os, re, sys
+
+FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+
+def strip_fenced_code(content):
+    """移除围栏代码块（``` / ~~~），代码块内的 # 行不是标题。"""
+    out = []
+    fence = None
+    for line in content.splitlines():
+        m = FENCE_RE.match(line)
+        if fence is None:
+            if m:
+                fence = m.group(1)
+                out.append("")
+                continue
+            out.append(line)
+            continue
+        # 已在围栏内：仅在出现同类且不短于开启处的围栏时闭合
+        if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
+            fence = None
+        out.append("")
+    return "\n".join(out)
 
 def github_slug(heading_text):
     # 移除 HTML 标签及链接语法，仅保留纯文本
@@ -120,24 +202,28 @@ def extract_slugs(file_path):
     slug_counts = {}
     slugs = set()
     with open(file_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("#"):
-                m = re.match(r"^#{1,6}\s+(.+)$", line)
-                if m:
-                    raw_heading = m.group(1).strip()
-                    # 去掉末尾可能存在的 #
-                    raw_heading = re.sub(r"\s+#+$", "", raw_heading)
-                    base_slug = github_slug(raw_heading)
-                    if not base_slug:
-                        continue
-                    if base_slug in slug_counts:
-                        slug_counts[base_slug] += 1
-                        final_slug = f"{base_slug}-{slug_counts[base_slug]}"
-                    else:
-                        slug_counts[base_slug] = 0
-                        final_slug = base_slug
-                    slugs.add(final_slug)
+        content = strip_fenced_code(f.read())
+    for line in content.splitlines():
+        # 缩进 4 个空格以上属于缩进代码块，其中的 # 不是标题
+        if len(line) - len(line.lstrip()) >= 4:
+            continue
+        line = line.strip()
+        if line.startswith("#"):
+            m = re.match(r"^#{1,6}\s+(.+)$", line)
+            if m:
+                raw_heading = m.group(1).strip()
+                # 去掉末尾可能存在的 #
+                raw_heading = re.sub(r"\s+#+$", "", raw_heading)
+                base_slug = github_slug(raw_heading)
+                if not base_slug:
+                    continue
+                if base_slug in slug_counts:
+                    slug_counts[base_slug] += 1
+                    final_slug = f"{base_slug}-{slug_counts[base_slug]}"
+                else:
+                    slug_counts[base_slug] = 0
+                    final_slug = base_slug
+                slugs.add(final_slug)
     return slugs
 
 files = [
