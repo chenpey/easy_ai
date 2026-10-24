@@ -24,28 +24,40 @@ git diff --check
 echo "OK: 已跟踪文件与工作区均无行尾空白或冲突标记"
 
 echo "=== 2. SKILL.md 体量与 Frontmatter 校验 ==="
-SKILL_FILE="easythinking/SKILL.md"
-if [ ! -f "$SKILL_FILE" ]; then
-  echo "Error: $SKILL_FILE 不存在" >&2
-  exit 1
-fi
-SKILL_SIZE=$(wc -c < "$SKILL_FILE" | tr -d ' ')
-MAX_SIZE=12288
-echo "当前大小: $SKILL_SIZE 字节 (上限: $MAX_SIZE 字节)"
-if [ "$SKILL_SIZE" -gt "$MAX_SIZE" ]; then
-  echo "Error: $SKILL_FILE 超过体量上限 ($SKILL_SIZE > $MAX_SIZE)" >&2
-  exit 1
-fi
+# 体量上限按技能分别声明；easydev 暂无体量政策，只校验 frontmatter。
+for SKILL_NAME in easythinking easydev; do
+  SKILL_FILE="$SKILL_NAME/SKILL.md"
+  if [ ! -f "$SKILL_FILE" ]; then
+    echo "Error: $SKILL_FILE 不存在" >&2
+    exit 1
+  fi
+  SKILL_SIZE=$(wc -c < "$SKILL_FILE" | tr -d ' ')
+  case "$SKILL_NAME" in
+    easythinking) MAX_SIZE=12288 ;;
+    *) MAX_SIZE=0 ;;
+  esac
+  if [ "$MAX_SIZE" -gt 0 ]; then
+    echo "$SKILL_FILE 大小: $SKILL_SIZE 字节 (上限: $MAX_SIZE 字节)"
+    if [ "$SKILL_SIZE" -gt "$MAX_SIZE" ]; then
+      echo "Error: $SKILL_FILE 超过体量上限 ($SKILL_SIZE > $MAX_SIZE)" >&2
+      exit 1
+    fi
+  else
+    echo "$SKILL_FILE 大小: $SKILL_SIZE 字节 (未设上限)"
+  fi
 
-python3 -c '
+  python3 - "$SKILL_NAME" <<'PY'
 import re, sys
 
-with open("easythinking/SKILL.md", "r", encoding="utf-8") as f:
+name = sys.argv[1]
+path = f"{name}/SKILL.md"
+
+with open(path, "r", encoding="utf-8") as f:
     content = f.read()
 
 m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
 if not m:
-    print("Error: SKILL.md 缺少有效的 YAML frontmatter", file=sys.stderr)
+    print(f"Error: {path} 缺少有效的 YAML frontmatter", file=sys.stderr)
     sys.exit(1)
 
 fm = m.group(1)
@@ -59,21 +71,21 @@ if yaml is not None:
     try:
         data = yaml.safe_load(fm)
     except Exception as exc:  # yaml.YAMLError 或标量类型错误
-        print(f"Error: frontmatter 不是合法 YAML: {exc}", file=sys.stderr)
+        print(f"Error: {path} frontmatter 不是合法 YAML: {exc}", file=sys.stderr)
         sys.exit(1)
     if not isinstance(data, dict):
-        print("Error: frontmatter 必须是 YAML 映射", file=sys.stderr)
+        print(f"Error: {path} frontmatter 必须是 YAML 映射", file=sys.stderr)
         sys.exit(1)
     unknown = set(data) - {"name", "description", "metadata"}
     if unknown:
-        print(f"Error: frontmatter 含未知顶层字段: {sorted(unknown)}", file=sys.stderr)
+        print(f"Error: {path} frontmatter 含未知顶层字段: {sorted(unknown)}", file=sys.stderr)
         sys.exit(1)
-    if data.get("name") != "easythinking":
-        print("Error: frontmatter 中的 name 必须为 easythinking", file=sys.stderr)
+    if data.get("name") != name:
+        print(f"Error: {path} frontmatter 中的 name 必须为 {name}", file=sys.stderr)
         sys.exit(1)
     desc = data.get("description")
     if not isinstance(desc, str) or not desc.strip():
-        print("Error: frontmatter 缺少非空 description", file=sys.stderr)
+        print(f"Error: {path} frontmatter 缺少非空 description", file=sys.stderr)
         sys.exit(1)
     meta = data.get("metadata")
     if not isinstance(meta, dict) or not re.fullmatch(r"\d+\.\d+\.\d+", str(meta.get("version", ""))):
@@ -81,21 +93,22 @@ if yaml is not None:
         sys.exit(1)
     print(f"description 长度: {len(desc)} 字符 (上限 1024) [PyYAML 已解析]")
     if len(desc) > 1024:
-        print(f"Error: description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
+        print(f"Error: {path} description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
         sys.exit(1)
 else:
-    print("提示: 未安装 PyYAML，启用严格降级校验（拒绝 description 中的 ASCII \": \" 与非法顶层行）")
+    print("提示: 未安装 PyYAML，启用严格降级校验（拒绝内联 description 中的 ASCII \": \" 与非法顶层行）")
     m_name = re.search(r"^name:[ \t]*(\S+)[ \t]*$", fm, re.MULTILINE)
-    if not m_name or m_name.group(1) != "easythinking":
-        print("Error: frontmatter 中的 name 必须为 easythinking", file=sys.stderr)
+    if not m_name or m_name.group(1) != name:
+        print(f"Error: {path} frontmatter 中的 name 必须为 {name}", file=sys.stderr)
         sys.exit(1)
     m_desc = re.search(r"^description:[ \t]*(.*?)(?=\n[a-zA-Z0-9_-]+:|\Z)", fm, re.DOTALL | re.MULTILINE)
     if not m_desc:
         print("Error: frontmatter 缺少 description", file=sys.stderr)
         sys.exit(1)
     body = m_desc.group(1)
-    if re.search(r":\s", body):
-        print("Error: description 含 ASCII \": \"，会被 YAML 当作键值分隔而解析失败", file=sys.stderr)
+    # 块标量（> 或 |）内的 ": " 是字面文本，不会破坏 YAML；只有内联标量才有该风险。
+    if not body.lstrip().startswith((">", "|")) and re.search(r":\s", body):
+        print(f"Error: {path} 的 description 是内联标量且含 ASCII \": \"，会被 YAML 当作键值分隔而解析失败", file=sys.stderr)
         sys.exit(1)
     for line in fm.splitlines():
         if line and not line[0].isspace() and not re.match(r"^[a-zA-Z0-9_-]+:", line):
@@ -113,18 +126,19 @@ else:
     desc = " ".join(part.strip() for part in lines).strip()
     print(f"description 长度: {len(desc)} 字符 (上限 1024) [降级校验]")
     if not desc:
-        print("Error: frontmatter 缺少非空 description", file=sys.stderr)
+        print(f"Error: {path} frontmatter 缺少非空 description", file=sys.stderr)
         sys.exit(1)
     if len(desc) > 1024:
-        print(f"Error: description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
+        print(f"Error: {path} description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
         sys.exit(1)
 
-print("OK: SKILL.md frontmatter 校验通过")
-'
+print(f"OK: {path} frontmatter 校验通过")
+PY
+done
 
 echo "=== 3. 版本号跨文件一致性检查 ==="
 python3 -c '
-import re, sys
+import glob, re, sys
 
 # 版本一致性按子项目分组校验：项目内部必须一致，跨项目不要求相同版本。
 groups = {
@@ -136,12 +150,21 @@ groups = {
         "tests/behavior.md": ("easythinking/tests/behavior.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
     },
     "easydev": {
+        "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
         "README.md": ("easydev/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
         "SKILL.md": ("easydev/SKILL.md", r"version:\s*\"?([0-9]+\.[0-9]+\.[0-9]+)\"?"),
         "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明")
     }
 }
 
+# 覆盖断言：仓库里每个含 SKILL.md 的技能目录都必须登记版本来源，避免新增技能静默漏检。
+skill_dirs = {p.split("/")[0] for p in glob.glob("*/SKILL.md")}
+unregistered = sorted(skill_dirs - set(groups))
+if unregistered:
+    print(f"Error: 技能目录未登记版本来源: {unregistered}", file=sys.stderr)
+    sys.exit(1)
+
+errors = []
 for project, spec in groups.items():
     versions = {}
     for name, (path, pattern) in spec.items():
@@ -149,15 +172,21 @@ for project, spec in groups.items():
             content = f.read()
         m = re.search(pattern, content, re.MULTILINE)
         if not m:
-            print(f"Error: 无法在 {path} ({name}) 中提取版本号", file=sys.stderr)
-            sys.exit(1)
+            errors.append(f"无法在 {path} ({name}) 中提取版本号")
+            continue
         versions[name] = m.group(1)
     print(f"提取版本号 [{project}]: {versions}")
     unique_versions = set(versions.values())
     if len(unique_versions) != 1:
-        print(f"Error: {project} 版本号不一致: {versions}", file=sys.stderr)
-        sys.exit(1)
+        errors.append(f"{project} 版本号不一致: {versions}")
+        continue
     print(f"OK: {project} 版本号一致 -> {unique_versions.pop()}")
+
+# 一次列全所有项目的版本问题，避免逐个修复后才发现下一个。
+if errors:
+    for err in errors:
+        print(f"Error: {err}", file=sys.stderr)
+    sys.exit(1)
 '
 
 echo "=== 4. Markdown 相对链接与 GitHub Slug 标题锚点精确检查 ==="
@@ -286,6 +315,45 @@ for readme in ("easythinking/README.md", "easydev/README.md"):
             sys.exit(1)
 
 print("OK: 所有 README bash 代码块语法均合法")
+'
+
+echo "=== 6. 模型配置示例校验 ==="
+python3 -c '
+import glob, json, re, sys
+
+files = sorted(glob.glob("easydev/examples/*.json"))
+if not files:
+    print("Error: easydev/examples 下没有 JSON 示例", file=sys.stderr)
+    sys.exit(1)
+
+for path in files:
+    try:
+        with open(path, encoding="utf-8") as f:
+            json.load(f)
+    except json.JSONDecodeError as exc:
+        print(f"Error: {path} 不是合法 JSON: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"OK: {path} 解析通过")
+
+example = "easydev/examples/models.cross-provider.json"
+if example in files:
+    with open("easydev/README.md", encoding="utf-8") as f:
+        readme = f.read()
+    m = re.search(r"^```json\n(.*?)^```", readme, re.DOTALL | re.MULTILINE)
+    if not m:
+        print("Error: easydev/README.md 未找到 json 代码块", file=sys.stderr)
+        sys.exit(1)
+    try:
+        block = json.loads(m.group(1))
+    except json.JSONDecodeError as exc:
+        print(f"Error: easydev/README.md 内联示例不是合法 JSON: {exc}", file=sys.stderr)
+        sys.exit(1)
+    with open(example, encoding="utf-8") as f:
+        reference = json.load(f)
+    if block != reference:
+        print(f"Error: easydev/README.md 内联示例与 {example} 不一致", file=sys.stderr)
+        sys.exit(1)
+    print(f"OK: easydev/README.md 内联示例与 {example} 一致")
 '
 
 echo "=== 全部自动化门禁检查通过 ==="

@@ -108,7 +108,7 @@ assert_skills_root_clean() {
   local entries
   entries="$(ls -A "$TMP_HOME/.agents/skills")"
   [ "$entries" = "easythinking" ] || fail "skills 根目录内容异常：$entries"
-  pass "skills 根目录只有 easythinking"
+  pass "skills 根目录只有 easythinking（easydev 场景尚未执行）"
 }
 
 assert_backup_outside_skills() {
@@ -191,5 +191,30 @@ assert_perm_755 "$DEST"
 assert_no_stage_residue
 assert_skills_root_clean
 pass "软链接安装场景通过"
+
+echo "=== 场景 7：easydev 运行时文件集（README 提示词：SKILL.md + references/ + agents/） ==="
+# easydev 的安装说明是给 Agent 的提示词，没有可直接执行的 bash 块；
+# 这里按其声明的文件集落盘，校验相对位置与"不装维护文件"的边界。
+DEV_SRC="$ROOT_DIR/easydev"
+DEV_DEST="$TMP_HOME/.agents/skills/easydev"
+mkdir -p "$DEV_DEST"
+cp "$DEV_SRC/SKILL.md" "$DEV_DEST/SKILL.md"
+cp -R "$DEV_SRC/references" "$DEV_DEST/references"
+cp -R "$DEV_SRC/agents" "$DEV_DEST/agents"
+[ -f "$DEV_DEST/SKILL.md" ] || fail "easydev 未安装 SKILL.md"
+[ -d "$DEV_DEST/references" ] || fail "easydev 未安装 references/"
+[ -d "$DEV_DEST/agents" ] || fail "easydev 未安装 agents/"
+[ ! -e "$DEV_DEST/tests" ] && [ ! -e "$DEV_DEST/CHANGELOG.md" ] && [ ! -e "$DEV_DEST/README.md" ] || fail "easydev 安装了运行时不需要的文件"
+DEV_SRC_REFS=$(ls "$DEV_SRC/references"/*.md | wc -l | tr -d ' ')
+DEV_DEST_REFS=$(ls "$DEV_DEST/references"/*.md | wc -l | tr -d ' ')
+[ "$DEV_SRC_REFS" = "$DEV_DEST_REFS" ] || fail "easydev references 数量不一致：$DEV_DEST_REFS != $DEV_SRC_REFS"
+grep -q '^name: easydev$' "$DEV_DEST/SKILL.md" || fail "easydev SKILL.md 的 frontmatter name 不是 easydev"
+DEV_VERSION=$(grep -m1 '^  version:' "$DEV_DEST/SKILL.md" | sed 's/.*"\(.*\)".*/\1/')
+grep -q "当前版本：\`$DEV_VERSION\`" "$DEV_SRC/README.md" || fail "easydev SKILL.md 版本 $DEV_VERSION 与 README 不一致"
+assert_perm_755 "$DEV_DEST"
+DEV_ENTRIES=$(ls -A "$TMP_HOME/.agents/skills" | sort | tr '\n' ' ')
+[ "$DEV_ENTRIES" = "easydev easythinking " ] || fail "skills 根目录内容异常：$DEV_ENTRIES"
+assert_no_stage_residue
+pass "easydev 文件集完整，skills 根目录同时容纳两个技能"
 
 echo "=== 安装脚本冒烟测试全部通过（PowerShell 版未覆盖） ==="

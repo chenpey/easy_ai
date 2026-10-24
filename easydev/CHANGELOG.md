@@ -2,6 +2,16 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.14.3 更新说明（2026-10-24）
+
+- 按 0.14.2 的深度审计补齐门禁：根 `README.md` 的 EasyDev 版本行纳入 easydev 组（该行此前仍停在 0.14.0）；`SKILL.md` frontmatter 校验扩展到 easydev（体量不设上限，沿用无政策状态）；新增"技能目录必须登记版本来源"的覆盖断言；版本问题改为一次列全，不再在首个失败项目处退出。
+- 新增模型配置示例校验：`easydev/examples/*.json` 必须可解析，且 `README.md` 内联示例与 `models.cross-provider.json` 必须一致（对应此前只在发布清单里声明的检查）。
+- 降级 frontmatter 校验修正假阳性：块标量（`>`/`|`）内的 `": "` 是字面文本，只有内联 description 才拒绝；此前会让 easydev 这类含英文冒号的块标量在本机（无 PyYAML）误报。
+- `scripts/smoke-install.sh` 增加 easydev 场景：按其 README 提示词的文件集（SKILL.md + references/ + agents/）落盘，断言不含维护文件、references 数量一致、name 正确，并校验 skills 根目录同时容纳两个技能。
+- `README.md` 的外部边界枚举与 `SKILL.md` 对齐（网络、命令行工具、时钟、环境能力等）。
+
+验证：`bash -n` 与 `bash scripts/check.sh` 通过；8 项负例（根 README 版本、easydev 版本不一致、frontmatter 缺 version、name 不符、非法 JSON、README 示例漂移、未登记技能目录、easythinking 回归）均被拦截，两个项目同时不一致时一次列全；`SMOKE_TMP` 指定的临时 HOME 下 `bash scripts/smoke-install.sh` 通过（含新增 easydev 场景）；两个 `SKILL.md` 的 frontmatter 经 Ruby YAML 解析通过，本机无 PyYAML，CI 的 PyYAML 分支据此推定、未实跑。
+
 ## 0.14.2 更新说明（2026-10-24）
 
 - 门禁补上 easydev：`scripts/check.sh` 的版本一致性改为按子项目分组（easythinking 与 easydev 各自内部一致，不再要求跨项目同版本），新增 `easydev/README.md`、`easydev/SKILL.md`、`easydev/CHANGELOG.md` 三处版本提取；链接与锚点检查覆盖 `easydev/**/*.md`，bash 代码块语法检查同覆盖两个 README。
