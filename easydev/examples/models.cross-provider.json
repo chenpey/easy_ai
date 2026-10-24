@@ -10,12 +10,22 @@
   "upgrades": [
     {
       "developer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "max"
+        "model": "opencode-go/deepseek-v4-pro",
+        "reasoning_effort": "high"
       },
       "reviewer": {
-        "model": "opencode-go/deepseek-v4.1-flash",
-        "reasoning_effort": "max"
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "high"
+      }
+    },
+    {
+      "developer": {
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "high"
+      },
+      "reviewer": {
+        "model": "opencode-go/deepseek-v4-pro",
+        "reasoning_effort": "high"
       }
     }
   ]

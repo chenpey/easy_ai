@@ -6,7 +6,7 @@
 
 - 删除 `examples/models.default.json`：它与内置 `inherit` 默认值语义重复，且无自动校验可防漂移；默认结构改由 `references/models.md` 描述，示例目录只保留能力演示性的 `models.cross-provider.json`。同步更新 `README.md`、`references/models.md` 与 `examples/README.md`。
 - `examples/README.md` 的配置优先级不再写模糊的 `easydev/models.json`，改为完整路径（macOS/Linux `~/.config/easydev/models.json`、Windows `%APPDATA%/easydev/models.json` 及回退），与 `references/models.md` 保持一致。
-- 跨供应商示例改用当前可用的完整模型 ID，升级阶段收敛为一档（开发 `codex/gpt-6.1-sol`、审查 `opencode-go/deepseek-v4.1-flash`，深度 `max`）。
+- 跨供应商示例改用当前可用的完整模型 ID：开发从 `opencode-go/deepseek-v4.1-flash` 起步，两档升级分别由 `opencode-go/deepseek-v4-pro` 与 `codex/gpt-6.1-sol` 互换开发/审查角色，深度统一 `high`。
 
 验证：`examples/` 下 JSON 解析通过；文档相对链接与锚点、版本号（`SKILL.md`、`README.md`、本文件）一致性检查通过；未执行真实 Agent 行为回归。
 
