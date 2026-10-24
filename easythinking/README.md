@@ -1,6 +1,6 @@
 # EasyThinking
 
-版本：`0.2.7`
+版本：`0.2.8`
 
 帮助你理清问题、检查证据、比较选择，并找到可验证的下一步。简单问题直接回答，复杂问题按需分析，不套固定模板，也不替你做决定。
 
@@ -26,7 +26,7 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
 
 ### 方式二：手动安装（确定性对照）
 
-如果需要稳定、可复现的安装，可在终端执行以下命令（仅安装运行时所需的 `SKILL.md`、`references/` 与 `agents/`，先在同目录暂存校验成功后再备份替换，避免克隆或复制失败时破坏已安装版本）。各 Agent 的技能目录约定可能随版本变化，请以各自官方文档为准。
+如果需要稳定、可复现的安装，可在终端执行以下命令（仅安装运行时所需的 `SKILL.md`、`references/` 与 `agents/`；先在专用临时目录暂存并校验成功，备份旧版至 skills 目录之外的专用备份目录，再原子替换，避免克隆失败或同名备份造成 Agent 重复扫描加载）。各 Agent 的技能目录约定可能随版本变化，请以各自官方文档为准。
 
 #### 1. 通用目录（Codex、Cursor、OpenCode、Pi、DeepSeek Harness 等常见约定）
 
@@ -35,19 +35,22 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
   (
     set -euo pipefail
     tmp="$(mktemp -d)"
-    stage="$HOME/.agents/skills/.easythinking.stage.$$"
+    stage="$(mktemp -d)"
     trap 'rm -rf "$tmp" "$stage"' EXIT
     git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp/repo"
     mkdir -p "$stage"
     cp -R "$tmp/repo/easythinking/SKILL.md" "$tmp/repo/easythinking/references" "$tmp/repo/easythinking/agents" "$stage/"
     dest="$HOME/.agents/skills/easythinking"
+    mkdir -p "$HOME/.agents/skills"
     if [ -e "$dest" ]; then
-      bak="$HOME/.agents/skills/easythinking.bak.$(date +%s)"
+      bak_dir="$HOME/.agents/backups"
+      mkdir -p "$bak_dir"
+      bak="$bak_dir/easythinking.$(date +%s)"
       mv "$dest" "$bak"
       echo "已备份旧版至: $bak"
     fi
     mv "$stage" "$dest"
-    echo "已安装至: $dest ($(grep -m1 'version:' "$dest/SKILL.md" | awk '{print $2}'))"
+    echo "已安装至: $dest ($(grep -m1 'version:' "$dest/SKILL.md" | awk '{print $2}' | tr -d '"'))"
   )
   ```
 
@@ -55,16 +58,20 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
   ```powershell
   $ErrorActionPreference = "Stop"
   $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("easy_ai_" + [guid]::NewGuid())
-  $skillsRoot = Join-Path $HOME ".agents\skills"
-  $stage = Join-Path $skillsRoot (".easythinking.stage." + $PID)
-  $dest = Join-Path $skillsRoot "easythinking"
+  $stage = Join-Path ([System.IO.Path]::GetTempPath()) ("easy_stage_" + [guid]::NewGuid())
+  $dest = Join-Path $HOME ".agents\skills\easythinking"
   try {
     git clone --depth=1 https://github.com/chenpey/easy_ai.git "$tmp\repo"
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed with exit code $LASTEXITCODE" }
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     Copy-Item "$tmp\repo\easythinking\SKILL.md" $stage
     Copy-Item -Recurse "$tmp\repo\easythinking\references", "$tmp\repo\easythinking\agents" $stage
+    $destParent = Split-Path -Parent $dest
+    New-Item -ItemType Directory -Force -Path $destParent | Out-Null
     if (Test-Path $dest) {
-      $bak = "$dest.bak.$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+      $bakDir = Join-Path $HOME ".agents\backups"
+      New-Item -ItemType Directory -Force -Path $bakDir | Out-Null
+      $bak = Join-Path $bakDir ("easythinking." + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
       Move-Item $dest $bak
       Write-Host "已备份旧版至: $bak"
     }
@@ -86,13 +93,16 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     set -euo pipefail
     src="$HOME/.agents/skills/easythinking"
     dest="$HOME/.claude/skills/easythinking"
-    stage="$HOME/.claude/skills/.easythinking.stage.$$"
-    trap 'rm -rf "$stage"' EXIT
     test -f "$src/SKILL.md"
+    stage="$(mktemp -d)"
+    trap 'rm -rf "$stage"' EXIT
     mkdir -p "$stage"
     cp -R "$src/." "$stage/"
+    mkdir -p "$HOME/.claude/skills"
     if [ -e "$dest" ]; then
-      bak="$HOME/.claude/skills/easythinking.bak.$(date +%s)"
+      bak_dir="$HOME/.claude/backups"
+      mkdir -p "$bak_dir"
+      bak="$bak_dir/easythinking.$(date +%s)"
       mv "$dest" "$bak"
       echo "已备份旧版至: $bak"
     fi
@@ -108,17 +118,23 @@ https://github.com/chenpey/easy_ai/tree/main/easythinking
     src="$HOME/.agents/skills/easythinking"
     test -f "$src/SKILL.md"
     for parent in "$HOME/.gemini/config/skills" "$HOME/.gemini/antigravity-cli/skills"; do
+      mkdir -p "$parent"
       dest="$parent/easythinking"
-      stage="$parent/.easythinking.stage.$$"
-      mkdir -p "$stage"
-      cp -R "$src/." "$stage/"
-      if [ -e "$dest" ]; then
-        bak="$parent/easythinking.bak.$(date +%s)"
-        mv "$dest" "$bak"
-        echo "已备份旧版至: $bak"
-      fi
-      mv "$stage" "$dest"
-      echo "已同步至: $dest"
+      stage="$(mktemp -d)"
+      (
+        trap 'rm -rf "$stage"' EXIT
+        mkdir -p "$stage"
+        cp -R "$src/." "$stage/"
+        if [ -e "$dest" ]; then
+          bak_dir="$HOME/.gemini/backups"
+          mkdir -p "$bak_dir"
+          bak="$bak_dir/easythinking.$(date +%s)"
+          mv "$dest" "$bak"
+          echo "已备份旧版至: $bak"
+        fi
+        mv "$stage" "$dest"
+        echo "已同步至: $dest"
+      )
     done
   )
   ```
