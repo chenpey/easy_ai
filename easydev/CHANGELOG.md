@@ -2,6 +2,36 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.2.6 更新说明（2026-10-26）
+
+只收口示例的分发口径，不改档位判定、预算或状态机。
+
+- **删除 `examples/`，示例只留在 README**：`models.cross-provider.json` 与 `examples/README.md`
+  移除，README 的「模型配置」一节成为唯一示例来源；其中仍成立的两点（ID 是占位值、不另放全
+  `inherit` 示例的理由、示例不自动加载）并入该节。
+- **安装契约不再被绕过**：`references/models.md` 原先把形状示例链到 `../examples/…`，而安装集
+  只有 `SKILL.md`、`references/`、`agents/`——已发布安装里这条链接一直是断的（1.2.4 同样如此）。
+  现改为指向仓库 README 的模型配置一节，与 `setup.md` 的既有写法一致；安装集不变。
+- **`check.sh` §6 改为校验内联示例**：原来要求 `easydev/examples/*.json` 存在且与 README 内联块
+  一致；目录删除后改为直接校验 README 的 json 代码块，按 `references/models.md` 的字段节查角色
+  字段（只允许 `model`/`reasoning_effort`）、深度枚举、`model` 的供应商与模型名都非空，以及
+  `upgrades` 的结构（最多两项、每项含完整 developer 与 reviewer、不含 designer、每阶段至少一项
+  与上一阶段不同）。示例是唯一事实源，另按它自己声明的形状断言：基础开发与审查分属不同供应商、
+  首个升级阶段把两者对调。门禁不再依赖 `examples/`。
+
+验证：九项检查全绿（`check.sh` rc=0：四处版本 1.2.6、SKILL 字节、链接锚点、内联示例字段契约；
+design-gate 65/65、version-gate、audit-overflow、public-contract-callers、`role_metric`、agent_runner
+36 项、swebench 55 项）。§6 另做 10 个变异——`/`、`/model`、`provider/`、纯空白段、`upgrades: []`、
+基础角色同供应商、升级未对调、`inherit` 作基础、缺 `reasoning_effort`、`upgrades: [null]`——全部按
+预期非零退出并指向具体分支。独立审查 3 轮（`codex/gpt-6.1-sol:high`，只读）：首轮 1×P2（§6 只验
+`model` 带前缀），修复后定向复审 2×P2（空供应商/空模型名放行、通用 schema 未接替跨供应商对调的
+示例语义），再修后第 3 轮零发现；`r=3/5`、`d=0/3`（单文件脚本、无对外契约或持久数据，设计门控未
+命中）。
+
+未验证：本地安装目录（`~/.agents/skills/easydev`）的断链靠脚本离线复查，门禁只校验仓库内相对
+链接，看不见「仓库有、安装没有」这类差异；`scripts/smoke-install.sh` 在本机被沙箱拒绝
+（`mktemp: Operation not permitted`）未运行；审查者只做静态只读复核，未独立执行命令。
+
 ## 1.2.5 更新说明（2026-10-26）
 
 只动判定载体与一处报告契约，不改档位判定、预算或状态机。

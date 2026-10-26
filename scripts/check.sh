@@ -333,43 +333,103 @@ for readme in ("easythink/README.md", "easydev/README.md"):
 print("OK: 所有 README bash 代码块语法均合法")
 '
 
-echo "=== 6. 模型配置示例校验 ==="
+echo "=== 6. 模型配置内联示例校验 ==="
 python3 -c '
-import glob, json, re, sys
+import json, re, sys
 
-files = sorted(glob.glob("easydev/examples/*.json"))
-if not files:
-    print("Error: easydev/examples 下没有 JSON 示例", file=sys.stderr)
+EFFORTS = {"inherit", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+REQUIRED_ROLES = ("developer", "reviewer")
+
+
+def fail(message):
+    print(f"Error: {message}", file=sys.stderr)
     sys.exit(1)
 
-for path in files:
-    try:
-        with open(path, encoding="utf-8") as f:
-            json.load(f)
-    except json.JSONDecodeError as exc:
-        print(f"Error: {path} 不是合法 JSON: {exc}", file=sys.stderr)
-        sys.exit(1)
-    print(f"OK: {path} 解析通过")
 
-example = "easydev/examples/models.cross-provider.json"
-if example in files:
-    with open("easydev/README.md", encoding="utf-8") as f:
-        readme = f.read()
-    m = re.search(r"^```json\n(.*?)^```", readme, re.DOTALL | re.MULTILINE)
-    if not m:
-        print("Error: easydev/README.md 未找到 json 代码块", file=sys.stderr)
-        sys.exit(1)
-    try:
-        block = json.loads(m.group(1))
-    except json.JSONDecodeError as exc:
-        print(f"Error: easydev/README.md 内联示例不是合法 JSON: {exc}", file=sys.stderr)
-        sys.exit(1)
-    with open(example, encoding="utf-8") as f:
-        reference = json.load(f)
-    if block != reference:
-        print(f"Error: easydev/README.md 内联示例与 {example} 不一致", file=sys.stderr)
-        sys.exit(1)
-    print(f"OK: easydev/README.md 内联示例与 {example} 一致")
+def provider_of(model):
+    """供应商前缀；inherit 没有供应商。"""
+    return None if model == "inherit" else model.split("/", 1)[0]
+
+
+def check_role(label, value):
+    """按 references/models.md 的字段节校验一个角色对象。"""
+    if not isinstance(value, dict):
+        fail(f"{label} 不是对象")
+    extra = sorted(set(value) - {"model", "reasoning_effort"})
+    if extra:
+        fail(f"{label} 含未知键: {extra}")
+    model = value.get("model")
+    if not isinstance(model, str) or not model.strip():
+        fail(f"{label}.model 必须是非空字符串")
+    if model != "inherit":
+        parts = model.split("/", 1)
+        if len(parts) != 2 or not all(part.strip() for part in parts):
+            fail(f"{label}.model 必须是完整 ID（供应商与模型名都非空）或 inherit: {model!r}")
+    effort = value.get("reasoning_effort")
+    if not isinstance(effort, str) or effort not in EFFORTS:
+        fail(f"{label}.reasoning_effort 非法: {effort!r}")
+
+
+with open("easydev/README.md", encoding="utf-8") as f:
+    readme = f.read()
+m = re.search(r"^```json\n(.*?)^```", readme, re.DOTALL | re.MULTILINE)
+if not m:
+    fail("easydev/README.md 未找到 json 代码块")
+try:
+    block = json.loads(m.group(1))
+except json.JSONDecodeError as exc:
+    fail(f"easydev/README.md 内联示例不是合法 JSON: {exc}")
+if not isinstance(block, dict):
+    fail("内联示例顶层不是对象")
+
+unknown = sorted(set(block) - set(REQUIRED_ROLES) - {"designer", "upgrades"})
+if unknown:
+    fail(f"内联示例含未知键: {unknown}")
+for role in REQUIRED_ROLES:
+    if role not in block:
+        fail(f"内联示例缺角色: {role}")
+    check_role(role, block[role])
+if "designer" in block:
+    check_role("designer", block["designer"])
+
+upgrades = block.get("upgrades", [])
+if not isinstance(upgrades, list):
+    fail("upgrades 不是数组")
+if len(upgrades) > 2:
+    fail(f"upgrades 超过两项: {len(upgrades)}")
+previous = {role: (block[role]["model"], block[role]["reasoning_effort"]) for role in REQUIRED_ROLES}
+for index, item in enumerate(upgrades, 1):
+    if not isinstance(item, dict):
+        fail(f"upgrades[{index}] 不是对象")
+    extra = sorted(set(item) - set(REQUIRED_ROLES))
+    if extra:
+        fail(f"upgrades[{index}] 含非法键: {extra}")
+    for role in REQUIRED_ROLES:
+        if role not in item:
+            fail(f"upgrades[{index}] 缺 {role}")
+        check_role(f"upgrades[{index}].{role}", item[role])
+    current = {role: (item[role]["model"], item[role]["reasoning_effort"]) for role in REQUIRED_ROLES}
+    if all(current[role] == previous[role] for role in REQUIRED_ROLES):
+        fail(f"upgrades[{index}] 与上一阶段完全相同")
+    previous = current
+
+# README 是唯一示例事实源，所以示例要演示它自己声明的形状：
+# 「开发与审查分属不同供应商，upgrades 再次对调」。
+if not upgrades:
+    fail("内联示例的 upgrades 为空，无法演示「upgrades 再次对调」")
+developer_provider = provider_of(block["developer"]["model"])
+reviewer_provider = provider_of(block["reviewer"]["model"])
+if developer_provider is None or reviewer_provider is None:
+    fail("内联示例的基础角色应为具体供应商，不能用 inherit 演示跨供应商")
+if developer_provider == reviewer_provider:
+    fail("内联示例的基础开发与审查角色应分属不同供应商")
+first = upgrades[0]
+if provider_of(first["developer"]["model"]) != reviewer_provider:
+    fail("内联示例 upgrades[1] 未把开发角色换到审查角色的供应商")
+if provider_of(first["reviewer"]["model"]) != developer_provider:
+    fail("内联示例 upgrades[1] 未把审查角色换到开发角色的供应商")
+
+print("OK: easydev/README.md 内联示例符合字段契约与跨供应商对调示例")
 '
 
 echo "=== 全部自动化门禁检查通过 ==="
