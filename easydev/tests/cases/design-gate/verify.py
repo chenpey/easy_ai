@@ -578,6 +578,36 @@ DOC_CONTRACT = [
         "局部 P2 判定",
         ["局部 P2", "公共契约", "验收缺口", "转 full"],
     ),
+    (
+        "reviewer-role 的定向复审覆盖修复所在位置的直接调用方",
+        "easydev/references/reviewer-role.md",
+        "normal 的定向审查",
+        ["直接调用方", "不扩查"],
+    ),
+    (
+        "routing.md 的「现成检查」限定为改动前已存在",
+        "easydev/references/routing.md",
+        "第二视角信号",
+        ["改动前已存在", "新增的测试"],
+    ),
+    (
+        "SKILL.md 的 quick 核心给出计量字段与键序",
+        "easydev/SKILL.md",
+        "单行计量",
+        ["计量：模块=", "未进 full 记"],
+    ),
+    (
+        "routing.md 的高风险边界按实际影响判定而非关键词",
+        "easydev/references/routing.md",
+        "上表按实际影响判定",
+        ["不因此进入 full", "已在 full"],
+    ),
+    (
+        "routing.md 的计量小节适用全档位、按角色分段并以读取事件为准",
+        "easydev/references/routing.md",
+        "## 计量",
+        ["main:", "reviewer:", "读取事件"],
+    ),
 ]
 
 

@@ -11,6 +11,7 @@
 | `agent_runner/` | 单宿主行为 runner、B01/B02/B16/public-contract-callers 场景与 CLI 测试。 |
 | `swebench/` | SWE-bench Lite 小样本运行器、事件归因与 CLI 测试。 |
 | `review-ablation/README.md` | 四臂审查消融协议文档；只定义对照与记录口径，不含可执行检查或实验结果。 |
+| `routing-replay/README.md` | 三任务 × 三档的路由复放协议；只定义记录字段与判读规则，不含可执行检查或实验结果。 |
 | `process_control.py` | 行为 runner 与 SWE-bench runner 共用的超时/进程树清理逻辑。 |
 
 ## 运行

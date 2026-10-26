@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`1.2.0`
+当前版本：`1.2.2`
 
 EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
@@ -49,25 +49,36 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认所有角色继承宿主，无须配置。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，不固化供应商版本。
+默认所有角色继承宿主，无须配置（等价于三者都写 `inherit`、`upgrades` 为空）。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，规则本身不固化供应商版本。
 
-可从以下起点指定角色，与 [配置示例](examples/models.cross-provider.json) 一致：
+下面的内联示例与 [配置示例](examples/models.cross-provider.json) 一致，演示跨供应商写法（开发与审查分属不同供应商，`upgrades` 再次对调）；它只是形状示例、不构成推荐，示例里的 ID 须按宿主实际支持替换，照抄可能不可用：
 
 ```json
 {
   "developer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "reasoning_effort": "high"
   },
   "reviewer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
   "designer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
-  "upgrades": []
+  "upgrades": [
+    {
+      "developer": {
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "high"
+      },
+      "reviewer": {
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "reasoning_effort": "high"
+      }
+    }
+  ]
 }
 ```
 
@@ -100,3 +111,5 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [models.md]
 - [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[版本历史](CHANGELOG.md)
 
 `tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。
+
+入口 4096 字节上限触顶时按固定顺序腾挪，不临时压缩措辞、不放宽上限：先把计量与报告格式细节移进 routing，再把入口的高风险边界枚举压成一句并指向 routing，最后才考虑把按需加载表移进 routing（quick 需要它，因此放最后）。只改措辞、计数或错别字的补丁（不改判定条件、预算、状态机或可执行断言）最多跑一轮 normal 独立审查，不按 full 闭环反复复审；这一轮报 P0/P1、或改动实际超出措辞与计数范围时，按 [routing](references/routing.md) 的转 full 规则执行。

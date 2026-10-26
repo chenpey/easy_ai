@@ -1,15 +1,26 @@
 {
   "developer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "reasoning_effort": "high"
   },
   "reviewer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
   "designer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
-  "upgrades": []
+  "upgrades": [
+    {
+      "developer": {
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "high"
+      },
+      "reviewer": {
+        "model": "opencode-go/deepseek-v4.1-flash",
+        "reasoning_effort": "high"
+      }
+    }
+  ]
 }
