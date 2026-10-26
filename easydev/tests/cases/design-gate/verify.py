@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """独立设计环节的确定性复验：门控判定、两本账记账、施工闸与停止条件。
 
-覆盖 `references/design.md` 中可判定的部分，并在最后枚举多方案任务的可达路径，
-回答「候选 2 轮 + 设计审查 1 轮是否会让多方案任务几乎必然停在施工闸前」。
+覆盖 `references/design.md` 中可判定的部分，以及 `references/routing.md` 的 normal 局部 P2 修复与双审查上限；
+并在最后枚举多方案任务的可达路径，回答「候选 2 轮 + 设计审查 1 轮是否会让多方案任务几乎必然停在施工闸前」。
 
 不覆盖：模型是否遵守规则、真实宿主的分派与实例隔离、受阻后用户显式豁免。
 那些只能靠行为回放，见 tests/behavior.md 的 B60。
@@ -17,6 +17,7 @@ from pathlib import Path
 from gate_model import (
     D_CAP,
     NORMAL_REVIEW_CAP,
+    NORMAL_REVIEW_MAX_CAP,
     R_CAP,
     R_RESERVE,
     DESIGNER_DELEGATED,
@@ -105,6 +106,11 @@ GATE_CASES = [
         "跨包且改公共契约：两项同时命中",
         {"packages": 2, "public_contract": True},
         (True, ["跨边界", "公共契约或持久数据"]),
+    ),
+    (
+        "高风险边界仅改注释或日志措辞：门控第 5 项不启用",
+        {"packages": 1, "high_risk": True, "changes_high_risk_behavior": False},
+        (False, []),
     ),
 ]
 
@@ -351,13 +357,63 @@ def run_normal_cases() -> None:
     two_reviews.record_review("reviewer-1", "未发现确定缺陷。")
     try:
         two_reviews.record_review("reviewer-2", "补充报告。")
-    except RuleError:
-        if two_reviews.review_count == NORMAL_REVIEW_CAP:
-            ok("第二个审查实例被拒绝：normal 只允许一次定向审查")
+    except RuleError as exc:
+        if str(exc) == "无缺陷或未做局部修复不得进行复审" and two_reviews.review_count == NORMAL_REVIEW_CAP:
+            ok("首轮无缺陷时不得发起复审：无缺陷或未做局部修复不得进行复审")
         else:
-            bad("normal 审查上限", f"count={two_reviews.review_count}")
+            bad("normal 复审前置", f"异常={exc} count={two_reviews.review_count}")
     else:
-        bad("normal 审查上限", "第二个审查实例未被拒绝")
+        bad("normal 复审前置", "未做局部修复仍被允许复审")
+
+    local_p2 = {"severity": "P2", "in_scope": True, "is_local": True}
+
+    repaired = NormalReviewFlow(author_instance_id="developer-1")
+    repaired.record_review("reviewer-1", "首轮仅报局部 P2。", findings=[dict(local_p2)])
+    repaired.record_repair()
+    repaired.record_review("reviewer-1", "局部修复已关闭原缺陷。")
+    if (
+        repaired.review_count == NORMAL_REVIEW_MAX_CAP
+        and repaired.path == "normal"
+        and repaired.finish() == "normal 完成"
+    ):
+        ok("首轮局部 P2 修复后定向复审通过：审查 2 次、normal 完成、不转 full")
+    else:
+        bad(
+            "normal 局部修复闭环",
+            f"count={repaired.review_count} path={repaired.path} finish={repaired.finish()}",
+        )
+
+    still_open = NormalReviewFlow(author_instance_id="developer-1", repair_attempts=1)
+    still_open.record_review("reviewer-1", "首轮仅报局部 P2。", findings=[dict(local_p2)])
+    still_open.record_repair()
+    still_open.record_review("reviewer-1", "原缺陷未关闭。", findings=[dict(local_p2)])
+    if (
+        still_open.path == "full"
+        and still_open.r == 2
+        and still_open.finish() == "full 未闭环"
+        and still_open.repair_attempts == 2
+    ):
+        ok("局部 P2 复审仍未关闭：转 full 记 r=2/5，已用修复尝试不重置")
+    else:
+        bad(
+            "normal 复审后转 full",
+            f"path={still_open.path} r={still_open.r} attempts={still_open.repair_attempts} "
+            f"finish={still_open.finish()}",
+        )
+
+    capped = NormalReviewFlow(author_instance_id="developer-1")
+    capped.record_review("reviewer-1", "首轮仅报局部 P2。", findings=[dict(local_p2)])
+    capped.record_repair()
+    capped.record_review("reviewer-1", "局部修复已关闭原缺陷。")
+    try:
+        capped.record_review("reviewer-2", "第三次审查。")
+    except RuleError as exc:
+        if str(exc) == "normal 独立审查已达上限（至多 2 次），不得形成修复循环":
+            ok("第三次审查被拒绝：normal 独立审查至多 2 次")
+        else:
+            bad("normal 审查硬上限", f"异常={exc}")
+    else:
+        bad("normal 审查硬上限", "第三次审查未被拒绝")
 
     upgrade = NormalReviewFlow(
         author_instance_id="developer-1",
@@ -503,6 +559,24 @@ DOC_CONTRACT = [
         "easydev/tests/behavior.md",
         "| B60 独立设计环节",
         ["对照五", "对照六"],
+    ),
+    (
+        "SKILL.md 的 quick 核心链接到尝试预算唯一事实源",
+        "easydev/SKILL.md",
+        "## quick 执行核心",
+        ["references/routing.md#尝试预算"],
+    ),
+    (
+        "routing.md 的判定依据引入可观察的第二视角信号",
+        "easydev/references/routing.md",
+        "## 判定依据",
+        ["第二视角信号"],
+    ),
+    (
+        "routing.md 的局部 P2 判定给出可观察条件",
+        "easydev/references/routing.md",
+        "局部 P2 判定",
+        ["局部 P2", "公共契约", "验收缺口", "转 full"],
     ),
 ]
 

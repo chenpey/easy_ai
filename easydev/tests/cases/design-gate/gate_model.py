@@ -14,7 +14,8 @@ from __future__ import annotations
 D_CAP = 3  # 设计账 d/3
 R_CAP = 5  # 施工审核 r/5
 R_RESERVE = 2  # 施工审核须为最终完整审查与必要复审至少预留的轮数
-NORMAL_REVIEW_CAP = 1  # normal 只允许一次独立定向审查
+NORMAL_REVIEW_CAP = 1  # normal 无缺陷时的正常完成阈值
+NORMAL_REVIEW_MAX_CAP = 2  # normal 独立审查硬上限（允许初审 + 1 次复审）
 
 
 class RuleError(Exception):
@@ -114,11 +115,12 @@ class Stop(Exception):
 
 
 class NormalReviewFlow:
-    """normal 的一次独立审查及其转 full 时的预算继承。
+    """normal 的独立定向审查及其转 full 时的预算继承。
 
     本类不判断用户最初为何选择 normal，只约束选择之后可观察的状态转换：
-    恰好一个不同实例回传非空报告；必关发现让流程转 full，并把这次审查记为
-    `r=1/5`，已有修复尝试不重置。
+    一个不同实例回传非空报告；首轮无必关项即可交付；首轮仅报局部 P2 时
+    允许一次局部修复加一次定向复审；必关发现让流程转 full，并把已完成的
+    审查记为 `r=1/5` 或 `r=2/5`，已有修复尝试不重置。
     """
 
     def __init__(
@@ -139,21 +141,40 @@ class NormalReviewFlow:
         self.path = "normal"
         self.r = prior_full_reviews
         self.prior_full_reviews = prior_full_reviews
-        self.review_recorded = False
         self.review_count = 0
+        self.local_repair_done = False
         self.reviewer_instance_id = None
         self.report = ""
         self.must_close_findings = []
 
     @staticmethod
-    def _is_must_close(finding: dict) -> bool:
+    def _is_local_p2(finding: dict) -> bool:
+        """局部 P2：按 routing.md「normal 流程」的「局部 P2 判定」，四条判据同时成立。
+
+        fixture 字段到判据的对应：`in_scope` 承担判据①②③（不触公共契约、不改
+        数据或状态语义、不引入依赖且不越出已改文件与直接调用方）；`acceptance_gap`
+        与 `potential_high_risk` 是判据④的两个子项（不是验收缺口、无带线索未排除的
+        潜在 P0/P1）；`is_local` 表示该缺陷确可按局部处理。判据⑤（无法确证即按非
+        局部处理）落在这里的缺省值：`is_local` 必须显式为 True 才算局部。
+        """
         severity = str(finding.get("severity", "")).upper()
         return bool(
-            severity in {"P0", "P1"}
-            or (severity == "P2" and finding.get("in_scope", True))
-            or finding.get("acceptance_gap")
-            or finding.get("potential_high_risk")
+            severity == "P2"
+            and finding.get("in_scope", True)
+            and finding.get("is_local", False) is True
+            and not finding.get("acceptance_gap")
+            and not finding.get("potential_high_risk")
         )
+
+    @staticmethod
+    def _is_immediate_full(finding: dict) -> bool:
+        """P0/P1、验收缺口、潜在高风险，或无法确证四条判据的 P2，一律立即转 full。"""
+        severity = str(finding.get("severity", "")).upper()
+        if severity in {"P0", "P1"} or finding.get("acceptance_gap") or finding.get("potential_high_risk"):
+            return True
+        if severity == "P2" and finding.get("in_scope", True) and not finding.get("is_local", False):
+            return True
+        return False
 
     def record_review(
         self,
@@ -162,9 +183,11 @@ class NormalReviewFlow:
         *,
         findings: list[dict] | None = None,
     ) -> None:
-        """记录 normal 唯一一次已完成的定向审查。"""
-        if self.review_recorded:
-            raise RuleError("normal 只允许一次独立定向审查，不得形成修复循环")
+        """记录一次已完成的定向审查：初审或局部 P2 修复后的复审。"""
+        if self.review_count >= NORMAL_REVIEW_MAX_CAP:
+            raise RuleError("normal 独立审查已达上限（至多 2 次），不得形成修复循环")
+        if self.review_count == 1 and not self.local_repair_done:
+            raise RuleError("无缺陷或未做局部修复不得进行复审")
         if not instance_id.strip():
             raise RuleError("没有审查实例，不能算独立定向审查")
         if instance_id == self.author_instance_id:
@@ -172,27 +195,55 @@ class NormalReviewFlow:
         if not report.strip():
             raise RuleError("审查实例必须回传非空完成报告")
 
+        # P3 等非必关项不参与处置，以免掩盖同一报告里的局部 P2。
         must_close_findings = [
-            finding for finding in (findings or []) if self._is_must_close(finding)
+            finding
+            for finding in (findings or [])
+            if self._is_immediate_full(finding) or self._is_local_p2(finding)
         ]
-        self.review_recorded = True
-        self.review_count = 1
+        self.review_count += 1
         self.reviewer_instance_id = instance_id
         self.report = report
         self.must_close_findings = must_close_findings
-        if self.must_close_findings:
+        if any(self._is_immediate_full(finding) for finding in must_close_findings):
             self.path = "full"
-            # normal 的这一次定向审查就是进入 full 后的首次施工审查。
-            self.r = self.prior_full_reviews + 1
+            # 已完成的独立审查都计入进入 full 后的施工审核轮次。
+            self.r = self.prior_full_reviews + self.review_count
+            return
+        if must_close_findings and self.review_count == NORMAL_REVIEW_CAP:
+            # 首轮仅局部 P2：留在 normal，等待一次局部修复与复审。
+            return
+        if must_close_findings:
+            # 复审仍未关闭：normal 不再发起第三次审查，转 full 并记 r=2。
+            self.path = "full"
+            self.r = self.prior_full_reviews + self.review_count
+
+    def record_repair(self, repair_diff: str = "") -> None:
+        """记录 normal 内唯一一次局部修复尝试。"""
+        if self.review_count != 1 or not self.must_close_findings:
+            raise RuleError("仅在首轮审查存在局部 P2 时允许记录修复尝试")
+        if self.local_repair_done:
+            raise RuleError("normal 内至多允许一次局部修复尝试")
+        self.local_repair_done = True
+        self.repair_attempts += 1
 
     def finish(self) -> str:
         """返回当前流程的可交付状态，不代替后续 full 闭环。"""
         if self.path == "full":
             return "full 未闭环"
-        if (
-            self.review_count == NORMAL_REVIEW_CAP
+        valid_reviewer = (
+            bool(self.reviewer_instance_id)
             and self.reviewer_instance_id != self.author_instance_id
             and bool(self.report.strip())
+        )
+        if not valid_reviewer:
+            return "normal 未完成"
+        if self.review_count == NORMAL_REVIEW_CAP and not self.must_close_findings:
+            return "normal 完成"
+        if (
+            self.review_count == NORMAL_REVIEW_MAX_CAP
+            and self.local_repair_done
+            and not self.must_close_findings
         ):
             return "normal 完成"
         return "normal 未完成"
@@ -211,7 +262,7 @@ def decide_gate(task: dict) -> dict:
         "user_requests_comparison"
     ):
         hits.append("多方案")
-    if task.get("high_risk"):
+    if task.get("high_risk") and task.get("changes_high_risk_behavior", True):
         hits.append("高风险边界")
     return {"enabled": bool(hits), "hits": hits}
 
