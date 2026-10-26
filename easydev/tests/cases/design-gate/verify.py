@@ -16,6 +16,7 @@ from pathlib import Path
 
 from gate_model import (
     D_CAP,
+    NORMAL_REVIEW_CAP,
     R_CAP,
     R_RESERVE,
     DESIGNER_DELEGATED,
@@ -23,6 +24,7 @@ from gate_model import (
     DESIGNER_MAIN_AGENT,
     DESIGNER_PAUSED,
     Budget,
+    NormalReviewFlow,
     RuleError,
     Stop,
     decide_gate,
@@ -298,6 +300,90 @@ def run_budget_cases() -> None:
         bad("升版重写计轮", f"d={b.d}")
 
 
+# --- normal 一次定向审查与转 full ----------------------------------------
+
+
+def run_normal_cases() -> None:
+    print("=== normal：一次独立定向审查与转 full ===")
+
+    flow = NormalReviewFlow(author_instance_id="developer-1")
+    flow.record_review("reviewer-1", "未发现确定缺陷。")
+    if flow.review_count == 1 and flow.finish() == "normal 完成":
+        ok("一个不同实例回传非空报告：normal 可交付")
+    else:
+        bad("normal 正常路径", f"count={flow.review_count} finish={flow.finish()}")
+
+    no_review = NormalReviewFlow(author_instance_id="developer-1")
+    if no_review.finish() == "normal 未完成":
+        ok("没有审查实例：不得称 normal 完成")
+    else:
+        bad("normal 无审查", no_review.finish())
+
+    self_review = NormalReviewFlow(author_instance_id="developer-1")
+    try:
+        self_review.record_review("developer-1", "自查通过。")
+    except RuleError:
+        self_review.record_review("reviewer-1", "未发现确定缺陷。")
+        if self_review.finish() == "normal 完成":
+            ok("作者自查无效且不消耗名额，随后有效独立审查可完成")
+        else:
+            bad("normal 作者自查", self_review.finish())
+    else:
+        bad("normal 作者自查", "未被拒绝")
+
+    for report_label, empty_report_text in (
+        ("空字符串", ""),
+        ("纯空白", " \n "),
+    ):
+        empty_report = NormalReviewFlow(author_instance_id="developer-1")
+        try:
+            empty_report.record_review("reviewer-1", empty_report_text)
+        except RuleError:
+            empty_report.record_review("reviewer-1", "未发现确定缺陷。")
+            if empty_report.finish() == "normal 完成":
+                ok(f"{report_label}完成报告无效且不消耗名额，随后有效报告可完成")
+            else:
+                bad(f"normal {report_label}报告", empty_report.finish())
+        else:
+            bad(f"normal {report_label}报告", "未被拒绝")
+
+    two_reviews = NormalReviewFlow(author_instance_id="developer-1")
+    two_reviews.record_review("reviewer-1", "未发现确定缺陷。")
+    try:
+        two_reviews.record_review("reviewer-2", "补充报告。")
+    except RuleError:
+        if two_reviews.review_count == NORMAL_REVIEW_CAP:
+            ok("第二个审查实例被拒绝：normal 只允许一次定向审查")
+        else:
+            bad("normal 审查上限", f"count={two_reviews.review_count}")
+    else:
+        bad("normal 审查上限", "第二个审查实例未被拒绝")
+
+    upgrade = NormalReviewFlow(
+        author_instance_id="developer-1",
+        repair_attempts=1,
+    )
+    upgrade.record_review(
+        "reviewer-1",
+        "有必关项。",
+        findings=[{"severity": "P2", "in_scope": True}],
+    )
+    if (
+        upgrade.path == "full"
+        and upgrade.r == 1
+        and R_CAP == 5
+        and upgrade.repair_attempts == 1
+        and upgrade.finish() == "full 未闭环"
+    ):
+        ok("范围内 P2 转 full：首次审查继承 r=1/5，修复尝试与审查不重置")
+    else:
+        bad(
+            "normal 转 full",
+            f"path={upgrade.path} r={upgrade.r} attempts={upgrade.repair_attempts} "
+            f"finish={upgrade.finish()}",
+        )
+
+
 # --- 宿主能力替身：设计分派形态与受阻处置 --------------------------------
 
 HOST_CASES = [
@@ -337,9 +423,16 @@ HOST_CASES = [
         dict(mode=DESIGNER_FALLBACK, counts_dr=False),
     ),
     (
-        "宿主强制继承上下文：隔离不可确认则标自查",
+        "宿主继承上下文：实例分离仍可审查，披露隔离限制",
         dict(context_isolated=False),
-        dict(mode=DESIGNER_FALLBACK, counts_dr=False),
+        dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=True,
+             context_isolation="limited"),
+    ),
+    (
+        "独立设计实例继承上下文：保留实例分工和隔离限制",
+        dict(model="host-designer", context_isolated=False),
+        dict(mode=DESIGNER_DELEGATED, counts_dr=True, must_delegate_developer=False,
+             context_isolation="limited"),
     ),
 ]
 
@@ -498,6 +591,7 @@ def run_reachability() -> None:
 def main() -> int:
     run_gate_cases()
     run_budget_cases()
+    run_normal_cases()
     run_host_cases()
     run_doc_contract()
     run_reachability()

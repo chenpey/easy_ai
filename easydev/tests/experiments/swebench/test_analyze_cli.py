@@ -44,7 +44,10 @@ def command(index: int, value: str, exit_code: int = 0) -> dict:
     }
 
 
-def spawn(reviewer_id: str = "reviewer-1") -> dict:
+def spawn(
+    reviewer_id: str = "reviewer-1",
+    prompt: str = "独立只读审查 independent read-only reviewer",
+) -> dict:
     return {
         "type": "item.completed",
         "item": {
@@ -52,7 +55,7 @@ def spawn(reviewer_id: str = "reviewer-1") -> dict:
             "type": "collab_tool_call",
             "tool": "spawn_agent",
             "receiver_thread_ids": [reviewer_id],
-            "prompt": "独立只读审查 independent read-only reviewer",
+            "prompt": prompt,
         },
     }
 
@@ -313,6 +316,41 @@ class AnalyzeEventsCliTest(unittest.TestCase):
     def test_route_negations_candidate_tiers_and_final_only_messages(self) -> None:
         cases = (
             (
+                "normal route is observable",
+                ["采用 normal。", "最终采用 normal。"],
+                "normal",
+                "normal",
+                False,
+            ),
+            (
+                "normal to full is a formal upgrade",
+                ["采用 normal。", "最终采用 full。"],
+                "normal",
+                "full",
+                True,
+            ),
+            (
+                "full to normal is a downgrade",
+                ["采用 full。", "最终采用 normal。"],
+                "full",
+                "normal",
+                False,
+            ),
+            (
+                "negated normal keeps quick",
+                ["不走 normal，采用 quick。", "完成"],
+                "quick",
+                None,
+                False,
+            ),
+            (
+                "normal prose is not a route declaration",
+                ["normal 是旧聊天档位名。", "完成"],
+                None,
+                None,
+                False,
+            ),
+            (
                 "negated full keeps quick",
                 ["不走 full，采用 quick。", "完成"],
                 "quick",
@@ -371,11 +409,19 @@ class AnalyzeEventsCliTest(unittest.TestCase):
                 self.assertEqual(run["upgraded_to_full"], upgraded)
 
     def test_reviewer_completion_requires_completed_nonempty_report(self) -> None:
+        short_role_spawn = spawn()
+        short_role_spawn["item"]["prompt"] = "按 references/reviewer-role.md 检查本次变更。"
         forged_spawn = spawn()
         forged_spawn["item"]["agents_states"] = {
             "reviewer-1": {"status": "completed", "message": "未发现确定缺陷。"}
         }
         cases = (
+            (
+                "short reviewer role handoff",
+                [short_role_spawn, reviewer_state("未发现确定缺陷。")],
+                1,
+                1,
+            ),
             ("in progress", [spawn(), reviewer_state("x", status="in_progress")], 0, 0),
             ("empty completed report", [spawn(), reviewer_state("")], 0, 0),
             ("spawn only", [spawn()], 0, 0),
@@ -408,8 +454,89 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         for index, (label, _events, completed, reports) in enumerate(cases):
             with self.subTest(case=label):
                 run = self.run_by_task(payload, f"reviewer-{index}")
+                self.assertEqual(run["reviewer_instances"], 1)
                 self.assertEqual(run["reviewer_completed_instances"], completed)
                 self.assertEqual(run["reviewer_reports"], reports)
+
+    def test_reviewer_prompt_requires_positive_intent_without_developer_handoff(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "developer handoff mentioning both roles",
+                "你是开发实例，读取 references/developer-role.md；"
+                "references/reviewer-role.md 只供理解审查边界。",
+                0,
+            ),
+            (
+                "negated reviewer role",
+                "不要读取 references/reviewer-role.md；直接实施开发。",
+                0,
+            ),
+            (
+                "incidental role path",
+                "开发者交接：参考资料目录包含 references/reviewer-role.md。",
+                0,
+            ),
+            (
+                "review reference path is not itself a review action",
+                "仅参考 references/review.md 的目录说明。",
+                0,
+            ),
+            (
+                "developer prompt with negated independent review",
+                "你是开发实例，禁止读取 references/reviewer-role.md；不要进行独立审查。",
+                0,
+            ),
+            (
+                "standalone negated independent review",
+                "不要进行独立审查，只实施开发。",
+                0,
+            ),
+            (
+                "short read-only review handoff",
+                "按 references/reviewer-role.md 做只读审查。",
+                1,
+            ),
+            (
+                "role path with plain review action",
+                "按 references/reviewer-role.md 审查。",
+                1,
+            ),
+            (
+                "review this diff handoff",
+                "审查这个 diff，核对直接调用方与验收。",
+                1,
+            ),
+            (
+                "english review this diff handoff",
+                "Please review this diff against the acceptance criteria.",
+                1,
+            ),
+            (
+                "negated independent review with modifier",
+                "不要做任何独立审查，只实施开发。",
+                0,
+            ),
+            (
+                "english negated review with modifier",
+                "Do not perform any independent review; implement the change.",
+                0,
+            ),
+        )
+        experiment = self.root / "reviewer-prompt-intent"
+        for index, (label, prompt, _expected) in enumerate(cases):
+            self.write_run(
+                experiment,
+                f"reviewer-{index}",
+                [spawn(prompt=prompt), reviewer_state("未发现确定缺陷。"), turn()],
+            )
+        payload = self.payload(experiment)
+        for index, (label, _prompt, expected) in enumerate(cases):
+            with self.subTest(case=label):
+                run = self.run_by_task(payload, f"reviewer-{index}")
+                self.assertEqual(run["reviewer_instances"], expected)
+                self.assertEqual(run["reviewer_completed_instances"], expected)
 
     # -- access attribution --------------------------------------------
     def test_access_attribution_separates_reads_from_status_queries(self) -> None:

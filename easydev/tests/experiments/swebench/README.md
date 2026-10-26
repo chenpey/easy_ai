@@ -85,7 +85,7 @@ python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 本地验证应与 CI 一致使用 Python 3.12 复跑（本机可用 `/tmp/agents/uv-python/cpython-3.12-macos-aarch64-none/bin/python3.12`）；swebench 的全部用例在 3.9 与 3.12 下都要全绿。
 
 - `test_cli.py` 驱动 `setup`/`run`/`summarize`/`calibrate`，用 `tests/experiments/stubs/codex_stub.py` 与 `pytest_stub.py` 替代外部进程，覆盖结果读取器拒绝（身份、事件计数、协议、F2P/P2P 矛盾）、manifest 选择与报告计数、模板逃逸与合法链接/延迟目录属性、保护模式恢复细节、采集不执行 Agent hook/filter、无效调用、P2P 回归与报告。
-- `test_analyze_cli.py` 驱动 `analyze_events.py`，覆盖路由否定/候选档位、reviewer 完成条件、访问与元数据归因、current-protocol 契约、behavior 协议、嵌套 usage、零发现声明、畸形结构、usage 来源矩阵与 `--output`。
+- `test_analyze_cli.py` 驱动 `analyze_events.py`，覆盖 quick/normal/full 声明及升降级、路由否定/候选档位、reviewer 完成条件、访问与元数据归因、current-protocol 契约、behavior 协议、嵌套 usage、零发现声明、畸形结构、usage 来源矩阵与 `--output`。
 
 两组检查不启动真实 Codex，也不执行真实 pytest，因此不能替代真实实验。
 

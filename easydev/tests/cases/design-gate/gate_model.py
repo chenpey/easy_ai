@@ -1,11 +1,12 @@
-"""独立设计环节中可判定的部分：启用门控与两本账记账。
+"""流程状态机中可判定的部分：normal 转 full、设计门控与两本账记账。
 
-只编码 `references/design.md` 里能被判定成布尔或整数的规则：五项门控、
-`d/3` 与 `r/5` 的消耗与上限、施工闸、停止条件。不模拟模型是否遵守规则，
-也不覆盖任何需要真实宿主的分派、暂停或实例隔离行为——那些只能靠行为回放。
+编码 `references/routing.md` 的 normal 一次独立定向审查与升级继承，
+以及 `references/design.md` 里能被判定成布尔或整数的五项门控、`d/3` 与
+`r/5` 的消耗与上限、施工闸、停止条件。不模拟模型是否遵守规则，也不覆盖
+任何需要真实宿主的分派、暂停或实例隔离行为——那些只能靠行为回放。
 
-任何与 `references/design.md` 正文不一致的地方都属本模型缺陷，不是文档缺陷：
-本文件是那份文本的可执行断面。
+任何与对应 reference 正文不一致的地方都属本模型缺陷，不是文档缺陷：
+本文件是那些规则的可执行断面。
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 D_CAP = 3  # 设计账 d/3
 R_CAP = 5  # 施工审核 r/5
 R_RESERVE = 2  # 施工审核须为最终完整审查与必要复审至少预留的轮数
+NORMAL_REVIEW_CAP = 1  # normal 只允许一次独立定向审查
 
 
 class RuleError(Exception):
@@ -26,7 +28,7 @@ class RuleError(Exception):
 # 输入时规则要求做什么，不是模型会不会照做。
 
 DESIGNER_PAUSED = "paused"  # 模型不可用 → 停在施工闸前，不回落
-DESIGNER_FALLBACK = "fallback"  # 无能力/禁止委派/隔离不可确认 → 主代理兜底，不记 d/r
+DESIGNER_FALLBACK = "fallback"  # 无能力/禁止委派 → 主代理兜底，不记 d/r
 DESIGNER_MAIN_AGENT = "main_agent"  # inherit → 主代理设计，施工必须委派开发者
 DESIGNER_DELEGATED = "delegated"  # 可用独立实例
 
@@ -50,7 +52,7 @@ def resolve_designer(
             "gate": "closed",
             "reason": "designer 配置的具体模型不可用：暂停设计分派并报受阻，不回落主代理",
         }
-    # 2) 无委派能力 / 用户禁止委派 / 隔离不可确认：主代理兜底。
+    # 2) 无委派能力 / 用户禁止委派：主代理兜底。
     if user_forbids_delegation:
         return {
             "mode": DESIGNER_FALLBACK,
@@ -65,13 +67,6 @@ def resolve_designer(
             "gate": "open_self_checked",
             "reason": "宿主不具备子代理委派能力，按无能力兜底",
         }
-    if not context_isolated:
-        return {
-            "mode": DESIGNER_FALLBACK,
-            "counts_dr": False,
-            "gate": "open_self_checked",
-            "reason": "宿主强制继承上下文，无法确认实例独立，只能标自查（非独立）",
-        }
     # 3) 有委派能力。
     if model == "inherit":
         # 主代理亲自设计 → 施工必须委派开发者（不论 developer 配置）。
@@ -80,6 +75,7 @@ def resolve_designer(
             "counts_dr": True,
             "gate": "closed",
             "must_delegate_developer": True,
+            "context_isolation": "isolated" if context_isolated else "limited",
             "reason": "designer=inherit，主代理撰写 design.md，施工须委派独立开发者",
         }
     # 独立设计实例：只解除「主代理兼任设计者」这一项，配置与升级仍须委派开发者。
@@ -88,6 +84,7 @@ def resolve_designer(
         "counts_dr": True,
         "gate": "closed",
         "must_delegate_developer": bool(developer_non_inherit or in_upgrade_stage),
+        "context_isolation": "isolated" if context_isolated else "limited",
         "reason": "designer 为可用独立实例，主代理未参与设计",
     }
 
@@ -114,6 +111,91 @@ class Stop(Exception):
         super().__init__(f"{state}: {reason}")
         self.state = state
         self.reason = reason
+
+
+class NormalReviewFlow:
+    """normal 的一次独立审查及其转 full 时的预算继承。
+
+    本类不判断用户最初为何选择 normal，只约束选择之后可观察的状态转换：
+    恰好一个不同实例回传非空报告；必关发现让流程转 full，并把这次审查记为
+    `r=1/5`，已有修复尝试不重置。
+    """
+
+    def __init__(
+        self,
+        *,
+        author_instance_id: str,
+        repair_attempts: int = 0,
+        prior_full_reviews: int = 0,
+    ):
+        if not author_instance_id.strip():
+            raise RuleError("normal 必须记录实现作者实例")
+        if repair_attempts < 0:
+            raise RuleError("修复尝试次数不能为负")
+        if prior_full_reviews < 0 or prior_full_reviews >= R_CAP:
+            raise RuleError(f"进入 normal 前已有完整审查须在 0..{R_CAP - 1} 轮内")
+        self.author_instance_id = author_instance_id
+        self.repair_attempts = repair_attempts
+        self.path = "normal"
+        self.r = prior_full_reviews
+        self.prior_full_reviews = prior_full_reviews
+        self.review_recorded = False
+        self.review_count = 0
+        self.reviewer_instance_id = None
+        self.report = ""
+        self.must_close_findings = []
+
+    @staticmethod
+    def _is_must_close(finding: dict) -> bool:
+        severity = str(finding.get("severity", "")).upper()
+        return bool(
+            severity in {"P0", "P1"}
+            or (severity == "P2" and finding.get("in_scope", True))
+            or finding.get("acceptance_gap")
+            or finding.get("potential_high_risk")
+        )
+
+    def record_review(
+        self,
+        instance_id: str,
+        report: str,
+        *,
+        findings: list[dict] | None = None,
+    ) -> None:
+        """记录 normal 唯一一次已完成的定向审查。"""
+        if self.review_recorded:
+            raise RuleError("normal 只允许一次独立定向审查，不得形成修复循环")
+        if not instance_id.strip():
+            raise RuleError("没有审查实例，不能算独立定向审查")
+        if instance_id == self.author_instance_id:
+            raise RuleError("作者自查不是独立定向审查")
+        if not report.strip():
+            raise RuleError("审查实例必须回传非空完成报告")
+
+        must_close_findings = [
+            finding for finding in (findings or []) if self._is_must_close(finding)
+        ]
+        self.review_recorded = True
+        self.review_count = 1
+        self.reviewer_instance_id = instance_id
+        self.report = report
+        self.must_close_findings = must_close_findings
+        if self.must_close_findings:
+            self.path = "full"
+            # normal 的这一次定向审查就是进入 full 后的首次施工审查。
+            self.r = self.prior_full_reviews + 1
+
+    def finish(self) -> str:
+        """返回当前流程的可交付状态，不代替后续 full 闭环。"""
+        if self.path == "full":
+            return "full 未闭环"
+        if (
+            self.review_count == NORMAL_REVIEW_CAP
+            and self.reviewer_instance_id != self.author_instance_id
+            and bool(self.report.strip())
+        ):
+            return "normal 完成"
+        return "normal 未完成"
 
 
 def decide_gate(task: dict) -> dict:

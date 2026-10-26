@@ -38,11 +38,11 @@ FILE_PATH_RE = re.compile(
 )
 DECLARED_PATH_RE = re.compile(
     r"(?:采用|使用|走|进入|路径\s*[：:]?\s*)"
-    r"\s*(?:easydev\s*)?[`*]*\s*(full-local|full-staged|full|quick)\b",
+    r"\s*(?:easydev\s*)?[`*]*\s*(full-local|full-staged|full|normal|quick)\b",
     re.IGNORECASE,
 )
 DECLARED_PATH_RE_2 = re.compile(
-    r"\b(full-local|full-staged|full|quick)\s*(?:路径|流程)", re.IGNORECASE
+    r"\b(full-local|full-staged|full|normal|quick)\s*(?:路径|流程)", re.IGNORECASE
 )
 UPGRADE_RE = re.compile(
     r"(?:升级|转入|转为)\s*(?:为|到)?\s*[`*]*\s*(full)(?![-A-Za-z0-9_])\b",
@@ -56,13 +56,60 @@ FINDING_BULLET_RE = re.compile(
     r"\*\*(P[0-3])[:：]\s*([^*\n]+)\*\*",
 )
 REVIEW_PROMPT_MARKERS = (
-    "references/review.md",
     "独立只读审查",
     "独立只读",
     "独立审查",
+    "只读审查",
+    "只读复核",
+    "定向审查",
+    "审查本次变更",
+    "审查当前变更",
+    "审查这个diff",
+    "审查这个 diff",
+    "检查本次变更",
     "independent read-only",
     "independent read-only reviewer",
     "independent review",
+    "read-only review",
+    "review this change",
+    "review this diff",
+    "review the diff",
+    "review the changes",
+)
+REVIEWER_ROLE_PATH = "references/reviewer-role.md"
+DEVELOPER_ROLE_PATH = "references/developer-role.md"
+REVIEW_REFERENCE_PATHS = (REVIEWER_ROLE_PATH, "references/review.md")
+DEVELOPER_HANDOFF_MARKERS = (
+    DEVELOPER_ROLE_PATH,
+    "你是开发实例",
+    "开发角色",
+    "开发交接",
+    "开发者交接",
+    "developer role",
+    "developer handoff",
+)
+REVIEWER_ROLE_NEGATION_RE = re.compile(
+    r"(?:不要|不得|禁止|无需|不必|do\s+not|don't|without)"
+    r"[^。\n]{0,32}references/reviewer-role\.md",
+    re.IGNORECASE,
+)
+NEGATED_REVIEW_PREFIX_RE = re.compile(
+    r"(?:不要|不得|禁止|无需|不必|不能|不|不再|没有|未|"
+    r"do\s+not|don't|without|never|no)\s*"
+    r"(?:(?:做|进行|执行|开展|承担|使用|发起|"
+    r"perform|do|conduct)\s*)?"
+    r"(?:(?:任何|一次|这个|本次|当前|一个|"
+    r"the|an?|any|one|this|these|those)\s*)*$",
+    re.IGNORECASE,
+)
+ROLE_REVIEW_ACTION_RE = re.compile(
+    r"(?:(?:做|进行|执行|开展|承担|使用|只读|独立|定向|"
+    r"perform|do|conduct|a|an|the)\s*)*"
+    r"(?:审查|复核|\breview\b)"
+    r"(?=$|[\s，,。；;、:：]|"
+    r"(?:本次|当前|这个|该|完整|任务|改动|变更|代码|实现|设计|"
+    r"diff|the\s+change|this\s+diff)\b)",
+    re.IGNORECASE,
 )
 ZERO_FINDING_MARKERS = (
     "未发现确定缺陷",
@@ -801,6 +848,49 @@ def first_declared_path(texts: Sequence[str] | str) -> Optional[str]:
     return None
 
 
+def is_reviewer_prompt(prompt: str) -> bool:
+    """Recognize an intentional reviewer handoff without trusting a path mention.
+
+    Role and review reference paths are also named in developer prompts that
+    explain what not to read or that compare roles.  A path alone is therefore
+    insufficient: the prompt needs an explicit, non-negated review action and
+    must not be part of a developer handoff.
+    """
+    text = re.sub(r"\s+", " ", prompt.lower())
+    if any(marker in text for marker in DEVELOPER_HANDOFF_MARKERS):
+        return False
+    if REVIEWER_ROLE_NEGATION_RE.search(text):
+        return False
+
+    clause_breaks = "，,。；;！!？?\n"
+
+    def clause_start(offset: int) -> int:
+        return max(text.rfind(separator, 0, offset) for separator in clause_breaks) + 1
+
+    def negated(offset: int) -> bool:
+        return bool(
+            NEGATED_REVIEW_PREFIX_RE.search(text[clause_start(offset):offset])
+        )
+
+    for marker in REVIEW_PROMPT_MARKERS:
+        for match in re.finditer(re.escape(marker), text):
+            if not negated(match.start()):
+                return True
+    for path in REVIEW_REFERENCE_PATHS:
+        if path not in text:
+            continue
+        for match in ROLE_REVIEW_ACTION_RE.finditer(text):
+            start = clause_start(match.start())
+            end = len(text)
+            for separator in clause_breaks:
+                separator_at = text.find(separator, match.end())
+                if separator_at >= 0:
+                    end = min(end, separator_at)
+            if path in text[start:end] and not negated(match.start()):
+                return True
+    return False
+
+
 def has_positive_upgrade(text: str) -> bool:
     negations = DECLARATION_NEGATIONS + (
         "未升级",
@@ -1112,9 +1202,9 @@ def analyze_run(
     if agent_texts:
         attribution.declared_final_path = first_declared_path([agent_texts[-1]])
     attribution.upgraded_to_full = bool(
-        attribution.declared_initial_path == "quick"
+        attribution.declared_initial_path in {"quick", "normal"}
         and attribution.declared_final_path
-        not in {"quick", "full-local", "full-staged"}
+        not in {"quick", "normal", "full-local", "full-staged"}
         and (
             attribution.declared_final_path == "full"
             or has_positive_upgrade(combined_agent_text)
@@ -1141,7 +1231,7 @@ def analyze_run(
         if (
             tool == "spawn_agent"
             and isinstance(prompt, str)
-            and any(marker in prompt.lower() for marker in REVIEW_PROMPT_MARKERS)
+            and is_reviewer_prompt(prompt)
         ):
             reviewer_ids.update(
                 str(value)

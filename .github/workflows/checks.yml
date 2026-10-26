@@ -5,8 +5,54 @@ on:
   pull_request:
 
 jobs:
-  gate:
+  verify:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: 仓库门禁
+            working_directory: .
+            command: bash scripts/check.sh
+            install_pyyaml: true
+            timeout_minutes: 5
+          - name: 安装脚本冒烟测试
+            working_directory: .
+            command: bash scripts/smoke-install.sh
+            install_pyyaml: false
+            timeout_minutes: 5
+          - name: 版本提取门禁
+            working_directory: .
+            command: bash easydev/tests/cases/version-gate/run.sh
+            install_pyyaml: true
+            timeout_minutes: 5
+          - name: 流程状态机与设计门禁
+            working_directory: .
+            command: bash easydev/tests/cases/design-gate/run.sh
+            install_pyyaml: false
+            timeout_minutes: 5
+          - name: audit 上限与分片覆盖
+            working_directory: .
+            command: bash easydev/tests/cases/audit-overflow/run.sh
+            install_pyyaml: false
+            timeout_minutes: 5
+          - name: 固定补丁复验
+            working_directory: easydev
+            command: bash tests/cases/public-contract-callers/run.sh
+            install_pyyaml: false
+            timeout_minutes: 5
+          - name: 行为 runner 与进程清理回归
+            working_directory: easydev
+            command: python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py'
+            install_pyyaml: false
+            timeout_minutes: 10
+          - name: SWE-bench runner 与事件归因回归
+            working_directory: easydev
+            command: python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py'
+            install_pyyaml: false
+            timeout_minutes: 10
     steps:
       - name: 检出
         uses: actions/checkout@v4
@@ -16,32 +62,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 安装 PyYAML（缺失时 check.sh 会降级为严格校验）
+      - name: 安装 PyYAML（仅有 PyYAML 分支的检查）
+        if: matrix.install_pyyaml
         run: python -m pip install --quiet pyyaml
 
-      - name: 仓库门禁
-        run: bash scripts/check.sh
-
-      - name: 安装脚本冒烟测试
-        run: bash scripts/smoke-install.sh
-
-      - name: 版本提取门禁用例
-        run: bash easydev/tests/cases/version-gate/run.sh
-
-      - name: 独立设计环节确定性复验
-        run: bash easydev/tests/cases/design-gate/run.sh
-
-      - name: 固定补丁复验
-        timeout-minutes: 5
-        working-directory: easydev
-        run: bash tests/cases/public-contract-callers/run.sh
-
-      - name: 行为 runner 与进程清理回归
-        timeout-minutes: 10
-        working-directory: easydev
-        run: python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py'
-
-      - name: SWE-bench runner 与事件归因回归
-        timeout-minutes: 10
-        working-directory: easydev
-        run: python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py'
+      - name: 执行矩阵检查
+        working-directory: ${{ matrix.working_directory }}
+        run: ${{ matrix.command }}

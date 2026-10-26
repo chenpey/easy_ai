@@ -24,7 +24,7 @@ git diff --check
 echo "OK: 已跟踪文件与工作区均无行尾空白或冲突标记"
 
 echo "=== 2. SKILL.md 体量与 Frontmatter 校验 ==="
-# 体量上限按技能分别声明；easydev 暂无体量政策，只校验 frontmatter。
+# 体量上限包含 UTF-8 正文和 frontmatter，防止入口重新膨胀。
 for SKILL_NAME in easythink easydev; do
   SKILL_FILE="$SKILL_NAME/SKILL.md"
   if [ ! -f "$SKILL_FILE" ]; then
@@ -34,6 +34,7 @@ for SKILL_NAME in easythink easydev; do
   SKILL_SIZE=$(wc -c < "$SKILL_FILE" | tr -d ' ')
   case "$SKILL_NAME" in
     easythink) MAX_SIZE=12288 ;;
+    easydev) MAX_SIZE=4096 ;;
     *) MAX_SIZE=0 ;;
   esac
   if [ "$MAX_SIZE" -gt 0 ]; then

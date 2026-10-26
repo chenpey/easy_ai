@@ -1,14 +1,5 @@
 # 模型配置示例
 
-本目录中的 JSON 不会被 EasyDev 自动加载。
+[models.cross-provider.json](models.cross-provider.json) 是角色配置起点，默认全部 inherit，可按当前宿主支持的模型与深度分别填写 developer、reviewer、designer；upgrades 默认空数组。文件名保留以兼容已有引用，不代表固定使用不同供应商。
 
-- `models.cross-provider.json`：跨供应商、跨模型示例，含角色分流、推理深度与升级阶段。
-
-内置默认值（`developer`、`reviewer` 与 `designer` 均为 `inherit`，`upgrades` 为空）不依赖文件，也不单独提供模板文件；需要该结构时按 `references/models.md` 手写。
-
-示例中的具体模型 ID 一律写成宿主模型表里的完整 ID（如 `codex/gpt-6.1-sol`），保留其命名空间前缀，裸写可能无法解析；`inherit` 与工具暴露的模型层级按各自规则使用。深度用 `reasoning_effort` 单独指定。
-
-实际配置优先级为：用户外部配置（macOS/Linux 为 `~/.config/easydev/models.json`，Windows 为 `%APPDATA%/easydev/models.json`，变量未设置时用主目录下 `.config/easydev/models.json`）> 对话中明确指定的文件 > 内置 `inherit` 默认值。
-外部配置存在时必须读取并应用，不得跳过；两者都没有时使用内置默认值，不读取包内任何 JSON 文件。
-需要某个示例时，将其内容复制到用户配置位置或明确指定其路径；
-不要把它们当作可修改的安装目录默认文件。
+示例不会自动加载；复制到选定位置或在对话中明确指定。来源优先级、字段和模型升级只以 [模型配置](../references/models.md) 为准。能力说明不作为虚构模型 ID，实际值须核对宿主工具；不修改密钥或宿主配置。

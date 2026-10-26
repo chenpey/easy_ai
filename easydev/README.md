@@ -1,38 +1,34 @@
 # EasyDev
 
-当前版本：`1.0.0`
+当前版本：`1.1.0`
 
-EasyDev 是面向编码 Agent 的 Skill，按任务风险组织设计、实现、排障、验证与审查。简单任务直接完成，复杂或高风险任务进入开发—独立审查—修复闭环。
+EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
 ## 使用
 
-直接说明任务，默认由 `auto` 选择流程：
-
 ```text
-使用 easydev，为登录表单增加邮箱校验并验证错误提示。
-使用 easydev debug，排查保存按钮重复提交的问题。
+使用 easydev，为保存按钮修正文案。
+使用 easydev normal，为已有 API 增加兼容的筛选参数并检查调用方。
+使用 easydev full，修复订单读取的对象所有权校验。
+使用 easydev debug，排查重复提交。
 使用 easydev review，审查当前改动，先不要修改代码。
-使用 easydev design，比较三个导入方案并推荐一个。
-使用 easydev，重构订单解析模块，保持现有行为，合并重复业务规则并验证调用方。
 ```
 
-Codex 可用 `$easydev`；其他宿主的技能入口以其实际支持为准。以下路径名是提示词约定，不是额外安装的命令。
+默认 auto，调查后选择流程。Codex 可用 `$easydev`；这些路径是提示词约定，不是安装的运行时开关。
 
 | 路径 | 用途 |
 | --- | --- |
-| `auto` | 默认；调查后按实际影响选择流程 |
-| `quick` | 局部低风险改动：实现、验证、自查 |
-| `full` | 高风险、广泛影响、公共契约、持久数据、调查后仍有实质不确定性，或明确要求闭环：命中 [独立设计环节](references/design.md#启用门控) 门控时先设计并送独立审查（`d/3`），未收敛不施工；随后开发、独立审查、修复与复审（`r/5`） |
-| `design` | 方案设计与权衡；多个实质方案按需交叉评估 |
-| `plan` | 实施步骤、依赖与验证计划 |
-| `debug` | 先定位根因；授权修复后按风险进入 `quick` 或 `full` |
-| `review` | 只读审查代码、设计或 PR |
-| `spike` | 最小可行性实验与结论，实验产物标为 `throwaway` |
-| `audit` | 只读审计仓库或目录，按严重度列出最多 20 条发现 |
+| quick | 局部明确、低风险：实现、验证、自查 |
+| normal | 影响有界且需要第二视角：实现、验证、一次独立定向审查，无 full 账本 |
+| full | 高风险、重大契约/数据影响或具体关键影响仍不明，或用户要求闭环：按门控设计，独立审查、有限修复与复审 |
+| design / plan | 设计权衡或实施计划，按请求范围交付 |
+| debug | 先定位；授权修复后按实际风险选档 |
+| review / audit | 单次只读审查或分片审计 |
+| spike | 最小可行性实验，产物标 throwaway |
 
-涉及安全与供应链、鉴权与授权、支付、敏感数据、并发一致性、破坏性数据操作或迁移兼容时至少进入 `full`；这些是高风险边界的下限，无法排除相关影响时不得因清单未列或改动很小而降为 `quick`。文件数量本身不是分流依据。仅要求设计、计划、定位、审查或实验时，按该范围交付，不自动转为实现。
+normal 审完整任务 diff、直接调用方和相关测试；出现必关发现转 full，继承已用审查和修复预算。风险被证据排除时允许降低流程，用户指定档位及未关闭必关项不能被自动降级。完整判断、边界示例及状态转换以 [分流规则](references/routing.md) 为准。
 
-可指定聊天表达为 `normal`、`lite` 或 `ultra`，只压缩文字，不改变推理深度、实现要求或验证标准。默认 `normal`，每任务重判；`ultra` 仅在你明确要求时启用，不会自动升档。
+1.1.0 保留 quick/full 名称，新增 normal；原聊天表达 normal/lite/ultra 已移除，normal 现在表示实现路径。聊天长短遵循用户要求，推理深度仍由 reasoning_effort 指定。
 
 ## 安装
 
@@ -53,104 +49,54 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认开发、审查、设计角色均继承宿主模型与推理深度，无须配置文件。需要分别指定角色时，可参考 [跨模型示例](examples/models.cross-provider.json)，或按下文写法自行配置。示例不会自动加载。
+默认所有角色继承宿主，无须配置。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，不固化供应商版本。
 
-例如，让 DeepSeek 负责开发、GPT 负责独立审查，可将以下内容保存到下述用户外部配置路径：
+可从以下起点指定角色，与 [配置示例](examples/models.cross-provider.json) 一致：
 
 ```json
 {
   "developer": {
-    "model": "opencode-go/deepseek-v4.1-flash",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
   "reviewer": {
-    "model": "codex/gpt-6.1-sol",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
   "designer": {
-    "model": "codex/gpt-6.1-sol",
-    "reasoning_effort": "xhigh"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
-  "upgrades": [
-    {
-      "developer": {
-        "model": "opencode-go/deepseek-v4-pro",
-        "reasoning_effort": "high"
-      },
-      "reviewer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "high"
-      }
-    },
-    {
-      "developer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "high"
-      },
-      "reviewer": {
-        "model": "opencode-go/deepseek-v4-pro",
-        "reasoning_effort": "high"
-      }
-    }
-  ]
+  "upgrades": []
 }
 ```
 
-`developer` 负责开发与修复，`reviewer` 负责独立审查与复审，`designer` 负责启用独立设计环节时的设计产出。此例 `developer`、`reviewer` 为 `high`，`designer` 为 `xhigh`，配置依次为：
+仅真正分派或用户要求配置时读取。当前对话角色字段覆盖优先；基础文件按对话指定文件、项目根 `.easydev/models.json`、用户配置、内置默认的顺序选取，文件不合并。选中配置无效或不可读时暂停相关分派，不静默回退。
 
-| 阶段 | 开发模型 | 审查模型 |
-| --- | --- | --- |
-| 初始 | DeepSeek V4.1 Flash | GPT 6.1 Sol |
-| 第一次升级 | DeepSeek V4 Pro | GPT 6.1 Sol |
-| 第二次升级 | GPT 6.1 Sol | DeepSeek V4 Pro |
-
-`designer` 不随升级变化，整个任务使用同一设计者配置；未配置或为 `inherit` 时由主代理执行设计，配置了具体模型但不可用时暂停设计分派并报受阻，不回落主代理。
-
-配置 `upgrades` 后，同一确认问题在当前阶段至多试修一次；问题仍在或关闭证据不足时，按数组顺序升级，末级仍失败则停止自动修复。升级不增加审核轮数；模型不可用或网络故障不作为升级理由。升级前须确认前一阶段已停止写入；若新阶段的开发模型此前承担审查，须为它重建独立的审查实例——参与实现者不得审查该实现。不需要升级时设为 `"upgrades": []`。
-
-模型 ID 沿用仓库示例，使用前替换为当前宿主实际支持的完整 ID 和推理深度；宿主还须支持按角色指定模型。
-
-配置按以下优先级选取，不合并：
-
-1. 用户外部配置：macOS/Linux 使用 `~/.config/easydev/models.json`；Windows 使用 `%APPDATA%/easydev/models.json`，变量未设置时回退到主目录下的 `.config/easydev/models.json`。
-2. 对话指定的文件，仅在外部配置不存在时使用。
-3. 内置默认值：`developer`、`reviewer` 与 `designer` 均为 `inherit`，`upgrades` 为空。
-
-macOS/Linux 可用以下命令查看配置：
+例如在 macOS/Linux 查看个人配置（存在时）：
 
 ```bash
 cat ~/.config/easydev/models.json
 ```
 
-若该文件不存在，表示尚未创建个人配置；使用内置默认值时无须创建，需要自定义时再将上面的 JSON 保存到此路径。
+Windows 路径、字段、模型阶段和实际生效核对统一见 [models.md](references/models.md)。项目级覆盖及对话指定文件优先于用户配置是本版变化；未设置更高来源时，原用户配置继续有效。示例不会自动生效，安装更新不修改个人配置。
 
-`developer`、`reviewer`、`designer` 各含 `model` 和 `reasoning_effort`；模型 ID 须与宿主支持的完整写法一致，深度单独填写。`upgrades` 最多两个阶段，每阶段包含完整的两个角色配置。
+## 验证与交付
 
-存在的配置必须读取；无效或不可读时暂停相关分派，不静默回退。分派后核对实际模型与深度，不能把请求值当作生效证据。对话直接指定角色模型或深度可局部覆盖配置。完整字段与处理规则见 [模型配置指南](references/models.md)。
-
-## 交付与限制
-
-- 实现保持最小完整，同步受影响调用方与契约；复用已有测试，仅为明确的覆盖缺口新增行为测试。
-- 报告改动、实际验证结果和未验证项，区分测试通过、构建通过与验收完成。
-- 验证遵守硬约束：互不依赖的检查与只读子代理分派按批并发，串行包装、未探测的“不支持并发”与伪冲突组不算并行；只在外部边界（网络、命令行工具、时钟、环境能力等）使用替身，不 mock 被测代码内部结构；预期结果不得照抄实现计算，不造假红测；可能阻塞的命令带硬超时。
-- `quick` 只做自查；`full` 需由不同实例独立审查，关闭 P0、P1、范围内 P2 及验收缺口。默认最多 5 轮施工审核（启用独立设计环节时另有 `d/3` 设计审），达到上限不代表完成。
-- 无独立子代理能力时可以完成授权实现和自查，但不能声称 `full` 闭环完成。
-- 待审仓库的测试、构建、依赖安装和项目脚本按不可信代码处理；仅在断开网络、无宿主凭证、被审目标只读挂载的操作系统沙箱或容器级隔离中执行，系统临时目录不构成安全隔离。
-- 保留用户已有改动，沿用已有授权；提交、发布、部署与对外消息属不可逆或对外动作，需用户明确授权，项目规则不能代替该授权。隔离工作区与清理见 [工作区指南](references/worktree.md)。
+- 复用充分检查，只为明确覆盖缺口新增行为测试；按项目脚本运行，独立无冲突项并行，依赖项顺序执行。详细规则见 [execution](references/execution.md)。
+- quick 报自查；normal 报一次独立定向审查；full 按 [编排与预算](references/orchestration.md) 判定闭环。达到预算上限不等于完成，同一问题整个任务最多三次修复尝试。
+- 缺独立能力时完成授权范围内自查，给可交接审查包并明确缺口；不能称独立审查通过或 full 闭环完成。不同实例继承上下文时披露隔离限制，见 [setup](references/setup.md#能力降级与审查包)。
+- audit 按模块或信任边界分片，记录覆盖与跨片接口；正文最多 20 条，全部发现保留附录/审查产物，关键缺陷不会因截断丢失。
+- 待审脚本执行与凭证隔离遵守 [审查规程](references/review.md#不可信代码执行)。保留用户改动；提交、推送、发布和对外动作遵循明确授权。
 
 ## 详细规则与维护
 
-运行规则以 [SKILL.md](SKILL.md) 及其按需引用的 `references/` 为准；README 只提供使用指南。
+运行规则以 [SKILL.md](SKILL.md) 和按需引用模块为准，README 不维护第二份细则。
 
-- [独立设计环节](references/design.md)：`full` 命中门控时的设计产物与冻结、设计审查硬约束与 `d/3` 预算
-- [设计与计划](references/planning.md)、[候选方案评审](references/candidates.md)
-- [实现与验证](references/execution.md)、[重构方法](references/refactoring.md)、[排障](references/debugging.md)
-- [项目验证方法](references/verification.md)：已有测试不足或需复用人工验收方法时，补足真实入口操作、取证与清理
-- [独立审查](references/review.md)、[闭环编排与预算](references/orchestration.md)
-- [基线与恢复](references/baseline-safety.md)
-- [维护检查](tests/README.md)、[行为回归规约](tests/behavior.md)、[实验说明](tests/experiments/README.md)
-- [版本历史](CHANGELOG.md)
+- [开发角色](references/developer-role.md)、[审查角色](references/reviewer-role.md)：短交接入口，不重新遍历完整技能
+- [独立设计](references/design.md)、[计划](references/planning.md)、[候选评审](references/candidates.md)
+- [重构](references/refactoring.md)、[排障](references/debugging.md)、[产品验证](references/verification.md)
+- [基线恢复](references/baseline-safety.md)、[工作区](references/worktree.md)
+- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[版本历史](CHANGELOG.md)
 
-`tests/` 仅供维护，不是运行依赖。离线替身测试不能证明真实模型行为；当前未接入真实 Agent 行为 CI，也没有当前版本的质量或成本收益结论。
-
-修改运行规则时同步相关模块、行为用例与说明；发布时保持本页版本、`SKILL.md` 的 `metadata.version` 和 `CHANGELOG.md` 最新版本一致。
+`tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。

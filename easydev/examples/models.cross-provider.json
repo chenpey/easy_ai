@@ -1,36 +1,15 @@
 {
   "developer": {
-    "model": "opencode-go/deepseek-v4.1-flash",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
   "reviewer": {
-    "model": "codex/gpt-6.1-sol",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
   "designer": {
-    "model": "codex/gpt-6.1-sol",
-    "reasoning_effort": "xhigh"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
-  "upgrades": [
-    {
-      "developer": {
-        "model": "opencode-go/deepseek-v4-pro",
-        "reasoning_effort": "high"
-      },
-      "reviewer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "high"
-      }
-    },
-    {
-      "developer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "high"
-      },
-      "reviewer": {
-        "model": "opencode-go/deepseek-v4-pro",
-        "reasoning_effort": "high"
-      }
-    }
-  ]
+  "upgrades": []
 }
