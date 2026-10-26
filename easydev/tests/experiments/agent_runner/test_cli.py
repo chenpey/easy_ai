@@ -605,6 +605,66 @@ class RunnerCliTest(unittest.TestCase):
         completed = self.run_scenario(fixture, "b61")
         self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
 
+    def test_run_b61_accepts_evidence_backed_escalation(self) -> None:
+        # behavior.md 第三支：首轮报 P1 即转 full，只要带证据、继承预算就算合规。
+        fixture = self.stub_environment(
+            "b61-escalation",
+            self.b61_plan(
+                agent_messages=[
+                    "采用 normal：两个独立调用方依赖 total，先做一次定向审查。",
+                    "首轮审查报 P1 验收缺口，升级为 full，r=1/5。",
+                ],
+                reviewers=[
+                    {"message": "**P1: 非法 discount 泄漏 OverflowError**"},
+                    {"message": "**P1: 首轮缺陷在 full 内关闭**"},
+                ],
+            ),
+        )
+        completed = self.run_scenario(fixture, "b61")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        result = self.result(fixture, "b61")
+        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
+        details = result["evaluation"]["details"]
+        self.assertEqual(details["normal_micro_loop"], "escalated")
+        self.assertIn("P1", details["escalation_evidence"])
+        self.assertEqual(details["ledger"]["r"], 1)
+
+    def test_run_b61_records_final_ledger_after_escalation(self) -> None:
+        # 转 full 的继承值 r=1/5 之后还有终值，取最后一次记账而不是第一次。
+        fixture = self.stub_environment(
+            "b61-ledger",
+            self.b61_plan(
+                agent_messages=[
+                    "采用 normal：两个独立调用方依赖 total。",
+                    "首轮报 P1，升级为 full，r=1/5；续轮复核后 r=2/5。",
+                ],
+                reviewers=[
+                    {"message": "**P1: 非法 discount 泄漏 OverflowError**"},
+                    {"message": "**P2: 舍入模式**"},
+                ],
+            ),
+        )
+        completed = self.run_scenario(fixture, "b61")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        details = self.result(fixture, "b61")["evaluation"]["details"]
+        self.assertEqual(details["ledger"]["r"], 2)
+
+    def test_run_b61_accepts_negated_upgrade_wording(self) -> None:
+        # 「不升级到 full」是合规复述，不能当成升级。
+        fixture = self.stub_environment(
+            "b61-negated-upgrade",
+            self.b61_plan(
+                agent_messages=[
+                    "采用 normal：两个独立调用方依赖 total。",
+                    "已完成，本次不升级到 full；微闭环完成。",
+                ]
+            ),
+        )
+        completed = self.run_scenario(fixture, "b61")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        details = self.result(fixture, "b61")["evaluation"]["details"]
+        self.assertEqual(details["normal_micro_loop"], "delivered")
+
     def test_run_b61_records_caller_reads_without_requiring_them(self) -> None:
         fixture = self.stub_environment(
             "b61-scope",
@@ -661,7 +721,60 @@ class RunnerCliTest(unittest.TestCase):
             (
                 "upgraded to full",
                 {"agent_messages": ["采用 normal。", "检查后发现风险扩大，改用 full 流程处理。"]},
-                "route is normal",
+                "escalation cites an in-contract finding",
+            ),
+            (
+                "escalation over the full budget",
+                {
+                    "agent_messages": [
+                        "采用 normal。",
+                        "首轮报 P1 验收缺口，改用 full 流程处理，r=6/5。",
+                    ]
+                },
+                "escalation stays within the full budget",
+            ),
+            (
+                "P1 closed inside normal instead of escalating",
+                {
+                    "agent_messages": [
+                        "采用 normal：两个独立调用方依赖 total。",
+                        "审查报 P1，已在 normal 内修复并复审通过。",
+                    ],
+                    "reviewers": [{"message": "**P1: 默认为 Decimal 上下文在合法金额上抛异常**"}],
+                },
+                "normal delivery has no blocking finding",
+            ),
+            (
+                "escalation without a route declaration",
+                {
+                    "agent_messages": [
+                        "先看一下仓库结构。",
+                        "首轮报 P1 验收缺口，升级为 full，r=1/5。",
+                    ],
+                    "reviewers": [{"message": "**P1: 非法 discount 泄漏 OverflowError**"}],
+                },
+                "initial route is declared",
+            ),
+            (
+                "escalation without any reviewer report",
+                {
+                    "agent_messages": [
+                        "采用 normal：两个独立调用方依赖 total。",
+                        "发现验收缺口，升级为 full，r=1/5。",
+                    ],
+                    "reviewers": [],
+                },
+                "escalation has a completed review report",
+            ),
+            (
+                "escalation from quick",
+                {
+                    "agent_messages": [
+                        "采用 quick。",
+                        "首轮报 P1 验收缺口，升级为 full，r=1/5。",
+                    ]
+                },
+                "escalation path is normal → full",
             ),
             (
                 "negated-but-claiming wording",

@@ -37,23 +37,49 @@ FILE_PATH_RE = re.compile(
     r"(?=$|[\s\"'`;&|),])"
 )
 DECLARED_PATH_RE = re.compile(
-    r"(?:采用|使用|走|进入|路径\s*[：:]?\s*)"
+    r"(?:采用|使用|走|进入|分流|判定为|定为|路径\s*[：:]?\s*)"
     r"\s*(?:easydev\s*)?[`*]*\s*(full-local|full-staged|full|normal|quick)\b",
     re.IGNORECASE,
 )
 DECLARED_PATH_RE_2 = re.compile(
     r"\b(full-local|full-staged|full|normal|quick)\s*(?:路径|流程)", re.IGNORECASE
 )
+ROUTE_TIER_PATTERN = r"(full-local|full-staged|full|normal|quick)"
+# 英文声明同样要认：非中文宿主写的是 "normal path" / "moved to the full route"。
+# `full path` 在文件语境里极常见（the full path of the file），所以裸「tier + path」
+# 只接受 normal/quick，full 必须带路由动词才计。
+DECLARED_PATH_EN_RE = re.compile(
+    r"(?:using|use|taking|take|took|going with|go with|chose|choose|choosing|"
+    r"routed|route|switching to|switched to|switch to|moving to|moved to|"
+    r"escalating to|escalated to|escalate to|on|via)\s+(?:the\s+)?(?:easydev\s+)?"
+    r"[`*]*\s*" + ROUTE_TIER_PATTERN + r"\b",
+    re.IGNORECASE,
+)
+DECLARED_PATH_EN_NOUN_RE = re.compile(
+    r"\b(full-local|full-staged|normal|quick)\s+(?:path|route|flow|track)\b",
+    re.IGNORECASE,
+)
+# 英文否定要看更宽的窗口，中文用固定 5 字符的紧邻判断。
+DECLARED_NEGATION_EN_RE = re.compile(
+    r"(?:not|never|instead of|rather than|avoid|no)\b[^.,;:!?\n]{0,16}$",
+    re.IGNORECASE,
+)
 UPGRADE_RE = re.compile(
     r"(?:升级|转入|转为)\s*(?:为|到)?\s*[`*]*\s*(full)(?![-A-Za-z0-9_])\b",
     re.IGNORECASE,
 )
+# 发现必须自成一行并以严重度起头：交接里复述模板（"每条以
+# `**[P0]/[P1]/[P2]/[P3] 简短标题**` 起头"）不算发现。
+# 标题不得以 `/`、`[` 或 `*` 开头，挡住模板回显与 `[P1]/[P2]` 这类并列写法。
 FINDING_RE = re.compile(
-    r"(?:\*\*)?\[(P[0-3])\](?:\*\*)?\s*"
-    r"([^\n*]+)",
+    r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+)?(?:\*\*)?\[(P[0-3])\](?:\*\*)?[ \t]*"
+    r"(?![/\[*])([^\n*]+?)[ \t]*(?:\*\*)?[ \t]*$",
+    re.MULTILINE,
 )
 FINDING_BULLET_RE = re.compile(
-    r"\*\*(P[0-3])[:：]\s*([^*\n]+)\*\*",
+    r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+)?\*\*(P[0-3])[:：][ \t]*"
+    r"([^*\n]+?)\*\*[ \t]*$",
+    re.MULTILINE,
 )
 REVIEW_PROMPT_MARKERS = (
     "独立只读审查",
@@ -841,6 +867,12 @@ def first_declared_path(texts: Sequence[str] | str) -> Optional[str]:
                 # "不走 quick" can be rejected before considering a later path.
                 context = text[max(0, match.start() - 5):match.end()]
                 if any(negation in context for negation in DECLARATION_NEGATIONS):
+                    continue
+                candidates.append((match.start(), match.group(1).lower()))
+        for pattern in (DECLARED_PATH_EN_RE, DECLARED_PATH_EN_NOUN_RE):
+            for match in pattern.finditer(text):
+                window = text[max(0, match.start() - 24):match.start()]
+                if DECLARED_NEGATION_EN_RE.search(window):
                     continue
                 candidates.append((match.start(), match.group(1).lower()))
         if candidates:

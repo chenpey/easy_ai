@@ -2,6 +2,21 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.2.5 更新说明（2026-10-26）
+
+只动判定载体与一处报告契约，不改档位判定、预算或状态机。
+
+- **确定发现的机器格式下沉到审查角色与交接**：`reviewer-role.md` 要求每条发现以 `**[P级] 简短标题**` 起头，`routing.md` 的 normal 分派要求把该格式写进交接。依据是同日三次真实 pi 回放：r1/r2 的 reviewer 都在散文里报出真实 P1（Decimal 精度、half-even 舍入），而规范发现块出现 0 次，事件归因解析为空——「有实据的升级」被读成「无证据升级」。normal/full 的定向审查不强制读 `review.md`，格式契约原先只写在那里，reviewer 看不到。
+- **b61 判分按 `behavior.md` 的 B61 三支分支化**（`agent_runner/scenarios/b61.py`）：终态 normal 时独立审查 1–2 次、且不得出现结构化 P0/P1（首轮报阻断项必须转 full）；转 full 时要求初始档位声明、升级前已有完成的审查报告、引用结构化 P0/P1/P2、`r≤5`/`d≤3`、不得从 quick 起跳。原先只认最理想一支，「按规升级」与「违规升级」判成同一种失败，也回答不了「normal 那次审查值不值」。
+- **任务文本钉死两处规格**：数值域（金额与 `discount` 按 `float`，不要求 `Decimal`/`Fraction` 精度）与折扣方向（`discount` 是减免比例，实付 `1 - discount`）。前者避免无界精度争议让升级链失去收口点；后者避免「减免 vs 按比例收费」两种读法各判一次——r2 即因此报废。
+- **归因接受英文路径声明**（`swebench/analyze_events.py`）：`normal path`、`taking the normal route`、`moved to the full route`、`escalated to full` 与中文「分流/判定为」都算声明；裸 `full path`（文件路径语境）与英文否定（`not switching to full`）不误判。依据是 r3 回放：模型写 `normal path` + 「分流 **normal**」，中文正则取不到，判分因此依赖措辞语言。
+- **发现只从独立成行的严重度起头解析**（`swebench/analyze_events.py`）：交接或报告里复述模板（"每条以 `**[P0]/[P1]/[P2]/[P3] 简短标题**` 起头"）、以及正文行内的 `[P1]` 提及都不再算发现。依据是 r3 回放：主代理把模板写进交接，归因把它当了一条 P0。
+- 文档同步：`tests/README.md`、`agent_runner/README.md`、`behavior.md` 记录新判分口径，并声明三条限制（散文发现不可见、升级证据不做契约语义判定、数值域与方向是 fixture 限制）。
+
+验证：macOS 同一快照，`check.sh` rc=0（四处版本 1.2.5、SKILL 字节、链接锚点、JSON 示例），design-gate 65/65、version-gate、audit-overflow、public-contract-callers、`role_metric`、agent_runner 36 项、swebench 55 项全绿。真实回放三次（pi 宿主，`opencode-go/deepseek-v4.1-flash:high`，普通会话，非子代理）：r1 首轮 P1 转 full 走满 `r=4/5` 后报部分完成；r2 首轮 P1 转 full、`r=2/5` 交付，因方向歧义行为判负；r3 行为首次通过（`ok`），但把首轮 P1 留在 normal 内修完即交付——归因看不到散文发现，判分全绿，属判分盲区，已补 `normal delivery has no blocking finding`。
+
+未验证：`scripts/smoke-install.sh` 在本机被沙箱拒绝（`mktemp: mkdtemp failed … Operation not permitted`），未通过；新检查未在真实回放中触发（本轮发现是散文）；单次运行无方差；「局部/非局部 P2」与「必关项是否已关闭」仍是语义判断，未自动化。
+
 ## 1.2.4 更新说明（2026-10-26）
 
 只做一处改动：让自判 quick 的模型在动手前看得见第二视角信号，并按 `easydev/README.md` 已定的腾挪顺序给入口腾出空间。不改判定条件、预算、状态机。

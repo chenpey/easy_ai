@@ -167,6 +167,26 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         )
         self.assertEqual(payload["summary"]["reviewer_finding_count"], 1)
 
+    def test_reviewer_finding_scan_ignores_quoted_format_template(self) -> None:
+        # 交接/报告里复述「**[P0]/[P1]/[P2]/[P3] 简短标题**」不是发现。
+        experiment = self.root / "template"
+        self.write_run(
+            experiment,
+            "quoted",
+            [
+                agent_message(0, "采用 normal。"),
+                spawn(),
+                reviewer_state(
+                    "每条发现必须以 `**[P0]/[P1]/[P2]/[P3] 简短标题**` 起头；"
+                    "本次未发现需处理的问题（No issues found）。"
+                ),
+                turn(),
+            ],
+        )
+        payload = self.payload(experiment)
+        self.assertEqual(self.run_by_task(payload, "quoted")["findings"], [])
+        self.assertEqual(payload["summary"]["reviewer_finding_count"], 0)
+
     def test_access_attribution_counts_observed_paths_only(self) -> None:
         experiment = self.root / "access"
         self.write_run(
@@ -354,6 +374,41 @@ class AnalyzeEventsCliTest(unittest.TestCase):
                 "negated full keeps quick",
                 ["不走 full，采用 quick。", "完成"],
                 "quick",
+                None,
+                False,
+            ),
+            (
+                "english normal path is a route declaration",
+                ["Dispatching the reviewer on the normal path.", "完成"],
+                "normal",
+                None,
+                False,
+            ),
+            (
+                "english upgrade is a formal upgrade",
+                ["Using normal for the first pass.", "Moved to the full route after a P1."],
+                "normal",
+                "full",
+                True,
+            ),
+            (
+                "bare full path stays undeclared",
+                ["The full path of the file is src/cart.py.", "完成"],
+                None,
+                None,
+                False,
+            ),
+            (
+                "negated english upgrade keeps normal",
+                ["Using normal.", "Not switching to full; staying on the normal path."],
+                "normal",
+                "normal",
+                False,
+            ),
+            (
+                "chinese fenliu is a route declaration",
+                ["分流 normal：两个独立调用方依赖 total。", "完成"],
+                "normal",
                 None,
                 False,
             ),
