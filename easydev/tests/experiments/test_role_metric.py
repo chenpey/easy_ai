@@ -179,6 +179,33 @@ class RoleMetricTests(unittest.TestCase):
         worker = [row for row in rows if row["role"] == "worker"][0]
         self.assertEqual(worker.get("matched_paths"), {"/repo/easydev/references/execution.md": 1})
 
+    def test_no_visible_read_hint_for_external_delegation(self) -> None:
+        # 外部委派工具的参数里没有路径键：读取不在事件层，只能提示，不能当作没读。
+        write_child(
+            self.session,
+            "run-opaque",
+            "reviewer",
+            [{"tool": "antigravity", "input": "审查当前改动"}],
+            {"agent": "reviewer", "model": "provider/model-d:high", "usage": {"input": 9, "output": 2}},
+            parent=SESSION_A,
+            tool="antigravity",
+        )
+        collected = role_metric.collect(self.session, [], selector=SESSION_A)
+        opaque = [row for row in collected if not row["visible_reads"]]
+        self.assertEqual(len(opaque), 1)
+        self.assertEqual(opaque[0]["tools"], {"antigravity": 1})
+
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            role_metric.main(["--session-dir", str(self.session), "--session", SESSION_A])
+        self.assertIn("读取可能发生在事件层看不见的地方", err.getvalue())
+
+    def test_no_hint_when_reads_are_visible(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            role_metric.main(["--session-dir", str(self.session), "--session", SESSION_A])
+        self.assertEqual(err.getvalue(), "")
+
     def test_non_object_meta_does_not_crash(self) -> None:
         artifacts = self.session / "subagent-artifacts"
         (artifacts / "run-bad_reviewer_0_transcript.jsonl").write_text(

@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`1.2.3`
+当前版本：`1.2.4`
 
 EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
@@ -51,30 +51,30 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 默认所有角色继承宿主，无须配置（等价于三者都写 `inherit`、`upgrades` 为空）。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，规则本身不固化供应商版本。
 
-下面的内联示例与 [配置示例](examples/models.cross-provider.json) 一致，演示跨供应商写法（开发与审查分属不同供应商，`upgrades` 再次对调）；它只是形状示例、不构成推荐，示例里的 ID 须按宿主实际支持替换，照抄可能不可用：
+下面的内联示例与 [配置示例](examples/models.cross-provider.json) 一致，演示跨供应商写法（开发与审查分属不同供应商，`upgrades` 再次对调）；它只是形状示例、不构成推荐。示例里的模型 ID 是占位值，须替换为宿主实际支持的值；原样照抄会在第一次分派时按 [模型配置](references/models.md) 暂停报受阻，不会回落到 `inherit`：
 
 ```json
 {
   "developer": {
-    "model": "opencode-go/deepseek-v4.1-flash",
+    "model": "<provider-a>/<model-a>",
     "reasoning_effort": "high"
   },
   "reviewer": {
-    "model": "codex/gpt-6.1-sol",
+    "model": "<provider-b>/<model-b>",
     "reasoning_effort": "high"
   },
   "designer": {
-    "model": "codex/gpt-6.1-sol",
+    "model": "<provider-b>/<model-b>",
     "reasoning_effort": "high"
   },
   "upgrades": [
     {
       "developer": {
-        "model": "codex/gpt-6.1-sol",
+        "model": "<provider-b>/<model-b>",
         "reasoning_effort": "high"
       },
       "reviewer": {
-        "model": "opencode-go/deepseek-v4.1-flash",
+        "model": "<provider-a>/<model-a>",
         "reasoning_effort": "high"
       }
     }

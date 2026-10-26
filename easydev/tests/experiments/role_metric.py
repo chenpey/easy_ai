@@ -8,6 +8,12 @@
 
 只做统计，不判断审查质量；用于核对交付报告里的 `计量：模块=main:…；dev:…；reviewer:…`
 与实际读取是否一致，以及某个子代理是否真的读了指定路径（例如修复点的直接调用方）。
+
+两个边界：
+- 只能看见 pi 原生工具参数里的读取。经 `antigravity` 等外部委派工具执行的读取
+  不在事件层，`--path` 为空不代表没读；此时会给一行提示。
+- 子代理产物落在发起它的主会话目录下，不跟着子代理自己的 cwd。用子代理 cwd
+  当 `--session-dir` 找不到会话文件。
 """
 
 from __future__ import annotations
@@ -18,10 +24,13 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 REFERENCE_RE = re.compile(r"references/([A-Za-z0-9_.-]+\.md)")
+# 参数里出现路径键才算一次可见读取；payload 文本匹配比解析 JSON 宽容。
+PATH_KEY_RE = re.compile(r'"(?:file_)?path"\s*:')
 SESSION_ID_RE = re.compile(r"_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
 # 子代理交接 prompt 里会复述 references 路径，那不是「主代理读了它」。
 HANDOFF_TOOLS = {"subagent"}
@@ -60,8 +69,8 @@ def resolve_main_session(session_dir: Path, selector: Optional[str]) -> Path:
     return matches[0]
 
 
-def tool_payloads(path: Path, child: bool) -> Iterable[str]:
-    """产出读取类工具的参数文本；跳过交接待办 prompt。"""
+def tool_payloads(path: Path, child: bool) -> Iterable[Tuple[str, str]]:
+    """产出 (工具名, 读取类工具参数文本)；跳过交接待办 prompt。"""
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -78,7 +87,7 @@ def tool_payloads(path: Path, child: bool) -> Iterable[str]:
                     continue
                 payload = event.get("argsPayload")
                 if isinstance(payload, str) and payload:
-                    yield payload
+                    yield str(event.get("toolName") or "unknown"), payload
                 continue
             message = event.get("message")
             if not isinstance(message, dict):
@@ -92,7 +101,10 @@ def tool_payloads(path: Path, child: bool) -> Iterable[str]:
                     continue
                 arguments = block.get("arguments")
                 if arguments is not None:
-                    yield json.dumps(arguments, ensure_ascii=False)
+                    yield (
+                        str(block.get("name") or "unknown"),
+                        json.dumps(arguments, ensure_ascii=False),
+                    )
 
 
 def _forms(path: str, cwd: Path) -> set:
@@ -106,18 +118,30 @@ def _forms(path: str, cwd: Path) -> set:
     return forms
 
 
-def summarize(payloads: Iterable[str], wanted: Iterable[str], cwd: Path) -> Dict[str, Any]:
+def summarize(payloads: Iterable[Tuple[str, str]], wanted: Iterable[str], cwd: Path) -> Dict[str, Any]:
     refs: set = set()
     hits: Dict[str, int] = {}
+    tools: Counter = Counter()
     calls = 0
+    visible = False
     queries = {path: _forms(path, cwd) for path in wanted}
-    for payload in payloads:
+    for tool, payload in payloads:
         calls += 1
+        tools[tool] += 1
+        if PATH_KEY_RE.search(payload):
+            visible = True
         refs.update(REFERENCE_RE.findall(payload))
         for path, forms in queries.items():
             if any(form in payload for form in forms):
                 hits[path] = hits.get(path, 0) + 1
-    summary: Dict[str, Any] = {"tool_calls": calls, "references": sorted(refs)}
+    summary: Dict[str, Any] = {
+        "tool_calls": calls,
+        "references": sorted(refs),
+        "tools": dict(tools.most_common()),
+        # 没有任何带路径键的工具参数：读取可能发生在事件层看不见的外部委派里，
+        # 不能因为参数文本里出现 references/ 字样就算读过。
+        "visible_reads": visible,
+    }
     if hits:
         summary["matched_paths"] = dict(sorted(hits.items()))
     return summary
@@ -228,6 +252,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
     else:
         print(format_table(rows))
+    opaque = [row for row in rows if row.get("tool_calls") and not row.get("visible_reads")]
+    if opaque:
+        seen: Counter = Counter()
+        for row in opaque:
+            seen.update(row.get("tools") or {})
+        top = ", ".join(f"{name}×{count}" for name, count in seen.most_common(3))
+        print(
+            f"提示: {len(opaque)} 个角色运行的工具参数里没有路径（工具: {top}）；"
+            "读取可能发生在事件层看不见的地方（如外部委派），--path 为空不代表没读",
+            file=sys.stderr,
+        )
     return 0
 
 

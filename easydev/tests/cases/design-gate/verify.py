@@ -591,10 +591,10 @@ DOC_CONTRACT = [
         ["改动前已存在", "新增的测试"],
     ),
     (
-        "SKILL.md 的 quick 核心给出计量字段与键序",
+        "SKILL.md 的 quick 核心指向 routing 的计量节",
         "easydev/SKILL.md",
         "单行计量",
-        ["计量：模块=", "未进 full 记"],
+        ["routing 的计量节"],
     ),
     (
         "routing.md 的高风险边界按实际影响判定而非关键词",
@@ -603,10 +603,10 @@ DOC_CONTRACT = [
         ["不因此进入 full", "已在 full"],
     ),
     (
-        "routing.md 的计量小节适用全档位、按角色分段并以读取事件为准",
+        "routing.md 的计量小节给出字段键序、缺省写法与角色分段",
         "easydev/references/routing.md",
         "## 计量",
-        ["main:", "reviewer:", "读取事件"],
+        ["计量：模块=", "审查=<N>；d=<x>/3；r=<y>/5", "未进 full 记", "main:", "reviewer:", "读取事件"],
     ),
 ]
 

@@ -25,7 +25,7 @@ python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 - **SWE-bench runner CLI** (`tests/experiments/swebench/test_cli.py`)：`setup` / `run` / `summarize` / `calibrate`；结果读取器对身份、事件计数、协议版本与 F2P/P2P 矛盾的拒绝；补丁应用失败（agent patch 与 test patch）的终态存储、`patch_apply_failures` 计数与重跑不调用模型；manifest 选择与报告计数、每任务 eligible/excluded P2P 披露（含 `|` 的 nodeid 在表格单元格内转义）；模板解包逃逸与合法链接/延迟目录属性；保护模式的收紧权限、损坏/软链记录、软链在 chmod 前被拒绝、父子顺序、锁定中途失败回滚、失败结束与换 cwd 恢复；补丁采集不执行 Agent hook/filter；P2P 回归与每 arm 报告。
 - **事件归因 CLI** (`tests/experiments/swebench/test_analyze_cli.py`)：声明路径（含 normal 与升降级）、真正 reviewer 交接与开发者提及/否定/禁读的区分、reviewer 完成与报告、P0–P3、文件/模块访问、usage/缓存率/耗时、零发现声明、畸形行容错、`receiver_thread_ids: null` 按缺失处理、`--output` 与 stdout 一致。
 - **流程状态机与独立设计环节的确定性复验** (`tests/cases/design-gate/run.sh`)：normal 一次不同实例审查、无审查/作者自查不可完成、首轮无缺陷不得发起复审、第三次审查被拒；首轮仅局部 P2 时一次局部修复加定向复审可交付（审查 2 次），复审仍未关闭转 full 且记 `r=2/5`，非局部 P2 首轮后转 full 且继承 `r=1/5`；门控五项判定 13 组 fixture（含「只交给独立审查者不构成多阶段」与「高风险但未改变行为/决策/数据流不启用」两个可达成性回归）；`d/3` 与 `r/5` 记账与上限；候选第二轮须用户 opt-in；升版重写不计轮；受阻轮不算缺陷已关闭；剩余 `r` 不足两轮禁止单开设计重审；阶段增量审查最多 3 轮；施工期 `d` 用尽停止；多方案任务六种组合的可达性枚举；文档契约 14 组（含局部 P2 判定条件、定向复审的直接调用方范围、「现成检查」口径、高风险边界实际影响判定、计量字段键序与角色分段）。
-- **按角色计量** (`tests/experiments/test_role_metric.py`)：主代理与子代理分别归因；`--path` 过滤回答「哪个角色读了某个文件」；`--json` 可机器读取。
+- **按角色计量** (`tests/experiments/test_role_metric.py`)：主代理与子代理分别归因；`--path` 过滤回答「哪个角色读了某个文件」；子代理只用无路径参数的外部委派工具时，stderr 给一行提示而不是默认「没读」；`--json` 可机器读取。
 - **normal 微闭环观测**（`tests/experiments/agent_runner/test_cli.py` 的 `b61` 用例）：路由必须是 normal、独立审查 1–2 次、必须带回报告、不得宣称 full 闭环、只改 `src/cart.py`；另固定第三次审查、quick 声明、错误行为各自被拒，复审是否读到调用方只记 detail。
 - **档位对照臂** (`tests/experiments/swebench/test_arms.py`)：三个 `easydev-*` 档位臂的 prompt 各自钉住档位且互不相同、auto 臂 prompt 不变、默认臂集合不变、未知臂在读取实验资产前被拒。
 - **audit 溢出与分片覆盖** (`tests/cases/audit-overflow/run.sh`)：固定 21 个 P1 与 2 个 P2，正文仅取 20 条，附录保留 23 条完整记录；摘要披露正文外的 1 个 P1；正文超限、附录遗漏、溢出摘要缺失、虚假全覆盖或未列未审分片均被拒绝。
@@ -40,6 +40,8 @@ python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
 - 真实 Codex CLI 与真实模型行为：所有检查都使用替身，只验证验收机制本身，不验证模型是否遵守 EasyDev 流程，也不产生可引用的模型成绩。
 - `role_metric.py` 的 `--path` 是子串匹配：`src/cart.py` 也会命中 `legacy/src/cart.py`，只用于同一仓库内的相对比较。
 - `role_metric.py` 只统计工具参数里出现的路径与 usage，不判断审查质量，也不证明报告里的计量诚实；Codex 宿主没有这套 artifact 时不可用。
+- `role_metric.py` 看不见外部委派里的读取：经 `antigravity` 等工具执行时，参数里只有 `{tool,input}`，`--path` 为空不代表没读。本仓库 6 个历史会话的 23 次 reviewer 运行中有 4 次属此类（工具仅为 `antigravity`）。现在会给一行提示，但无法还原读了什么。
+- `role_metric.py` 的子代理产物按**父会话目录**归属：用子代理自己的 cwd 当 `--session-dir` 找不到会话文件，需传主会话目录。
 - `b61` 的「复审是否读了直接调用方」只记 detail：事件层无法把文件读取稳定归属到 reviewer 线程，它提供真实回放的观测值，不构成该规则的回归保护。
 - 真实 pytest / SWE-bench 依赖环境：`pytest_stub.py` 只按计划输出状态与 JUnit XML，不执行测试。
 - 网络隔离、容器级进程隔离：runner 只请求 Codex CLI 关闭网络；超时清理覆盖进程组与已记录后代，仍不能替代 cgroup、容器或宿主 supervisor。
