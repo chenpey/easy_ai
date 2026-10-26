@@ -43,6 +43,11 @@ jobs:
             command: bash tests/cases/public-contract-callers/run.sh
             install_pyyaml: false
             timeout_minutes: 5
+          - name: 按角色计量回归
+            working_directory: easydev
+            command: python3 -m unittest discover -s tests/experiments -p 'test_role_metric.py'
+            install_pyyaml: false
+            timeout_minutes: 5
           - name: 行为 runner 与进程清理回归
             working_directory: easydev
             command: python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py'

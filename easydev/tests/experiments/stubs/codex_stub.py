@@ -14,6 +14,12 @@ keys (all optional):
 ``reviewer``
     Emit one ``spawn_agent`` call plus a completed ``wait`` state whose report
     is ``reviewer_report``.
+``reviewers``
+    List of ``{"status": ..., "message": ..., "tool": ..., "prompt": ...}``;
+    emits one ``spawn_agent``/``wait`` pair per entry so re-review rounds can be
+    simulated.  ``prompt`` overrides the default reviewer handoff text, which
+    must still read as an independent review for the analyzer to count it.
+    Takes precedence over ``reviewer``.
 ``reviewer_report``
     Text of the completed reviewer report.
 ``commands``
@@ -119,8 +125,43 @@ def valid_events(plan: Dict[str, object]) -> List[Dict[str, object]]:
                 },
             }
         )
+    reviewers = plan.get("reviewers")
+    if isinstance(reviewers, list):
+        for index, entry in enumerate(reviewers):
+            entry = entry if isinstance(entry, dict) else {}
+            thread_id = f"reviewer-{index + 1}"
+            events.append(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": f"spawn-{index + 1}",
+                        "type": "collab_tool_call",
+                        "tool": "spawn_agent",
+                        "receiver_thread_ids": [thread_id],
+                        "prompt": entry.get("prompt")
+                        or "独立只读审查 independent read-only reviewer",
+                    },
+                }
+            )
+            events.append(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": f"wait-{index + 1}",
+                        "type": "collab_tool_call",
+                        "tool": entry.get("tool", "wait"),
+                        "agents_states": {
+                            thread_id: {
+                                "status": entry.get("status", "completed"),
+                                "message": entry.get("message", ""),
+                            }
+                        },
+                    },
+                }
+            )
+
     reviewer = plan.get("reviewer")
-    if reviewer:
+    if reviewer and not isinstance(reviewers, list):
         if isinstance(reviewer, dict):
             reviewer_status = reviewer.get("status", "completed")
             reviewer_message = reviewer.get("message", "")

@@ -16,11 +16,25 @@
 
 每个任务分别以 quick、normal、full 各跑一次，每批共 9 次。同一基线提交、同一模型与推理深度；顺序固定 quick → normal → full；每次从干净工作区开始，不复用前一档的改动、账本或上下文。
 
+档位由 `swebench/run.py` 的三个对照臂钉住，prompt 明写「用户已指定档位，不要改用 auto 重新分流」：
+
+```bash
+python3 tests/experiments/swebench/run.py setup  --dataset … --templates … --venvs … --experiment /tmp/rr
+python3 tests/experiments/swebench/run.py run    --experiment /tmp/rr \
+  --tasks <t1> <t2> <t3> --arms easydev-quick easydev-normal \
+  --repeats 1 --concurrency 1
+python3 tests/experiments/swebench/run.py summarize --experiment /tmp/rr
+```
+
+`--tasks` 必须显式给出本批三个任务（`run.py` 的默认任务表是五个，照抄会得到 5×2 次）；档位顺序靠逐臂串行（`--concurrency 1`）保证；`summarize` 按臂名字典序聚合，报告里的臂顺序不代表执行顺序。先用 `easydev-quick` 与 `easydev-normal` 两臂回答「normal 值不值」，需要门控数据时再加 `easydev-full`；`easydev`（auto）臂保留作实际分流的对照。隐藏的 FAIL_TO_PASS / PASS_TO_PASS 即本协议要求的「执行者不可见的独立验收」。
+
+角色分段与 token 用 `tests/experiments/role_metric.py`（pi 宿主，读会话目录）或 `swebench/analyze_events.py`（Codex 宿主，读 `events.jsonl`）：前者给子代理的实际模型、usage、耗时与两类的 references 读取（主会话 jsonl 不含 usage，主代理行只有读取记录），后者给声明路径、reviewer 实例与报告、模块访问。Codex 侧不推断子代理 token，按角色的成本只能到「读了哪些 references」。
+
 ## 记录字段
 
 | 字段 | 来源 |
 | --- | --- |
-| 角色分段的 `模块` | 读取事件；无事件时取报告并标注为自述 |
+| 角色分段的 `模块` | 读取事件（pi：`role_metric.py`；Codex：`analyze_events.py`）；无事件时取报告并标注为自述 |
 | 总 token | 宿主 usage，不可得写未知 |
 | 墙钟耗时 | 宿主记录 |
 | 独立审查次数、`d`/`r` | 报告与账本 |

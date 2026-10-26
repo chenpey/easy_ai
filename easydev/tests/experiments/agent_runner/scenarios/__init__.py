@@ -19,6 +19,7 @@ SCENARIO_MODULES = {
     "b01": "b01",
     "b02": "b02",
     "b16": "b16",
+    "b61": "b61",
     "public-contract-callers": "public_contract_callers",
 }
 

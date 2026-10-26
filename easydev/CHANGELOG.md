@@ -2,6 +2,22 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.2.3 更新说明（2026-10-26）
+
+运行时规则文本未变；本版只补齐 1.2.2 留下的三个「缺真实载体」缺口里的可执行部分，不新增流程、预算或阈值。
+
+- **按角色计量**（`tests/experiments/role_metric.py`）：从 pi 会话目录按实例归因——主代理读 `<session>/*.jsonl` 的 `toolCall.arguments`，子代理读 `subagent-artifacts/*_meta.json`（实际模型、usage、耗时）与 `*_transcript.jsonl` 的 `tool_start.argsPayload`。`--path` 过滤直接回答「哪个角色读了修复点的直接调用方」，`--json` 供批量收集。它同时能核对交付报告里的 `计量：模块=main:…；dev:…；reviewer:…` 与真实读取是否一致。
+- **normal 微闭环观测场景**（`agent_runner` 的 `b61`）：夹具里 `total` 被 `invoice`、`receipt` 两个调用方依赖且调用方没有测试（命中信号①②），断言路由必须是 normal、独立审查 1–2 次、必须带回报告、不得宣称 full 闭环、只改 `src/cart.py`；行为验收覆盖折扣四舍五入、非法折扣与调用方展示格式。复审是否读到直接调用方只写进 detail——事件层无法把文件读取稳定归属到 reviewer 线程，这一点在 `tests/README.md` 的未覆盖清单里同样声明。
+- **档位对照臂**（`swebench/run.py`）：新增 `easydev-quick` / `easydev-normal` / `easydev-full`，prompt 明写「用户已指定档位，不要改用 auto 重新分流」；默认三臂与 auto prompt 保持不变，未知臂在读取实验资产前即被拒绝。`tests/experiments/routing-replay/README.md` 补上对应命令：先用 quick × normal 两臂回答「normal 值不值」，需要门控数据再加 full。
+- 替身新增 `reviewers` 列表（模拟初审 + 定向复审两轮），`reviewer` 单数形式保持兼容；`tests/README.md` 的运行清单增至七项，CI 矩阵增至九项，`role_metric` 单列一项。
+- 版本 1.2.3（根 README、`easydev/README.md`、`SKILL.md` metadata、本文件）。
+
+验证：check.sh rc=0（`SKILL.md` 4044 字节、四处版本 1.2.3；行尾空白扫描只覆盖已跟踪文件，本次新文件在 `git add` 前由手工 grep 核对）、design-gate 65/65、version-gate / audit-overflow / public-contract-callers / smoke-install rc=0、role_metric 8 项、agent_runner 33 项（含 4 个 b61 用例）、swebench 55 项（含新增 6 个档位臂用例），`git diff --check` 通过。
+
+独立审查第 1 轮（只读）报 2×P1 + 7×P2 + 10×P3，已按最小改动逐条处理：P1 为 `role_metric` 把不同会话的子代理产物混算（改为按主会话 id 过滤、新增 `--session`、表头打印所选会话）、`b61` 用裸子串判「宣称 full 闭环」（改为带否定窗口的匹配，`不称 full 闭环` 不再误判）；P2 为四舍五入缺区分性断言（补 `total([(1.0,1)], 0.333) == 0.67`）、两轮审查只回一份报告仍通过（比 `reviewer_completed_instances`）、缺「未离开 normal」检查（加 `upgraded_to_full`）、b61 文档把信号①写成成立（改为「②成立、①可主张」）、复放命令漏 `--tasks` 且并发与「顺序固定」矛盾、`tests/behavior.md` 未同步 B61 载体、本段缺审查状态。P3 中与正确性相关的（`--path` 绝对/相对写法、非对象 meta、交接 prompt 不计入主代理读取、manifest 臂字段、目录树顺序、替身文档）一并修正。第 2 轮定向复审确认上述各项全部关闭，另报 2×P2 + 7×P3：`route is normal` 只挡 `full` 升级、漏掉 `full-local`/`full-staged` 终态；`claims_full_closed_loop` 的否定窗口过宽，会把「无需再确认，full 闭环完成」判成合规。两条已改为「终态必须是 normal 或未声明」与「否定词 + 宣称动词紧邻」，并各补一条应失败用例；P3 同步了 `--session` 接受裸文件名、`--path` 子串匹配的限制写进未覆盖清单、实验目录说明与复放聚合顺序。
+
+未验证：`b61`、档位臂与 `role_metric --path` 都需要真实宿主才能产生有意义的观测值——离线载体只证明「给定这些事件时判定与归因正确」，不证明模型会走 normal、会复审调用方，也不证明被强制的档位臂真的照做。SWE-bench 的三档复放仍未执行（缺 Lite 元数据、源码 tar 与 venv）。
+
 ## 1.2.2 更新说明（2026-10-26）
 
 按 1.2.1 的第二轮评审意见做六处校准。本轮同时改了 1 条可执行断言、信号①的判定文本并新增协议文档，超出本版新增的「纯措辞补丁」捷径范围；只跑一轮 normal 独立审查加一次定向复审，属授权与成本下的例外，不作为后续措辞补丁的分类先例。

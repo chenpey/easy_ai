@@ -59,9 +59,26 @@ weaken or modify tests. Run targeted tests and relevant regression tests. Review
 the final diff for edge cases, compatibility, and accidental files. In the final
 message, report the actual checks run and any unresolved risk."""
 
-EASYDEV_PROMPT = """使用 easydev auto 完成下面的仓库任务。遵守 Skill 的完成边界；
+EASYDEV_BODY = """遵守 Skill 的完成边界；
 不要修改或创建测试来放宽验收；不要访问网络；只修改解决任务所需的产品代码。
 最终说明实际验证、独立审查状态和仍未验证的风险。"""
+
+EASYDEV_PROMPT = "使用 easydev auto 完成下面的仓库任务。" + EASYDEV_BODY
+
+# 档位对照臂：用户显式指定路径，禁止模型改用 auto 重新分流。
+EASYDEV_PATH_PROMPTS = {
+    "quick": "使用 easydev quick 完成下面的仓库任务。用户已指定档位，不要改用 auto 重新分流。",
+    "normal": "使用 easydev normal 完成下面的仓库任务。用户已指定档位，不要改用 auto 重新分流。",
+    "full": "使用 easydev full 完成下面的仓库任务。用户已指定档位，不要改用 auto 重新分流。",
+}
+# 档位臂不进入 DEFAULT_ARMS：既有实验的默认臂语义保持不变。
+EASYDEV_PATH_ARMS = {f"easydev-{path}": path for path in EASYDEV_PATH_PROMPTS}
+AVAILABLE_ARMS = DEFAULT_ARMS + sorted(EASYDEV_PATH_ARMS)
+
+
+def is_easydev_arm(arm: str) -> bool:
+    return arm == "easydev" or arm in EASYDEV_PATH_ARMS
+
 
 COMMON_PROMPT = """Evaluation constraints for every arm:
 - Modify product source only. Do not add, remove, or edit tests.
@@ -376,6 +393,8 @@ def build_prompt(arm: str, problem: str) -> str:
         prefix = CHECKLIST_PROMPT + "\n\n"
     elif arm == "easydev":
         prefix = EASYDEV_PROMPT + "\n\n"
+    elif arm in EASYDEV_PATH_ARMS:
+        prefix = EASYDEV_PATH_PROMPTS[EASYDEV_PATH_ARMS[arm]] + EASYDEV_BODY + "\n\n"
     else:
         raise ValueError(f"unknown arm: {arm}")
     return f"{prefix}{COMMON_PROMPT}\n\nTask:\n{problem}"
@@ -853,7 +872,10 @@ def calibrate(args: argparse.Namespace) -> None:
         "model": args.model,
         "reasoning_effort": args.reasoning_effort,
         "protocol": {
-            "arms": DEFAULT_ARMS,
+            # 校准阶段还不知道本次跑哪些臂：只记录可用集合与默认集合，
+            # 实际用了哪些臂以 runs/<task>/<arm>/ 目录为准。
+            "arms_default": DEFAULT_ARMS,
+            "arms_available": AVAILABLE_ARMS,
             "source_only": True,
             "network_policy": "codex_sandbox_requested_not_verified",
             "resolved": "all FAIL_TO_PASS pass and no eligible PASS_TO_PASS regressions",
@@ -928,7 +950,7 @@ def run_one(
     extract_template(experiment / "templates" / f"{task_id}.tar", workdir)
     base_sha = init_repo(workdir, task_id)
     trusted_git_config = (workdir / ".git" / "config").read_bytes()
-    if arm == "easydev":
+    if is_easydev_arm(arm):
         copy_easydev(args.skill_root, workdir)
 
     prompt = build_prompt(arm, task["problem_statement"])
@@ -1189,6 +1211,15 @@ def lock_protected_paths(paths: Iterable[Path], record_path: Path) -> Iterator[N
 
 
 def run_experiment(args: argparse.Namespace) -> None:
+    # Reject unknown arms before touching the experiment: a typo must not read
+    # protected assets or leave half-prepared run directories behind.  The mode
+    # recovery below still runs on the next valid invocation, so this ordering is
+    # safe — it only skips the recovery for a typo'd command.
+    unknown_arms = [arm for arm in args.arms if arm not in AVAILABLE_ARMS]
+    if unknown_arms:
+        raise SystemExit(
+            f"unknown arm(s): {', '.join(unknown_arms)}; available: {', '.join(AVAILABLE_ARMS)}"
+        )
     experiment = args.experiment
     protect_record = experiment / "protected-modes.json"
     # Recover before reading anything: an interrupted run left dataset.json and

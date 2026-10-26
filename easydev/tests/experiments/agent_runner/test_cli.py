@@ -28,7 +28,7 @@ REPO_ROOT = TESTS_ROOT.parent
 RUNNER = TESTS_ROOT / "experiments" / "agent_runner" / "runner.py"
 CODEX_STUB = TESTS_ROOT / "experiments" / "stubs" / "codex_stub.py"
 CASES_ROOT = TESTS_ROOT / "cases"
-SCENARIO_IDS = ["b01", "b02", "b16", "public-contract-callers"]
+SCENARIO_IDS = ["b01", "b02", "b16", "b61", "public-contract-callers"]
 
 B02_SOLUTION = (
     "import json\nfrom pathlib import Path\n\n\n"
@@ -46,6 +46,32 @@ B02_MISSING_IDENTITY = B02_SOLUTION.replace(
     "    if user_id in (None, ''):\n"
     "        raise PermissionError('missing user')\n",
     "",
+)
+
+B61_SOLUTION = (
+    '"""Cart totals."""\n\n\n'
+    "def total(items, discount=None):\n"
+    "    amount = sum(price * quantity for price, quantity in items)\n"
+    "    if discount is None:\n"
+    "        return amount\n"
+    "    if isinstance(discount, bool) or not isinstance(discount, (int, float)):\n"
+    "        raise ValueError(\"discount must be a number in (0, 1)\")\n"
+    "    if not 0 < discount < 1:\n"
+    "        raise ValueError(\"discount must be in (0, 1)\")\n"
+    "    return round(amount * (1 - discount), 2)\n"
+)
+
+# 未取整的实现：0.333 会给出 0.667 而不是 0.67。
+B61_NO_ROUNDING = B61_SOLUTION.replace(
+    "    return round(amount * (1 - discount), 2)\n",
+    "    return amount * (1 - discount)\n",
+)
+
+B61_IGNORES_DISCOUNT = B61_SOLUTION.replace(
+    "    if not 0 < discount < 1:\n"
+    "        raise ValueError(\"discount must be in (0, 1)\")\n"
+    "    return round(amount * (1 - discount), 2)\n",
+    "    return round(amount, 2)\n",
 )
 
 PUBLIC_ORDERS = """from app.db import find_order
@@ -540,6 +566,128 @@ class RunnerCliTest(unittest.TestCase):
                 self.assertEqual(result["evaluation"]["passed"], expected_exit)
                 for name in failed:
                     self.assertIn(name, self.failed_checks(result))
+
+    # -- b61 normal review loop ------------------------------------------
+    def b61_plan(self, **overrides: object) -> dict:
+        plan = {
+            "agent_messages": [
+                "采用 normal：两个独立调用方依赖 total，且改动前没有检查能拦截回归。",
+                "已完成并验证。审查状态：一次独立定向审查（含定向复审）。",
+            ],
+            "reviewers": [
+                {"message": "P2 局部：折扣分支缺少非法值校验。"},
+                {"message": "定向复审：局部修复已关闭原缺陷。"},
+            ],
+            "mutations": [{"path": "src/cart.py", "content": B61_SOLUTION}],
+        }
+        plan.update(overrides)
+        return plan
+
+    def test_run_b61_accepts_normal_review_loop(self) -> None:
+        fixture = self.stub_environment("b61-pass", self.b61_plan())
+        completed = self.run_scenario(fixture, "b61")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        result = self.result(fixture, "b61")
+        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
+        self.assertEqual(result["evaluation"]["details"]["review_rounds"], 2)
+
+    def test_run_b61_accepts_negated_closed_loop_wording(self) -> None:
+        # 合规复述「不称 full 闭环」不能判成宣称。
+        fixture = self.stub_environment(
+            "b61-negated",
+            self.b61_plan(
+                agent_messages=[
+                    "采用 normal：两个独立调用方依赖 total。",
+                    "已完成，本次 normal 交付，不称 full 闭环；微闭环完成。",
+                ]
+            ),
+        )
+        completed = self.run_scenario(fixture, "b61")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+
+    def test_run_b61_records_caller_reads_without_requiring_them(self) -> None:
+        fixture = self.stub_environment(
+            "b61-scope",
+            self.b61_plan(commands=["cat src/invoice.py", "cat src/receipt.py"]),
+        )
+        completed = self.run_scenario(fixture, "b61")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        details = self.result(fixture, "b61")["evaluation"]["details"]
+        self.assertEqual(details["caller_paths_read"], ["src/invoice.py", "src/receipt.py"])
+        self.assertTrue(details["review_scope_observed"])
+
+    def test_run_b61_rejects_process_violations(self) -> None:
+        cases = (
+            (
+                "third review",
+                {"reviewers": [{"message": "ok"}, {"message": "ok"}, {"message": "ok"}]},
+                "one or two independent reviews, never more",
+            ),
+            (
+                "quick route",
+                {"agent_messages": ["采用 quick。", "完成，审查状态：自查"]},
+                "route is normal",
+            ),
+            (
+                "full closed-loop claim",
+                {
+                    "agent_messages": [
+                        "采用 normal。",
+                        "完成，full 闭环完成，r=2/5。",
+                    ]
+                },
+                "no full closed-loop claim",
+            ),
+            (
+                "no reviewer at all",
+                {"reviewers": []},
+                "every review returned a report",
+            ),
+            (
+                "second review returned nothing",
+                {
+                    "reviewers": [
+                        {"message": "P2 局部：折扣分支缺少非法值校验。"},
+                        {"status": "completed", "message": ""},
+                    ]
+                },
+                "every review returned a report",
+            ),
+            (
+                "switched to a full variant",
+                {"agent_messages": ["采用 normal。", "检查后改用 full-local 流程处理。"]},
+                "route is normal",
+            ),
+            (
+                "upgraded to full",
+                {"agent_messages": ["采用 normal。", "检查后发现风险扩大，改用 full 流程处理。"]},
+                "route is normal",
+            ),
+            (
+                "negated-but-claiming wording",
+                {"agent_messages": ["采用 normal。", "无需再确认，full 闭环完成。"]},
+                "no full closed-loop claim",
+            ),
+            (
+                "no rounding",
+                {"mutations": [{"path": "src/cart.py", "content": B61_NO_ROUNDING}]},
+                "behavior matches the request",
+            ),
+            (
+                "wrong behavior",
+                {"mutations": [{"path": "src/cart.py", "content": B61_IGNORES_DISCOUNT}]},
+                "behavior matches the request",
+            ),
+        )
+        for label, overrides, failed in cases:
+            with self.subTest(case=label):
+                fixture = self.stub_environment(
+                    "b61-" + label.replace(" ", "-"), self.b61_plan(**overrides)
+                )
+                completed = self.run_scenario(fixture, "b61")
+                self.assertEqual(completed.returncode, 1, completed.stdout)
+                result = self.result(fixture, "b61")
+                self.assertIn(failed, self.failed_checks(result))
 
     # -- b16 run contracts ----------------------------------------------
     def test_run_b16_detects_read_only_violation(self) -> None:

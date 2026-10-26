@@ -52,6 +52,8 @@ python3 tests/experiments/swebench/run.py summarize \
   --experiment /path/to/experiment
 ```
 
+对照臂：`baseline` / `checklist` / `easydev`（auto）为默认三臂；`easydev-quick` / `easydev-normal` / `easydev-full` 强制指定档位，prompt 明写不要改回 auto，用于 `routing-replay` 的三档对照。未知臂在读取实验资产前即被拒绝。
+
 `run` 默认保护 `dataset.json`、`task-baselines/`、`gold/`，可用 `--protect-paths` 追加；保护期间这些路径 mode 为 0，运行结束恢复。被中断的运行会在下次启动时按 `protected-modes.json` 先恢复 mode；指向实验目录或其祖先的保护会被拒绝，避免把记录本身锁死。
 
 ## 事件归因

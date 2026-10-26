@@ -24,6 +24,7 @@ python3 tests/experiments/agent_runner/runner.py run \
 | `b01` | 低风险单文件文案修改保持 quick：只改 `src/ui.py`、不加载 reference、不启动 reviewer、索引与运行时 Skill 不变、末行声明 `审查状态：自查` | `changed_paths`、`index_changed`、`runtime_skill_changes`、事件归因、最终消息 |
 | `b02` | 高风险对象所有权校验进入 full，且存在已完成并带回报告的 reviewer | 文件数据源读取审计、行为验收、声明路径、reviewer 完成数 |
 | `b16` | audit 只读：不改文件/索引/Git 元数据/运行时 Skill，实际读取 `src/ledger.py`，报告机器可核对发现块 | 空 diff、`file_access`、`easydev-findings` 块解析 |
+| `b61` | normal 微闭环与复审范围（观测型）：路由必须为 normal、独立审查 1–2 次、必须带回报告、不得宣称 full 闭环、只改 `src/cart.py`；复审是否读到直接调用方只记录不判失败 | `reviewer_instances`、`reviewer_reports`、声明路径、`file_access`、行为验收 |
 | `public-contract-callers` | 公共契约改造通过独立验收，未改测试或用例材料，未观察到 benchmark 元数据访问，且有完成的 reviewer | `acceptance.py`、完整 diff、reviewer 事件、访问归因 |
 
 场景模块只依赖可观测结果：改动路径集合、最终消息中的显式机器块、事件归因字段。`evaluate` 返回 `{"passed", "checks": [{"name", "passed", "detail"}], "details"}`，每个 check 对应一个可独立定位的失败原因。

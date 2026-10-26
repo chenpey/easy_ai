@@ -1,6 +1,6 @@
 # EasyDev 行为回归
 
-供维护本技能时使用，不是普通编码任务的必读流程。用例定义不代表已经执行或通过。当前 B01、B02、B16 与 `public-contract-callers` 具备替身驱动的行为载体；B60、B61、B65 只有**确定性部分**有离线载体，其余条目是文字规约，不得视为已受回归保护。
+供维护本技能时使用，不是普通编码任务的必读流程。用例定义不代表已经执行或通过。当前 B01、B02、B16、B61 与 `public-contract-callers` 具备替身驱动的行为载体（B61 为观测型：断言流程边界，复审范围只记 detail）；B60、B65 只有**确定性部分**有离线载体，其余条目是文字规约，不得视为已受回归保护。真实宿主回放仍未执行。
 
 ## 执行与判定
 
@@ -19,7 +19,8 @@
 | B02 | `tests/experiments/agent_runner/test_cli.py` |
 | B16 | `tests/experiments/agent_runner/test_cli.py` |
 | B60（仅确定性部分：门控判定与两本账记账） | `tests/cases/design-gate/run.sh` |
-| B61（仅确定性部分：局部 P2 修复、双审查上限与转 full 继承） | `tests/cases/design-gate/run.sh` |
+| B61（确定性部分：局部 P2 修复、双审查上限与转 full 继承） | `tests/cases/design-gate/run.sh` |
+| B61（观测部分：normal 路由、审查上限、报告回传、不称 full 闭环） | `tests/experiments/agent_runner/test_cli.py` |
 | B65（仅确定性部分：正文上限、附录与覆盖披露） | `tests/cases/audit-overflow/run.sh` |
 | `public-contract-callers` | `tests/experiments/agent_runner/test_cli.py` + `tests/cases/public-contract-callers/verify.py` |
 
@@ -92,7 +93,7 @@ Runner 类载体使用 `tests/experiments/stubs/codex_stub.py` 模拟 Codex CLI�
 ## 维护对应关系
 
 - 修改本版路径、配置或降级规则时核对 B61–B66，并记录实测/决策回放/未执行；事件归因对 normal 的识别由 SWE-bench CLI 回归覆盖，不代表 normal 流程已通过真实模型验证。
-- 修改分流、预算或审查规则时，同步更新本文件、`SKILL.md`、相关 `references/` 与 README。修改 normal 定向审查、局部 P2 修复或转 full 继承规则时补跑 B61 的确定性部分（`tests/cases/design-gate/run.sh`）；行为部分仍为文字规约。
+- 修改分流、预算或审查规则时，同步更新本文件、`SKILL.md`、相关 `references/` 与 README。修改 normal 定向审查、局部 P2 修复或转 full 继承规则时补跑 B61 的确定性部分（`tests/cases/design-gate/run.sh`）与观测部分（`tests/experiments/agent_runner/` 的 b61 用例）；真实宿主回放仍未执行，观测部分只覆盖流程边界，复审是否读了调用方不构成回归保护。
 - 修改独立设计环节、设计审查硬约束或 `d/3`/`r/5` 预算时补跑 B60。其**确定性部分**（门控五项判定、记账、施工闸与停止条件、升版重写不计轮、阶段增量审查合批上限）由 `tests/cases/design-gate/run.sh` 可执行覆盖；**行为部分**（模型是否遵守、`designer` 分派与不可用暂停、实例隔离、受阻产生条件、账本与 `design.md` 实际落盘）仍为文字规约，未回放时不宣称已受回归保护。
 - 修改账本、交接模板或任务产物的保留/清理规则时补跑 B10/B14，并核对 `design.md` 与 `design.vN.md` 不被按 `spike/` 清理。
 - 修改测试粒度、调度或分派规则时，补跑 B18/B43/B44/B45/B58/B59，分别核对行为级红绿、覆盖充分性、实际并发、串行例外与调度阈值；声称并行收益时需实际进程或工具事件证据。B58/B59 当前仅为文字规约，无可执行载体，未实际运行时必须注明。
