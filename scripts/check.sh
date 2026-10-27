@@ -31,7 +31,7 @@ for SKILL_NAME in easythink easydev; do
     echo "Error: $SKILL_FILE 不存在" >&2
     exit 1
   fi
-  SKILL_SIZE=$(wc -c < "$SKILL_FILE" | tr -d ' ')
+  SKILL_SIZE=$(tr -d '\r' < "$SKILL_FILE" | wc -c | tr -d ' ')
   case "$SKILL_NAME" in
     easythink) MAX_SIZE=12288 ;;
     easydev) MAX_SIZE=4096 ;;
@@ -541,17 +541,28 @@ def extract(pattern, text, label):
     return int(raw) if raw.isdigit() else CN.get(raw)
 
 
-global_limit = extract(r"同一问题累计修复\s*(\d+)\s*次仍未解决", read("AGENTS.md"), "AGENTS.md")
-skill_limit = extract(
-    r"最多\s*([一二三四五六七八九十\d]+)\s*次有新证据的候选修复尝试",
-    read("easydev/references/routing.md"),
-    "easydev/references/routing.md「尝试预算」",
-)
-if global_limit is not None and skill_limit is not None:
-    if global_limit != skill_limit:
-        errors.append(f"修复次数上限不一致：AGENTS.md={global_limit}，routing.md={skill_limit}")
-    else:
-        print(f"OK: 修复次数上限一致 -> {global_limit}")
+limits = {
+    "AGENTS.md": extract(
+        r"同一问题累计修复\s*(\d+)\s*次仍未解决", read("AGENTS.md"), "AGENTS.md"
+    ),
+    "easydev/references/routing.md": extract(
+        r"最多\s*([一二三四五六七八九十\d]+)\s*次有新证据的候选修复尝试",
+        read("easydev/references/routing.md"),
+        "easydev/references/routing.md「尝试预算」",
+    ),
+    "easydev/SKILL.md": extract(
+        r"([一二三四五六七八九十\d]+)\s*次仍失败即停",
+        read("easydev/SKILL.md"),
+        "easydev/SKILL.md「quick 执行核心」",
+    ),
+}
+missing = sorted(name for name, value in limits.items() if value is None)
+if missing:
+    errors.append(f"修复次数上限无法提取：{missing}")
+elif len(set(limits.values())) > 1:
+    errors.append(f"修复次数上限不一致：{limits}")
+else:
+    print(f"OK: 修复次数上限一致 -> {next(iter(limits.values()))}（{len(limits)} 处）")
 
 # review.md 把 AGENTS.md 当作“审查数据”举例属正常用法，本门禁只拦“全局规则”这类跨层引用。
 proc = subprocess.run(
@@ -571,5 +582,27 @@ if errors:
         print(f"Error: {err}", file=sys.stderr)
     sys.exit(1)
 PY
+
+echo "=== 10. 规则文档总量棘轮（只减不增） ==="
+# 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
+# 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
+# 基线取 1.3.2 新增后总量（含本版新增），之后只允许在删除正文后向下重设。
+# 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
+MAX_TOTAL=131723
+TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
+echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
+if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then
+  echo "Error: 规则文档总量超过棘轮 ($TOTAL > $MAX_TOTAL)；先删减同等篇幅再新增，或按 CHANGELOG 说明理由上调上限。" >&2
+  exit 1
+fi
+# 基线双写：CHANGELOG 必须写明同一个上限（含「合计不得超过 N 字节」措辞），防止两处静默漂移。
+if ! grep -q "合计不得超过 $MAX_TOTAL 字节" easydev/CHANGELOG.md; then
+  echo "Error: MAX_TOTAL=$MAX_TOTAL 未出现在 CHANGELOG；基线双写须同步" >&2
+  exit 1
+fi
+if [ "$TOTAL" -lt "$MAX_TOTAL" ]; then
+  echo "提示: 总量低于棘轮 $((MAX_TOTAL - TOTAL)) 字节，可把 MAX_TOTAL 向下重设为 ${TOTAL}（并同步 CHANGELOG）"
+fi
+echo "OK: 规则文档总量未超棘轮 ($TOTAL ≤ $MAX_TOTAL)"
 
 echo "=== 全部自动化门禁检查通过 ==="

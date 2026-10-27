@@ -564,7 +564,7 @@ DOC_CONTRACT = [
         "SKILL.md 的 quick 核心链接到尝试预算唯一事实源",
         "easydev/SKILL.md",
         "## quick 执行核心",
-        ["references/routing.md#尝试预算"],
+        ["references/routing.md#尝试预算", "三次仍失败即停"],
     ),
     (
         "routing.md 的判定依据引入可观察的第二视角信号",
@@ -591,10 +591,17 @@ DOC_CONTRACT = [
         ["改动前已存在", "新增的测试"],
     ),
     (
-        "SKILL.md 的 quick 核心指向 routing 的计量节",
+        "routing normal 流程要求实现改动先读代码质量判据",
+        "easydev/references/routing.md",
+        "## normal 流程",
+        ["code-quality.md"],
+    ),
+    (
+        "SKILL.md 的 quick 核心把计量降为按需",
         "easydev/SKILL.md",
-        "单行计量",
-        ["routing 的计量节"],
+        "## quick 执行核心",
+        ["quick 计量仅在用户要求时提供"],
+        {"forbidden": ["单行计量（见 routing 的计量节）"]},
     ),
     (
         "routing.md 的高风险边界按实际影响判定而非关键词",
@@ -606,19 +613,22 @@ DOC_CONTRACT = [
         "routing.md 的计量小节给出字段键序、缺省写法与角色分段",
         "easydev/references/routing.md",
         "## 计量",
-        ["计量：模块=", "审查=<N>；d=<x>/3；r=<y>/5", "未进 full 记", "main:", "reviewer:", "读取事件"],
+        ["计量：模块=", "审查=<N>；d=<x>/3；r=<y>/5", "未进 full 记", "main:", "reviewer:", "读取事件", "适用 normal 与 full", "quick 默认不写"],
+        {"forbidden": ["适用所有档位"]},
     ),
     (
         "code-quality 声明为唯一细则源并覆盖关键判据",
         "easydev/references/code-quality.md",
         "# 代码质量判据",
         ["唯一细则源", "克制复杂度", "边界校验"],
+        {"scope": "file"},
     ),
     (
         "code-quality 覆盖注释与生成文件判据",
         "easydev/references/code-quality.md",
         "## 注释",
         ["关键安全条件", "## 生成文件", "不手改"],
+        {"scope": "file"},
     ),
     (
         "execution 的最小充分实现链接代码质量判据并保留外部参考",
@@ -647,34 +657,185 @@ DOC_CONTRACT = [
 ]
 
 
+def _scope_body(text: str, anchor: str, scope: str) -> str | None:
+    """断言作用域：file=整份文件；section=锚点起截到下一个行首 `## `（围栏内伪标题不计）。"""
+    idx = text.find(anchor)
+    if idx < 0:
+        return None
+    if scope == "file":
+        # 文件作用域断言的是“整份文件里存在”，锚点只用于确认文件结构未走样。
+        return text
+    # 锚点可能落在围栏内（账本模板就是围栏里的多行块），必须先用前缀推出进入时的围栏状态，
+    # 否则会把围栏的闭合行当成开启，导致作用域越出小节。
+    fence: str | None = None
+    for line in text[:idx].splitlines(keepends=True):
+        stripped = line.lstrip()
+        if fence is None:
+            if stripped.startswith(("```", "~~~")):
+                fence = stripped[:3]
+        elif stripped.startswith(fence):
+            fence = None
+    body: list[str] = []
+    for line in text[idx + len(anchor) :].splitlines(keepends=True):
+        stripped = line.lstrip()
+        if fence is None:
+            if stripped.startswith(("```", "~~~")):
+                fence = stripped[:3]
+            elif line.startswith("## "):
+                break
+            body.append(line)
+        else:
+            body.append(line)
+            if stripped.startswith(fence):
+                fence = None
+    return "".join(body)
+
+
+def collect_doc_contract(root: Path) -> list[tuple[str, str | None]]:
+    """真仓库与机制自检共用的契约求值；返回 [(label, 问题或 None)]。"""
+    results: list[tuple[str, str | None]] = []
+    for entry in DOC_CONTRACT:
+        label, rel, anchor, needles = entry[:4]
+        options = entry[4] if len(entry) > 4 else {}
+        scope = options.get("scope", "section")
+        forbidden = options.get("forbidden", [])
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except OSError as exc:
+            results.append((label, f"无法读取 {rel}: {exc}"))
+            continue
+        body = _scope_body(text, anchor, scope)
+        if body is None:
+            results.append((label, f"{rel} 找不到锚点「{anchor}」"))
+            continue
+        missing = [needle for needle in needles if needle not in body]
+        if missing:
+            results.append((label, f"{rel} 的「{anchor}」附近缺 {missing}"))
+            continue
+        present = [word for word in forbidden if word in body]
+        if present:
+            results.append((label, f"{rel} 的「{anchor}」附近仍含已废弃措辞 {present}"))
+            continue
+        results.append((label, None))
+
+    try:
+        gate_text = (root / "easydev/references/design.md").read_text(encoding="utf-8")
+    except OSError as exc:
+        results.append(("启用门控项数", f"无法读取 design.md: {exc}"))
+        return results
+    section = gate_text.split("## 启用门控", 1)[-1].split("## 设计者", 1)[0]
+    bullets = [line for line in section.splitlines() if line.startswith("- **")]
+    results.append(
+        ("启用门控仍为五项", None if len(bullets) == 5 else f"得到 {len(bullets)} 项")
+    )
+    return results
+
+
 def run_doc_contract() -> None:
     print("=== 文档契约：规则与载体的字段/口径一致 ===")
-    for label, rel, anchor, needles in DOC_CONTRACT:
-        path = EASYDEV.parent / rel
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            bad(label, f"无法读取 {rel}: {exc}")
-            continue
-        idx = text.find(anchor)
-        if idx < 0:
-            bad(label, f"{rel} 找不到锚点「{anchor}」")
-            continue
-        window = text[idx : idx + 1200]
-        missing = [n for n in needles if n not in window]
-        if missing:
-            bad(label, f"{rel} 的「{anchor}」附近缺 {missing}")
-        else:
+    for label, problem in collect_doc_contract(EASYDEV.parent):
+        if problem is None:
             ok(label)
+        else:
+            bad(label, problem)
 
-    gate_path = EASYDEV.parent / "easydev/references/design.md"
-    text = gate_path.read_text(encoding="utf-8")
-    section = text.split("## 启用门控", 1)[1].split("## 设计者", 1)[0]
-    bullets = [ln for ln in section.splitlines() if ln.startswith("- **")]
-    if len(bullets) == 5:
-        ok("启用门控仍为五项")
-    else:
-        bad("启用门控项数", f"得到 {len(bullets)} 项")
+
+def _copy_contract_tree(destination: Path) -> None:
+    import shutil
+
+    (destination / "easydev").mkdir(parents=True)
+    shutil.copy2(EASYDEV / "SKILL.md", destination / "easydev/SKILL.md")
+    shutil.copytree(EASYDEV / "references", destination / "easydev/references")
+
+
+def _apply_mutation(root: Path, rel: str, transform) -> None:
+    path = root / rel
+    text = path.read_text(encoding="utf-8")
+    updated = transform(text)
+    if updated == text:
+        raise RuleError(f"变异没有改变 {rel}")
+    path.write_text(updated, encoding="utf-8")
+
+
+def _contract_problem(root: Path, label_part: str) -> tuple[bool, str]:
+    matches = [
+        problem
+        for label, problem in collect_doc_contract(root)
+        if label_part in label
+    ]
+    if len(matches) != 1:
+        raise RuleError(f"契约标签「{label_part}」匹配到 {len(matches)} 条")
+    return matches[0] is None, str(matches[0])
+
+
+def run_doc_contract_mechanism() -> None:
+    """契约机制自检：卡住“句子搬到邻节仍通过”和“旧新措辞并存仍通过”。"""
+    import tempfile
+
+    print("=== 文档契约机制自检：变异必须被抓到 ===")
+
+    metric_sentence = "quick 计量仅在用户要求时提供。"
+
+    def move_metric(text: str) -> str:
+        if metric_sentence not in text or "## 全程约束" not in text:
+            raise RuleError("SKILL.md 的结构与预期不符")
+        text = text.replace("；" + metric_sentence, "。", 1)
+        return text.replace(
+            "## 全程约束", "## 全程约束\n\n" + metric_sentence, 1
+        )
+
+    def legacy_metric(text: str) -> str:
+        return text.replace(
+            "## 按需加载",
+            "旧句：单行计量（见 routing 的计量节）。\n\n## 按需加载",
+            1,
+        )
+
+    def move_normal_contract(text: str) -> str:
+        line = "2. 实施与验证沿用 quick 核心；实现改动（非纯文案与注释）先读 [代码质量判据](code-quality.md)，专项问题按需读 execution 等模块。"
+        if line not in text:
+            raise RuleError("routing.md 里没有 normal 第 2 条")
+        text = text.replace(line + "\n", "", 1)
+        return text.replace(
+            "## 计量", line + "\n\n## 计量", 1
+        )
+
+    def move_ledger_needle(text: str) -> str:
+        needle = "冻结时间"
+        if needle not in text or "## 交接" not in text:
+            raise RuleError("orchestration.md 的结构与预期不符")
+        text = text.replace("与冻结时间（含被替换版本回查位置）", "与版本快照（含被替换版本回查位置）", 1)
+        return text.replace("## 交接", "## 交接\n\n冻结时间：见上。", 1)
+
+    def move_generate_section(text: str) -> str:
+        marker = "## 生成文件"
+        if marker not in text:
+            raise RuleError("code-quality.md 里没有生成文件小节")
+        head, tail = text.split(marker, 1)
+        return marker + tail + "\n" + head
+
+    cases = (
+        ("计量句移到邻节必须判负", "easydev/SKILL.md", move_metric, "计量降为按需", False),
+        ("旧计量措辞与新措辞并存必须判负", "easydev/SKILL.md", legacy_metric, "计量降为按需", False),
+        ("normal 契约移到邻节必须判负", "easydev/references/routing.md", move_normal_contract, "normal 流程要求实现改动", False),
+        ("围栏内锚点的断言不越出小节", "easydev/references/orchestration.md", move_ledger_needle, "账本模板含门控判定", False),
+        ("文件作用域允许跨节搬动", "easydev/references/code-quality.md", move_generate_section, "注释与生成文件判据", True),
+    )
+    for label, rel, transform, label_part, should_pass in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _copy_contract_tree(root)
+            try:
+                _apply_mutation(root, rel, transform)
+                passed, detail = _contract_problem(root, label_part)
+            except RuleError as exc:
+                bad(label, str(exc))
+                continue
+            expected_detail = should_pass or ("缺 [" in detail) or ("已废弃措辞" in detail)
+            if passed == should_pass and expected_detail:
+                ok(label)
+            else:
+                bad(label, f"预期{'通过' if should_pass else '判负'}，实际 {'通过' if passed else '判负'}（{detail}）")
 
 
 # --- 可达性：回答「多方案任务是否几乎必然停闸」 --------------------------
@@ -734,6 +895,7 @@ def main() -> int:
     run_normal_cases()
     run_host_cases()
     run_doc_contract()
+    run_doc_contract_mechanism()
     run_reachability()
     print(f"\n=== 设计环节确定性复验：{checks - failures}/{checks} 通过 ===")
     if failures:

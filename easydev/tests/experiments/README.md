@@ -1,6 +1,7 @@
 # 实验目录
 
-本目录保存不启动真实模型的离线实验与复验材料。所有外部边界都是本地替身，测试通过 CLI 入口驱动被测脚本。
+本目录保存两类材料：不启动真实模型的离线实验与复验（所有外部边界都是本地替身，测试通过 CLI 入口驱动被测脚本），
+以及另行记录的真实模型回放（`b67-replay/`、`behavior-replay/`，只有记录与证据，不含可执行检查，不进 CI）。
 
 ## 内容
 
@@ -12,6 +13,8 @@
 | `swebench/` | SWE-bench Lite 小样本运行器、事件归因与 CLI 测试。 |
 | `review-ablation/README.md` | 四臂审查消融协议文档；只定义对照与记录口径，不含可执行检查或实验结果。 |
 | `routing-replay/README.md` | 三任务 × 三档的路由复放协议；只定义记录字段与判读规则，不含可执行检查或实验结果。 |
+| `b67-replay/<date>/README.md` | B67 实施侧与审查侧的真实回放记录；单次、单模型，不构成回归保护。 |
+| `behavior-replay/<date>/README.md` | B01/B67/B67-review/public-contract-callers 的真实模型回放记录；单次、宿主非隔离，不构成回归保护。 |
 | `role_metric.py` | 按角色统计一次 pi 会话的 references 读取；子代理另有实际模型、usage 与耗时（主会话 jsonl 不含 usage）。用于核对报告里的 `计量` 与「复审是否读了调用方」。 |
 | `process_control.py` | 行为 runner 与 SWE-bench runner 共用的超时/进程树清理逻辑。 |
 

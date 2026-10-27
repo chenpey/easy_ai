@@ -1,0 +1,7 @@
+diff --git a/src/ui.py b/src/ui.py
+index ad1b8bb..eb38d82 100644
+--- a/src/ui.py
++++ b/src/ui.py
+@@ -1 +1 @@
+-BUTTON_LABEL = "提交"
++BUTTON_LABEL = "保存"

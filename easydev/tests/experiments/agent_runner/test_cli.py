@@ -430,6 +430,23 @@ class RunnerCliTest(unittest.TestCase):
         self.assertTrue(patch.strip())
         self.assertNotIn(".agents/skills", patch)
 
+    def test_run_b01_allows_routing_reference(self) -> None:
+        fixture = self.stub_environment(
+            "b01-routing", self.b01_plan(commands=["cat references/routing.md"])
+        )
+        completed = self.run_scenario(fixture, "b01")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        self.assertTrue(self.result(fixture, "b01")["resolved"])
+
+    def test_run_b01_rejects_other_references(self) -> None:
+        fixture = self.stub_environment(
+            "b01-execution", self.b01_plan(commands=["cat references/execution.md"])
+        )
+        completed = self.run_scenario(fixture, "b01")
+        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        result = self.result(fixture, "b01")
+        self.assertIn("quick loaded no other references", self.failed_checks(result))
+
     def test_run_b01_rejects_unrequested_file_changes(self) -> None:
         plan = self.b01_plan()
         plan["mutations"].append({"path": "README.md", "content": "# changed\n"})
@@ -926,7 +943,7 @@ class RunnerCliTest(unittest.TestCase):
                 {
                     "commands": ["cat references/review.md"],
                 },
-                "quick did not load references",
+                "quick loaded no other references",
             ),
             (
                 "ignored cache change",

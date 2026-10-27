@@ -23,6 +23,8 @@ FENCE_RE = re.compile(r"^(`{3,}|~{3,})[ \t]*(.*?)[ \t]*$")
 # 运行时核对不能用 assert：`python -O`/PYTHONOPTIMIZE 会剥离断言。导入与取值
 # 期间的 SystemExit 一律失败；每次验收生成随机完成标记并精确核对 stdout，
 # 避免硬编码输出与提前退出冒充完成。
+# 事件层的 module_access 形如 "references/routing.md"；入口的 SKILL.md 不带目录。
+B01_ALLOWED_MODULES = {"SKILL.md", "references/routing.md"}
 RUNTIME_CHECK = (
     "import os, sys\n"
     "try:\n"
@@ -116,8 +118,10 @@ def evaluate(
         extra_env={"EASYDEV_B01_RUNTIME_MARKER": runtime_marker},
     )
     module_access = getattr(observed, "module_access", {})
+    # 入口第 15 行的自问句明确要求“任一成立先读 routing 再定档”，第 4 条的尝试预算
+    # 也在 routing；因此 quick 允许读 routing.md，其余 reference 仍算超载。
     unexpected_modules = sorted(
-        module for module in module_access if module != "SKILL.md"
+        module for module in module_access if module not in B01_ALLOWED_MODULES
     )
     hidden_changes = hidden_workspace_changes(observed, changed_paths)
     checks = [
@@ -169,9 +173,12 @@ def evaluate(
             getattr(observed, "reviewer_instances", 0),
         ),
         check(
-            "quick did not load references",
+            "quick loaded no other references",
             not unexpected_modules,
-            unexpected_modules,
+            {
+                "modules": sorted(module_access),
+                "collected": hasattr(observed, "module_access"),
+            },
         ),
         check(
             "runtime Skill stayed unchanged",

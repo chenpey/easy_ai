@@ -1,0 +1,36 @@
+diff --git a/src/service.py b/src/service.py
+index 06a88c7..2bea36a 100644
+--- a/src/service.py
++++ b/src/service.py
+@@ -5,9 +5,6 @@ DB = pathlib.Path("orders.json")
+ 
+ 
+ def save(order_id: str, total: int) -> None:
+-    try:
+-        records = json.loads(DB.read_text(encoding="utf-8")) if DB.exists() else []
+-        records.append({"order_id": order_id, "total": total})
+-        DB.write_text(json.dumps(records), encoding="utf-8")
+-    except OSError:
+-        pass
++    records = json.loads(DB.read_text(encoding="utf-8")) if DB.exists() else []
++    records.append({"order_id": order_id, "total": total})
++    DB.write_text(json.dumps(records), encoding="utf-8")
+diff --git a/tests/test_service.py b/tests/test_service.py
+index 1064bd1..d77d197 100644
+--- a/tests/test_service.py
++++ b/tests/test_service.py
+@@ -18,6 +18,14 @@ class SaveTest(unittest.TestCase):
+                 [{"order_id": "o-1", "total": 100}],
+             )
+ 
++    def test_save_disk_failure_raises_os_error(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            db = pathlib.Path(tmp) / "orders.json"
++            with mock.patch.object(service, "DB", db):
++                with mock.patch.object(pathlib.Path, "write_text", side_effect=OSError("disk write failed")):
++                    with self.assertRaises(OSError):
++                        service.save("o-1", 100)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

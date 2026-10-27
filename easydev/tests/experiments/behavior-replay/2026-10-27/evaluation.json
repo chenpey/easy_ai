@@ -1,0 +1,439 @@
+{
+  "b01": {
+    "model": "antigravity/gemini-3.8-flash:high",
+    "usage": {
+      "wall_seconds": 170.7,
+      "input": 84624,
+      "output": 9335,
+      "cache_read": 213281,
+      "antigravity_calls": 15
+    },
+    "changed_paths": [
+      "src/ui.py"
+    ],
+    "index_changed": false,
+    "uncaptured_worktree_paths": [],
+    "git_metadata_changes": [],
+    "runtime_skill_changes": [],
+    "declared_path": {
+      "value": "quick",
+      "source": "自述（最终回复）"
+    },
+    "module_access": {
+      "value": [
+        "routing.md"
+      ],
+      "source": "自述（最终回复的计量行）；antigravity 事件层看不到路径"
+    },
+    "checks": [
+      {
+        "name": "only src/ui.py changed",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "no hidden workspace changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "git index stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "git control metadata stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "capture left no unrecorded worktree changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "runtime import passes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "route is quick",
+        "passed": true,
+        "collected": true,
+        "note": "来源：执行者最终回复中的档位自述，非事件归因"
+      },
+      {
+        "name": "route did not leave quick",
+        "passed": true,
+        "collected": true,
+        "note": "来源：执行者最终回复中的档位自述，非事件归因"
+      },
+      {
+        "name": "no independent reviewer",
+        "passed": true,
+        "collected": false,
+        "note": "未采集：该检查只能由事件流（observed）提供，本轮无事件流；evaluate 的缺省值使其通过，不按通过处理"
+      },
+      {
+        "name": "quick did not load references",
+        "passed": false,
+        "detail": [
+          "routing.md"
+        ],
+        "collected": true
+      },
+      {
+        "name": "runtime Skill stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "quick states self-review status",
+        "passed": true,
+        "collected": true
+      }
+    ],
+    "passed": 11,
+    "total": 12,
+    "valid_denominator": 11,
+    "valid_passed": 10
+  },
+  "b67-review": {
+    "model": "antigravity/gemini-3.8-flash:high",
+    "usage": {
+      "wall_seconds": 501.8,
+      "input": 165532,
+      "output": 45522,
+      "cache_read": 674594,
+      "antigravity_calls": 33
+    },
+    "changed_paths": [],
+    "index_changed": false,
+    "uncaptured_worktree_paths": [],
+    "git_metadata_changes": [],
+    "runtime_skill_changes": [],
+    "declared_path": {
+      "value": null,
+      "source": "自述（最终回复）"
+    },
+    "module_access": {
+      "value": [],
+      "source": "自述（最终回复的计量行）；antigravity 事件层看不到路径"
+    },
+    "checks": [
+      {
+        "name": "review changed no files",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review left the git index unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review left the runtime Skill unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review findings block is well formed",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review ranks findings by severity",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review finding locations resolve",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review reports the costly nesting",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "costly finding stays below blocking",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "review does not report pure style",
+        "passed": false,
+        "detail": [
+          "src/export.py:4"
+        ],
+        "collected": true
+      }
+    ],
+    "passed": 8,
+    "total": 9,
+    "valid_denominator": 9,
+    "valid_passed": 8
+  },
+  "b67": {
+    "model": "antigravity/gemini-3.8-flash:high",
+    "usage": {
+      "wall_seconds": 296.9,
+      "input": 111593,
+      "output": 26680,
+      "cache_read": 867408,
+      "antigravity_calls": 35
+    },
+    "changed_paths": [
+      "src/service.py",
+      "tests/test_service.py"
+    ],
+    "index_changed": false,
+    "uncaptured_worktree_paths": [],
+    "git_metadata_changes": [],
+    "runtime_skill_changes": [],
+    "declared_path": {
+      "value": "normal",
+      "source": "自述（最终回复）"
+    },
+    "module_access": {
+      "value": [
+        "routing.md",
+        "setup.md",
+        "reviewer-role.md",
+        "code-quality.md",
+        "models.md"
+      ],
+      "source": "自述（最终回复的计量行）；antigravity 事件层看不到路径"
+    },
+    "checks": [
+      {
+        "name": "write failure reaches the caller",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "entry validation still rejects an empty order_id",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "happy path still persists a record",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "generated schema was not hand-edited",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "changes stay inside product code and tests",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "test suite passes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "regression test fails when the fix is reverted",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "runtime Skill stayed unchanged",
+        "passed": true,
+        "collected": true
+      }
+    ],
+    "passed": 8,
+    "total": 8,
+    "valid_denominator": 8,
+    "valid_passed": 8
+  },
+  "public-contract-callers": {
+    "model": "antigravity/gemini-3.8-flash:high",
+    "usage": {
+      "wall_seconds": 433.9,
+      "input": 136505,
+      "output": 45922,
+      "cache_read": 1363556,
+      "antigravity_calls": 39
+    },
+    "changed_paths": [
+      "app/admin.py",
+      "app/api.py",
+      "app/orders.py"
+    ],
+    "index_changed": false,
+    "uncaptured_worktree_paths": [],
+    "git_metadata_changes": [],
+    "runtime_skill_changes": [],
+    "declared_path": {
+      "value": "full",
+      "source": "自述（最终回复）"
+    },
+    "module_access": {
+      "value": [
+        "routing.md",
+        "orchestration.md",
+        "design.md",
+        "models.md",
+        "setup.md",
+        "code-quality.md",
+        "reviewer-role.md"
+      ],
+      "source": "自述（最终回复的计量行）；antigravity 事件层看不到路径"
+    },
+    "checks": [
+      {
+        "name": "independent acceptance passes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "no test or case-file changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "only app product files changed",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "no hidden workspace changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "git control metadata stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "capture left no unrecorded worktree changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "route is full or upgraded to full",
+        "passed": true,
+        "collected": true,
+        "note": "来源：执行者最终回复中的档位自述，非事件归因"
+      },
+      {
+        "name": "independent reviewer exists",
+        "passed": false,
+        "detail": {
+          "instances": 0,
+          "completed": 0,
+          "reports": 0
+        },
+        "collected": false,
+        "note": "未采集：该检查只能由事件流（observed）提供，本轮无事件流；evaluate 的缺省值使其通过，不按通过处理"
+      },
+      {
+        "name": "no benchmark metadata access attempt was visible",
+        "passed": true,
+        "collected": false,
+        "note": "未采集：该检查只能由事件流（observed）提供，本轮无事件流；evaluate 的缺省值使其通过，不按通过处理"
+      },
+      {
+        "name": "runtime Skill stayed unchanged",
+        "passed": true,
+        "collected": true
+      }
+    ],
+    "passed": 9,
+    "total": 10,
+    "valid_denominator": 8,
+    "valid_passed": 8
+  },
+  "b01-rerun": {
+    "model": "antigravity/gemini-3.8-flash:high",
+    "skill_version": "1.3.2",
+    "usage": {
+      "input": 126219,
+      "output": 7498,
+      "cache_read": 167935,
+      "antigravity_calls": 19
+    },
+    "changed_paths": [
+      "src/ui.py"
+    ],
+    "declared_path": {
+      "value": "quick",
+      "source": "自述（最终回复）"
+    },
+    "checks": [
+      {
+        "name": "only src/ui.py changed",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "no hidden workspace changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "git index stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "git control metadata stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "capture left no unrecorded worktree changes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "runtime import passes",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "route is quick",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "route did not leave quick",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "no independent reviewer",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "quick loaded no other references",
+        "passed": true,
+        "collected": false,
+        "note": "未采集：本宿主 antigravity 的工具参数只有 {tool,input}，module_access 不可见；1.3.2 起 quick 也不再写计量行，自述无从取值。evaluate 的缺省空字典会让该检查通过，不按通过处理"
+      },
+      {
+        "name": "runtime Skill stayed unchanged",
+        "passed": true,
+        "collected": true
+      },
+      {
+        "name": "quick states self-review status",
+        "passed": true,
+        "collected": true
+      }
+    ],
+    "passed": 12,
+    "total": 12,
+    "valid_denominator": 11,
+    "valid_passed": 11
+  }
+}

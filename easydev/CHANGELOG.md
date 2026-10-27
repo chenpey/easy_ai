@@ -2,6 +2,25 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.3.2 更新说明（2026-10-27）
+
+按“规则正文做减法、确定性门禁做加法”收紧实现期判据可见性与记账双源；不改判定口径的语义、预算数值与审查轮数，也不新增状态机分支。
+
+- **normal 实现期接入代码质量判据**：`routing.md` normal 第 2 条新增“实现改动（非纯文案与注释）先读 `code-quality.md`”。原链路只有子代理经 `developer-role.md` 拿到该链接，主代理在 normal 亲自写代码时不读判据，质量偏差只能等审查阶段以 P3 暴露，属返工成本。
+- **信号① 消歧**：`routing.md` 判定依据补一句“修 Bug 通常改变既有行为，作者新增的回归测试不改变本条判定，但上列豁免仍优先”。这是既有条款（“作者本次新增的测试不算”）的直接推论，不新增分支；此前从未对外可观测的路径仍按既有豁免处理——不改变①的判定要素，只关闭“修 Bug 不改行为因而不命中①”这一种宽松读法。
+- **记账去双源**：`orchestration.md` 的 normal→full 继承轮次改为指向 `routing.md#normal-流程`，只保留“不能按单次只读 review 重记零”与剩余轮次约束这两条本模块独有内容；去重后的口径由 `design-gate` 状态机覆盖。
+- **新增总量棘轮（`check.sh` §10）**：`SKILL.md` + `references/*.md` 合计不得超过 131723 字节，按 `tr -d '\r'` 计数以避免 CRLF 工作区误报；新增规则必须同时删减等量正文，扩容需在本节说明理由后上调上限。基线含本版新增（约 220 字节），之后只在删除正文后向下重设；`MAX_TOTAL` 与本节数值双写，改动须同步。
+- **quick 的计量改为按需**：`SKILL.md` quick 核心的报告项不再要求单行计量，`routing.md` 计量节限定为 normal 与 full（quick 默认不写，用户要求时补）。依据 2026-10-27 四场景回放里 B01 的表现：入口写“单行计量（见 routing 的计量节）”会把 quick 拉去读 `routing.md`，与“普通 quick 只需本页”互斥；而以读取事件为准的宿主（pi 的 `role_metric.py`、Codex 的 `analyze_events.py`）本就不依赖报告里的计量行，quick 不写不损失可测性；无事件层的宿主（本轮 `antigravity`）quick 的 `模块` 记未采集（记录见 [behavior-replay](tests/experiments/behavior-replay/2026-10-27/README.md)）。
+- **回归锁**：`design-gate` 文档契约新增一条（`routing.md` 的 `## normal 流程` 段须含 `code-quality.md`），并把原本锁在 `SKILL.md` 的“quick 核心指向计量节”改为“计量降为按需”、给计量节追加适用档位断言，文档契约总数 20 → 21，`tests/README.md` 与 `design-gate/README.md` 的组数同步更正（此前 1.3.0 新增 6 条时未更新）。
+- **quick 的停止条件写进入口**：第 4 条从“达到上限停止”改为“失败先取证，三次仍失败即停”（数字进入口，细则仍以 `routing.md#尝试预算` 为准）；`check.sh` §9 把 `AGENTS.md`、`routing.md`、`SKILL.md` 三处上限做同值校验，`DOC_CONTRACT` 锁住该措辞。
+- **B01 判据对齐入口自问句**：`b01.py` 允许 quick 读 `SKILL.md` 与 `routing.md`，其余 reference 仍判超载（入口第 15 行的自问句与第 4 条的尝试预算都要求读 routing）；检查名改为 `quick loaded no other references`，`test_cli` 与 `tests/behavior.md` 同步。
+- **文档契约可证伪**：断言改为按小节作用域求值（默认截到下一个行首 `## `、围栏内伪标题不计，跨节断言显式 `scope: file`），新增可选 `forbidden` 锁废弃措辞（已用于旧计量句与“适用所有档位”），并加 5 组机制自检：句子搬到邻节、旧新措辞并存、normal 契约移节、围栏内锚点越界都必须判负，文件作用域允许跨节搬动。`b01` 另补两条用例：读 `references/routing.md` 必须通过、读其他 reference 必须判负（`module_access` 的键带 `references/` 前缀）。
+- **未采纳项及依据**（不另建文档）：入口为 quick 塞写法基因——入口只剩 9 字节，且会与 `code-quality.md` 的“唯一细则源”构成无门禁兜底的散文级双源；信号①豁免——`swebench` 各臂禁改测试，routing-replay 无法验证“作者先写失败测试”，豁免缺少可执行校准车辆；运行时记账脚本——只读审查与回放均未出现记账失败样本，脚本也无法强制模型调用。
+
+验证：本机 macOS、无 PyYAML（走降级分支）。`check.sh` rc=0，含 §10（`规则文档总字节: 131723 (棘轮上限: 131723)`）；§10 做了三次负向验证——向 `routing.md` 追加 3 字节后报 `Error: 规则文档总量超过棘轮 (131726 > 131723)` 且 rc=1；把 `MAX_TOTAL` 改为 131736 后报 `Error: MAX_TOTAL=131736 未出现在 CHANGELOG` 且 rc=1；把计量节的适用档位改回“适用所有档位”后 `design-gate` 报 `FAIL: routing.md 的计量小节给出字段键序、缺省写法与角色分段 … 缺 ['适用 normal 与 full', 'quick 默认不写']` 且 rc=1；三处恢复后复跑全绿。新增文档契约同样做了负向验证——删除 normal 第 2 条的 `code-quality.md` 链接后 `design-gate` 报 `FAIL: routing normal 流程要求实现改动先读代码质量判据` 且 rc=1；把作用域改回固定 1200 字符窗口后，机制自检报 `FAIL: 计量句移到邻节必须判负 -> 预期判负，实际 通过`，两处恢复后复跑全绿。其余七项：`design-gate` 77/77、`audit-overflow` 16/16、`public-contract-callers` PASS（11 个伪修复均被拒）、`version-gate` 通过（PyYAML 分支未跑）、`test_role_metric` 10 项、`agent_runner` 43 项（114.8s）、`swebench` 56 项（54.6s）。独立审查两轮（同模型不同实例，跨供应商未启用：宿主无可枚举的模型清单）：首轮 2×P2 + 5×P3（信号①新句与既有豁免可两面取证、新义务无回归锁、CHANGELOG 定性与双写、棘轮覆盖面与 CRLF、首版基线未披露），复审 1×P2 + 4×P3（README 组数枚举未同步、CHANGELOG 措辞反向、基线无法机械比对、§2 CRLF 不一致、多重覆盖定性与事实不符）；除「入口按需加载表未反映 normal 义务」一项因 4096 字节硬顶未采纳外，其余均按一行级改动处理后关闭，未开第三轮。
+
+未验证：本版发布时未做真实模型回放。之后另做了一轮四场景回放（`antigravity/gemini-3.8-flash`、单次、宿主为非隔离的 pi 子代理），B67 实施 8/8、B67-review 8/9、B01 10/11（另 1 项无事件流、未采集）、public-contract-callers 8/8（另 2 项未采集或需可委派宿主）；改动后又复跑了一次 B01：11/11 有效（`quick loaded no other references` 仍无事件流、未采集），只改目标文件、档位 quick、末行自查、未写计量行，记录见 [behavior-replay/2026-10-27](tests/experiments/behavior-replay/2026-10-27/README.md)。normal 实现期读判据是否真的减少返工，仍需 B67 式 A/B 回放（有/无该指向）；信号① 新句是否仍会被误读为“修 Bug 必然命中”，只能由档位声明回放观察；quick 计量降为按需后 B01 是否仍读到 `routing.md`（quick 核心第 4 条仍链 `routing.md#尝试预算`），需在下一批同宿主复跑中确认；“超越性”结论仍需 baseline / checklist / easydev 三臂对比，现有 B 场景验收由 easydev 自身规则导出，不能用于竞品对比。
+
 ## 1.3.1 更新说明（2026-10-27）
 
 为 1.3.0 的 B67（代码质量判据与 P3 口径）补可复跑的载体：新增 `b67` 与 `b67-review` 两个 `agent_runner` 场景及离线用例，登记行为规约与维护对应关系；不改判据内容、档位判定、预算与状态机。
