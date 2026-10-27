@@ -47,14 +47,28 @@ bash scripts/sync-agent-rules.sh --check   # 发布后核对内容一致
 
 ### 平台
 
-`scripts/*.sh` 面向 POSIX（macOS/Linux）。Windows 使用 `scripts/sync-agent-rules.ps1`，语义相同：默认 `-Check` 只读核对，发布用 `-Apply`。Windows 上创建入口软链需要开发者模式或管理员权限；若某个 harness 在 Windows 使用不同加载路径，改脚本顶部那三个数组，不要另写一份。
+`scripts/*.sh` 面向 POSIX（macOS/Linux），发布命令是 `bash scripts/sync-agent-rules.sh --apply` 与 `bash scripts/sync-agent-rules.sh --check`；`--check` 需要 `sha256sum` 或 `shasum` 之一（脚本自动选择，两者都缺时非零退出并提示）。
+
+Windows 使用 `scripts/sync-agent-rules.ps1`，语义相同：默认 `-Check` 只读核对，发布用 `-Apply`，两个开关互斥（同时传入按用法错误退出码 2）。首次部署同样按 bootstrap → `-Apply` → `-Check`。创建入口软链需要开发者模式或管理员权限；若某个 harness 在 Windows 使用不同加载路径，改脚本顶部那三个数组，不要另写一份。
 
 ```powershell
-New-Item -ItemType SymbolicLink -Path "$HOME\.pi\agent\AGENTS.md" -Target "$HOME\.config\agent-rules\AGENTS.md"
-pwsh -NoProfile -File scripts/sync-agent-rules.ps1 -Check
+$target = Join-Path $HOME '.config/agent-rules/AGENTS.md'
+foreach ($d in '.config/agent-rules', '.pi/agent', '.codex', '.gemini/config', '.gemini/config/rules') {
+    New-Item -ItemType Directory -Path (Join-Path $HOME $d) -Force | Out-Null
+}
+foreach ($entry in '.pi/agent/AGENTS.md', '.codex/AGENTS.md', '.gemini/config/AGENTS.md') {
+    $path = Join-Path $HOME $entry
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    if ($null -ne $item) {
+        $t = $item.Target
+        if ($t -is [array]) { $t = $t[0] }
+        if ($item.LinkType -eq 'SymbolicLink' -and ([IO.Path]::GetFullPath($t) -eq [IO.Path]::GetFullPath($target))) { continue }
+        throw "已有非预期入口，请先核对并备份: $path"
+    }
+    New-Item -ItemType SymbolicLink -Path $path -Target $target | Out-Null
+}
 pwsh -NoProfile -File scripts/sync-agent-rules.ps1 -Apply
+pwsh -NoProfile -File scripts/sync-agent-rules.ps1 -Check
 ```
-
-两个开关互斥，同时传入按用法错误退出（码 2）。
 
 PowerShell 脚本目前只有语法门禁（本机 `check.sh` 在装有 `pwsh` 时解析、CI 的 Windows 作业固定解析），运行时行为尚未在 Windows 上实测。
