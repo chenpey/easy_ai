@@ -415,9 +415,9 @@ for index, item in enumerate(upgrades, 1):
     previous = current
 
 # README 是唯一示例事实源，所以示例要演示它自己声明的形状：
-# 「开发与审查分属不同供应商，upgrades 再次对调」。
+# 「开发与审查分属不同供应商，升级阶段换更强模型且两级都保持不同供应商」。
 if not upgrades:
-    fail("内联示例的 upgrades 为空，无法演示「upgrades 再次对调」")
+    fail("内联示例的 upgrades 为空，无法演示升级阶段的模型更换")
 developer_provider = provider_of(block["developer"]["model"])
 reviewer_provider = provider_of(block["reviewer"]["model"])
 if developer_provider is None or reviewer_provider is None:
@@ -425,12 +425,16 @@ if developer_provider is None or reviewer_provider is None:
 if developer_provider == reviewer_provider:
     fail("内联示例的基础开发与审查角色应分属不同供应商")
 first = upgrades[0]
-if provider_of(first["developer"]["model"]) != reviewer_provider:
-    fail("内联示例 upgrades[1] 未把开发角色换到审查角色的供应商")
-if provider_of(first["reviewer"]["model"]) != developer_provider:
-    fail("内联示例 upgrades[1] 未把审查角色换到开发角色的供应商")
+first_developer = provider_of(first["developer"]["model"])
+first_reviewer = provider_of(first["reviewer"]["model"])
+if first_developer is None or first_reviewer is None:
+    fail("内联示例 upgrades[1] 应为具体供应商，不能用 inherit 演示")
+if first_developer == first_reviewer:
+    fail("内联示例 upgrades[1] 的开发与审查应分属不同供应商")
+if first_developer == developer_provider and first_reviewer == reviewer_provider:
+    fail("内联示例 upgrades[1] 未更换任何一个角色的供应商，无法演示跨供应商升级")
 
-print("OK: easydev/README.md 内联示例符合字段契约与跨供应商对调示例")
+print("OK: easydev/README.md 内联示例符合字段契约与跨供应商升级示例")
 '
 
 echo "=== 7. 规则同步脚本语法检查 ==="

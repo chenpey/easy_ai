@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`1.2.7`
+当前版本：`1.2.8`
 
 EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
@@ -51,36 +51,45 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 默认所有角色继承宿主，无须配置（等价于三者都写 `inherit`、`upgrades` 为空）。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，规则本身不固化供应商版本。
 
-下面的内联示例是仓库里唯一的模型配置示例（不再另存示例文件），演示跨供应商写法（开发与审查分属不同供应商，`upgrades` 再次对调）；它只是形状示例、不构成推荐。示例里的模型 ID 是占位值，须替换为宿主实际支持的值；原样照抄会在第一次分派时按 [模型配置](references/models.md) 暂停报受阻，不会回落到 `inherit`。不另放全 `inherit` 的示例文件：内置默认已是三个角色 `inherit`、`upgrades` 为空，重复一份只会与默认值漂移。示例不会自动加载，复制到选定位置或在对话中明确指定：
+下面的内联示例是仓库里唯一的模型配置示例（不再另存示例文件），取自维护者 2026-10-27 实测的一组分配：开发与审查分属不同供应商，`upgrades` 在升级阶段同时换上更强的实现模型与更强的审查模型，两级都保持实现与审查不同供应商。模型 ID 与供应商取决于宿主，换宿主须逐字替换为本机支持的完整 ID；原样照抄到没有对应 provider 的宿主上，会在第一次分派时按 [模型配置](references/models.md) 暂停报受阻，不会回落到 `inherit`。不另放全 `inherit` 的示例文件：内置默认已是三个角色 `inherit`、`upgrades` 为空，重复一份只会与默认值漂移。示例不会自动加载，复制到选定位置或在对话中明确指定：
 
 ```json
 {
   "developer": {
-    "model": "<provider-a>/<model-a>",
+    "model": "opencode-go/deepseek-v4.1-flash",
     "reasoning_effort": "high"
   },
   "reviewer": {
-    "model": "<provider-b>/<model-b>",
+    "model": "codex/gpt-6.1-sol",
     "reasoning_effort": "high"
   },
   "designer": {
-    "model": "<provider-b>/<model-b>",
+    "model": "codex/gpt-6.1-sol",
     "reasoning_effort": "high"
   },
   "upgrades": [
     {
       "developer": {
-        "model": "<provider-b>/<model-b>",
+        "model": "opencode-go/grok-4.7",
         "reasoning_effort": "high"
       },
       "reviewer": {
-        "model": "<provider-a>/<model-a>",
+        "model": "antigravity/claude-sonnet-5-5",
         "reasoning_effort": "high"
       }
     }
   ]
 }
 ```
+
+这组分配的判据是同一天的实测用量、公开基准与路由可用性；数字随模型版本变化，不构成仓库保证。
+
+- 开发用 `deepseek-v4.1-flash`：DeepSWE 77.0 在可调用模型中最高，单价 0.15/0.6、缓存读取 0.003；182 次子代理运行中 39 次开发任务 0 失败、平均 121s。
+- 审查用 `gpt-6.1-sol`：Bug Hunt Bench 44.3、AA Intelligence 51.8，是主循环里可稳定付费调用且缺陷发现能力最强的选项。审查占实测子代理支出的 62%，换更便宜的模型省的是钱、付出的是漏审。
+- 升级阶段开发换 `grok-4.7`：AA Agentic 58.4、SWE-bench Pro 74.5 均高于阶段 0，单价 2/6；不在失败后跳到更慢也更贵的 `:max` 档。
+- 升级阶段审查换 `claude-sonnet-5-5`（Antigravity 订阅）：Bug Hunt Bench 51.3 为当前可得最高，只在一次修复失败后触发，用订阅额度换最后一关强度。
+- 未采用 `gemini-4-argon` 与其他 `zed/*`：`zed/*` 实测 403（额度耗尽），argon 属订阅且额度稀缺，Bug Hunt 40.7 也低于上述两个审查模型。
+- 深度只写模型实际支持的档位：Antigravity 侧 low/medium/high 有区分，`xhigh`/`max` 会映射为 high。
 
 仅真正分派或用户要求配置时读取。当前对话角色字段覆盖优先；基础文件按对话指定文件、项目根 `.easydev/models.json`、用户配置、内置默认的顺序选取，文件不合并。选中配置无效或不可读时暂停相关分派，不静默回退。
 

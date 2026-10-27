@@ -2,7 +2,17 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
-## 1.2.7 更新说明（2026-10-26）
+## 1.2.8 更新说明（2026-10-27）
+
+把 README 的模型配置示例从占位符换成一组建模依据可查的具体分配，并同步 `check.sh` 的示例契约与 `models.md` 的引用口径；不改档位判定、预算或状态机。
+
+- **README 示例换成具体分配**：`<provider-a>/<model-a>` 占位形状改为开发 `deepseek-v4.1-flash`、审查与设计 `gpt-6.1-sol`、升级阶段开发 `grok-4.7` 加审查 `claude-sonnet-5-5`，并补判据：本仓库 182 次子代理运行的实测用量与耗时、Bug Hunt Bench / DeepSWE / SWE-bench Pro / AA Agentic 等公开基准、以及路由可用性（`zed/*` 实测 403、`gemini-4-argon` 订阅额度稀缺且 Bug Hunt 40.7 低于 `gpt-6.1-sol` 的 44.3）。示例仍是唯一一份、仍不自动加载，仍保留「换宿主必须替换 ID，照抄会暂停报受阻」的说明。
+- **示例契约从「upgrades 再次对调」改成「跨供应商升级」**：`check.sh` §6 不再要求升级阶段把开发与审查对调，改为要求升级阶段至少更换一个角色的供应商，且两级各自的开发与审查都分属不同供应商。实际要约束的是「实现与审查不同供应商」，对调原本只是其中一种写法；旧断言会把更有效的升级组合判失败。
+- **`models.md` 引用口径同步**：不再称示例 ID 为占位值，改为「来自维护者宿主，换宿主须逐字替换为本机支持的完整 ID」。
+
+验证：本机 macOS、无 PyYAML（走降级分支）。`check.sh` rc=0：行尾空白、两处 frontmatter、四处版本 1.2.8、链接与标题锚点（含根 `README.md`、`agent-rules/**/*.md`）、README bash 块 `bash -n`、§6 跨供应商升级契约（`OK: easydev/README.md 内联示例符合字段契约与跨供应商升级示例`）、§8 规则 frontmatter。契约改动做了负向验证：临时把示例升级阶段的审查改回 `codex/gpt-6.1-sol`（与阶段 0 同供应商），§6 报 `Error: 内联示例 upgrades[1] 未更换任何一个角色的供应商，无法演示跨供应商升级`；恢复后复跑全绿。其余七项：version-gate 通过（PyYAML 分支未跑）、design-gate 65/65、audit-overflow 16/16、public-contract-callers PASS（11 个伪修复均被拒）、`test_role_metric` 10 项、agent_runner 36 项（111.7s）、swebench 56 项（62.0s）。`scripts/smoke-install.sh` 未运行：沙箱禁止在 `/var/folders` 下 `mktemp`，脚本建临时 `HOME` 时即失败；它读的是 `easythink/README.md`，对 easydev 只断言 SKILL.md 版本与 README 一致（已由 §3 覆盖）。
+
+未验证：示例里的四个模型只在单次调用与公开基准上验过，没有真实任务成绩；本轮未做独立审查。用户级 `~/.config/easydev/models.json` 按用户授权另行写入，内容与本节示例一致（已比对相等），不随仓库分发。
 
 只修一处锚点、补齐交付前的完整检查口径、给入口腾字节并恢复高风险枚举、扩展 `check.sh` 的覆盖面，并补全局规则的分发说明；不改档位判定、预算或状态机。
 
