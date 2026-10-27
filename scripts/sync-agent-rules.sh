@@ -31,6 +31,18 @@ entries=(
   "$HOME/.gemini/config/AGENTS.md"
 )
 
+hash_sha256() {
+  # Linux 常见 sha256sum（coreutils），macOS 常见 shasum；两者输出均为「hash  path」。
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$@"
+  else
+    echo "Error: 需要 sha256sum 或 shasum 之一来输出 SHA-256" >&2
+    return 1
+  fi
+}
+
 # 先核对现有拓扑；本脚本不负责重建入口。
 for entry in "${entries[@]}"; do
   if [ ! -L "$entry" ] || [ "$(readlink "$entry")" != "${targets[0]}" ]; then
@@ -83,5 +95,5 @@ for i in 0 1; do
   diff -q "${sources[$i]}" "${targets[$i]}"
 done
 
-shasum -a 256 "${sources[@]}" "${targets[@]}"
+hash_sha256 "${sources[@]}" "${targets[@]}"
 echo "Rule files match; harness loading has not been verified."
