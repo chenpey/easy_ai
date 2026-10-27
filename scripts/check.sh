@@ -433,4 +433,74 @@ if provider_of(first["reviewer"]["model"]) != developer_provider:
 print("OK: easydev/README.md 内联示例符合字段契约与跨供应商对调示例")
 '
 
+echo "=== 7. 规则同步脚本语法检查 (bash -n) ==="
+bash -n scripts/sync-agent-rules.sh
+echo "OK: scripts/sync-agent-rules.sh 语法合法"
+
+echo "=== 8. 宿主规则文件 frontmatter 校验 ==="
+python3 - <<'PY'
+import glob, sys
+
+ALLOWED = ["always_on", "model_decision", "glob", "manual"]
+paths = sorted(glob.glob("agent-rules/*.md"))
+if not paths:
+    print("Error: agent-rules/ 下没有规则文件", file=sys.stderr)
+    sys.exit(1)
+
+def frontmatter(text, path):
+    if not text.startswith("---\n"):
+        print(f"Error: {path} 缺少 YAML frontmatter", file=sys.stderr)
+        sys.exit(1)
+    end = text.find("\n---\n", 3)
+    if end < 0:
+        print(f"Error: {path} frontmatter 未闭合", file=sys.stderr)
+        sys.exit(1)
+    return text[4:end]
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+# 降级模式只校验分隔符与 trigger，不得在汇总里宣称 frontmatter 整体合法。
+degraded = yaml is None
+
+for path in paths:
+    text = open(path, encoding="utf-8").read()
+    block = frontmatter(text, path)
+    if yaml is None:
+        # 降级模式：仅接受 `trigger: <值>`（值可整体加引号），不支持行尾注释等复杂写法。
+        trigger = None
+        for line in block.splitlines():
+            if line.startswith("trigger:"):
+                raw = line.split(":", 1)[1].strip()
+                if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+                    raw = raw[1:-1]
+                elif any(ch in raw for ch in "\"'#"):
+                    print(f"Error: {path} 降级模式不支持该 trigger 写法: {line!r}", file=sys.stderr)
+                    sys.exit(1)
+                trigger = raw
+        if trigger not in ALLOWED:
+            print(f"Error: {path} trigger 非法或缺失: {trigger!r}", file=sys.stderr)
+            sys.exit(1)
+        print(f"OK(降级，未安装 PyYAML): {path} trigger={trigger}")
+    else:
+        try:
+            data = yaml.safe_load(block)
+        except Exception as exc:
+            print(f"Error: {path} frontmatter 不是合法 YAML: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(data, dict):
+            print(f"Error: {path} frontmatter 不是映射", file=sys.stderr)
+            sys.exit(1)
+        trigger = data.get("trigger")
+        if trigger not in ALLOWED:
+            print(f"Error: {path} trigger 非法或缺失: {trigger!r}", file=sys.stderr)
+            sys.exit(1)
+if degraded:
+    print(f"OK(降级)：{len(paths)} 个宿主规则文件的 frontmatter 边界与 trigger 合法（未安装 PyYAML，未验证完整 YAML）")
+else:
+    print(f"OK: {len(paths)} 个宿主规则文件 frontmatter 合法")
+PY
+
 echo "=== 全部自动化门禁检查通过 ==="

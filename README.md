@@ -13,24 +13,34 @@
 
 ## 全局规则（AGENTS.md）
 
-运行时唯一事实源是 `~/.config/agent-rules/AGENTS.md`。仓库根 `AGENTS.md` 是可版本跟踪的副本，两边内容须保持一致，冲突时以仓库副本为准。
+仓库中的 `AGENTS.md` 与 `agent-rules/antigravity.md` 是规则的唯一维护源；用户目录中的对应文件是显式发布的运行时副本，不在运行时副本上直接维护。发布前两者可以暂时不同，发布成功后应逐字节一致。
 
-各 harness 不各存一份，而是用软链指向同一文件：现有的 Pi（`~/.pi/agent/AGENTS.md`）和 Codex（`~/.codex/AGENTS.md`）已是指向该文件的软链；Antigravity 的全局规则 `~/.gemini/config/AGENTS.md` 同样软链到 `~/.config/agent-rules/AGENTS.md`；其他支持 AGENTS.md 的 harness 按其约定的加载路径做同样的软链。不支持 AGENTS.md 的 harness 不在本仓库覆盖范围。
+通用规则发布到 `~/.config/agent-rules/AGENTS.md`，Pi、Codex 和 Antigravity 的 standalone 入口通过软链共享该文件。Antigravity 专有规则发布到 `~/.gemini/config/rules/antigravity.md`，保留其 YAML frontmatter（`trigger: always_on`）。其他支持 AGENTS.md 的 harness 按其约定加载路径软链到同一文件；不支持 AGENTS.md 的 harness 不在本仓库覆盖范围。
 
-宿主专有规则不进 canonical，各自在仓库里跟踪再软链分发：Antigravity 的专有规则由 `agent-rules/antigravity.md` 跟踪，软链到 `~/.gemini/config/rules/antigravity.md`，该目录的 `*.md` 需带 YAML frontmatter（`trigger: always_on`）。canonical 只放跨 harness 的通用底线。
+当前代理沙箱不能写入 `~/.config/agent-rules/`，完整发布须由用户在自己的终端显式执行。脚本不请求提权、不绕过沙箱，也不在失败后自动换目录继续发布。内容校验成功只证明安装文件一致，不证明宿主已加载。
 
-部署顺序：改仓库副本 → 提交 → 同步到通用位置 → 确认软链仍指向它。
+规则和技能均只在仓库维护，并在显式发布或更新后进入用户级运行目录：通用规则共享一个发布文件；EasyDev 保留用户手动同步的安装目录，各宿主通过技能入口发现它。两者均不直接跟随仓库工作区变化；技能更新继续遵守 EasyDev 安装说明中的本地修改保护要求，规则同步脚本不更新技能。人工同步技能前可先干跑核对差异：`rsync -rcni easydev/SKILL.md easydev/references easydev/agents ~/.agents/skills/easydev/`（不写入、不删除）。
+
+首次在新机器上部署时，先为三个入口建软链（脚本只负责发布内容，不创建入口）；`scripts/sync-agent-rules.sh` 要求上述三个入口都已存在且指向 `~/.config/agent-rules/AGENTS.md`，入口不是预期软链时会直接非零退出：
 
 ```bash
-set -e
-cd /path/to/easy_ai
-mkdir -p ~/.config/agent-rules ~/.pi/agent ~/.codex ~/.gemini/config/rules
-cp AGENTS.md ~/.config/agent-rules/AGENTS.md
-diff -q AGENTS.md ~/.config/agent-rules/AGENTS.md
-ln -sfn ~/.config/agent-rules/AGENTS.md ~/.pi/agent/AGENTS.md
-ln -sfn ~/.config/agent-rules/AGENTS.md ~/.codex/AGENTS.md
-ln -sfn ~/.config/agent-rules/AGENTS.md ~/.gemini/config/AGENTS.md
-ln -sfn "$PWD/agent-rules/antigravity.md" ~/.gemini/config/rules/antigravity.md
+set -euo pipefail
+target="$HOME/.config/agent-rules/AGENTS.md"
+mkdir -p ~/.config/agent-rules ~/.pi/agent ~/.codex ~/.gemini/config ~/.gemini/config/rules
+for entry in ~/.pi/agent/AGENTS.md ~/.codex/AGENTS.md ~/.gemini/config/AGENTS.md; do
+  if [ -L "$entry" ] && [ "$(readlink "$entry")" = "$target" ]; then continue; fi
+  if [ -e "$entry" ] || [ -L "$entry" ]; then
+    echo "已有非预期入口，请先核对并备份: $entry" >&2
+    exit 1
+  fi
+  ln -s "$target" "$entry"
+done
 ```
 
-每次改完仓库副本都要重跑上面的块；块内 `set -e` 保证 `cp` 或校验失败时立即中止，不会把软链指到未写入的副本。
+首次部署按 bootstrap → `--apply` → `--check` 顺序执行：bootstrap 之后目标文件尚不存在，此前的 `--check` 会以非零退出，这是首次部署的预期结果。日常更新用 `--check` → `--apply` → `--check`，先审阅差异再发布。
+
+```bash
+cd /path/to/easy_ai
+bash scripts/sync-agent-rules.sh --apply   # 首次部署直接发布；日常更新同样用它
+bash scripts/sync-agent-rules.sh --check   # 发布后核对内容一致
+```
