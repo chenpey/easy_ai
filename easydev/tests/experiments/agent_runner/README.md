@@ -25,6 +25,8 @@ python3 tests/experiments/agent_runner/runner.py run \
 | `b02` | 高风险对象所有权校验进入 full，且存在已完成并带回报告的 reviewer | 文件数据源读取审计、行为验收、声明路径、reviewer 完成数 |
 | `b16` | audit 只读：不改文件/索引/Git 元数据/运行时 Skill，实际读取 `src/ledger.py`，报告机器可核对发现块 | 空 diff、`file_access`、`easydev-findings` 块解析 |
 | `b61` | normal 微闭环与复审范围（观测型）：按 `behavior.md` 的 B61 三支判分——终态 normal 时独立审查 1–2 次且不得出现结构化 P0/P1（首轮报阻断项必须转 full）；按规转 full 时必须有初始档位声明、起跳于 normal、升级前已有完成的审查报告、引用结构化 P0/P1/P2、`r≤5`/`d≤3`；两种终态都要带回报告、不得宣称 full 闭环、只改 `src/cart.py`；`details.normal_micro_loop` 区分交付与升级；复审是否读到直接调用方只记录不判失败 | `reviewer_instances`、`reviewer_reports`、声明路径、`findings`、`file_access`、行为验收 |
+| `b67` | 写盘失败必须传到调用方、入口校验不重复、生成文件不手改，且回归测试在修复被回退时必须失败 | `agent.patch`、三处运行探针、`unittest` 退出码、回退副本的退出码 |
+| `b67-review` | 报出 `src/report.py` 的代价型 P3，且不为 `src/export.py` 的纯风格写法产生发现 | `easydev-findings` 块解析、只读检查 |
 | `public-contract-callers` | 公共契约改造通过独立验收，未改测试或用例材料，未观察到 benchmark 元数据访问，且有完成的 reviewer | `acceptance.py`、完整 diff、reviewer 事件、访问归因 |
 
 场景模块只依赖可观测结果：改动路径集合、最终消息中的显式机器块、事件归因字段。`evaluate` 返回 `{"passed", "checks": [{"name", "passed", "detail"}], "details"}`，每个 check 对应一个可独立定位的失败原因。

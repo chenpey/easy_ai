@@ -28,7 +28,7 @@ REPO_ROOT = TESTS_ROOT.parent
 RUNNER = TESTS_ROOT / "experiments" / "agent_runner" / "runner.py"
 CODEX_STUB = TESTS_ROOT / "experiments" / "stubs" / "codex_stub.py"
 CASES_ROOT = TESTS_ROOT / "cases"
-SCENARIO_IDS = ["b01", "b02", "b16", "b61", "public-contract-callers"]
+SCENARIO_IDS = ["b01", "b02", "b16", "b61", "b67", "b67-review", "public-contract-callers"]
 
 B02_SOLUTION = (
     "import json\nfrom pathlib import Path\n\n\n"
@@ -73,6 +73,61 @@ B61_IGNORES_DISCOUNT = B61_SOLUTION.replace(
     "    return round(amount * (1 - discount), 2)\n",
     "    return round(amount, 2)\n",
 )
+
+B67_FIX = (
+    'import json\n'
+    'import pathlib\n'
+    '\n'
+    'DB = pathlib.Path("orders.json")\n'
+    '\n'
+    '\n'
+    'def save(order_id: str, total: int) -> None:\n'
+    '    records = json.loads(DB.read_text(encoding="utf-8")) if DB.exists() else []\n'
+    '    records.append({"order_id": order_id, "total": total})\n'
+    '    try:\n'
+    '        DB.write_text(json.dumps(records), encoding="utf-8")\n'
+    '    except OSError as exc:\n'
+    '        raise OSError(f"无法写入订单库: {DB}") from exc\n'
+)
+B67_FAILURE_TEST = (
+    'import pathlib\n'
+    'import tempfile\n'
+    'import unittest\n'
+    'from unittest import mock\n'
+    '\n'
+    'from src import service\n'
+    '\n'
+    '\n'
+    'class SaveFailureTest(unittest.TestCase):\n'
+    '    def test_write_failure_propagates(self):\n'
+    '        with tempfile.TemporaryDirectory() as tmp:\n'
+    '            db = pathlib.Path(tmp) / "missing" / "orders.json"\n'
+    '            with mock.patch.object(service, "DB", db):\n'
+    '                with self.assertRaises(OSError):\n'
+    '                    service.save("o-1", 100)\n'
+    '\n'
+    '\n'
+    'if __name__ == "__main__":\n'
+    '    unittest.main()\n'
+)
+B67_PLACEHOLDER_TEST = (
+    'import unittest\n'
+    '\n'
+    '\n'
+    'class Placeholder(unittest.TestCase):\n'
+    '    def test_ok(self):\n'
+    '        self.assertTrue(True)\n'
+    '\n'
+    '\n'
+    'if __name__ == "__main__":\n'
+    '    unittest.main()\n'
+)
+B67_TAMPERED_SCHEMA = 'SCHEMA_VERSION = 2\n'
+B67_COST_FINDING = (
+    "P3 | 位置=src/report.py:4 | 触发=新增一种行类型 |"
+    " 后果=三个分支重复同一回退行，改动需同步三处"
+)
+B67_STYLE_FINDING = "P3 | 位置=src/export.py:1 | 触发=缩进与命名 | 后果=风格不一致"
 
 PUBLIC_ORDERS = """from app.db import find_order
 
@@ -1228,6 +1283,147 @@ class RunnerCliTest(unittest.TestCase):
                 for name in failed:
                     self.assertIn(name, self.failed_checks(result))
                 self.assertNotIn("no test or case-file changes", self.failed_checks(result))
+
+
+    # -- b67 run contracts ----------------------------------------------
+    def test_run_b67_accepts_visible_failure_with_regression_test(self) -> None:
+        fixture = self.stub_environment(
+            "b67-pass",
+            {
+                "agent_messages": ["已让写入失败传到调用方，并补了回归测试。"],
+                "mutations": [
+                    {"path": "src/service.py", "content": B67_FIX},
+                    {"path": "tests/test_failure.py", "content": B67_FAILURE_TEST},
+                ],
+            },
+        )
+        completed = self.run_scenario(fixture, "b67")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        result = self.result(fixture, "b67")
+        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
+        self.assertEqual(
+            result["changed_paths"],
+            ["src/service.py", "tests/test_failure.py"],
+        )
+
+    def test_run_b67_rejects_swallowed_failure_and_bad_fixes(self) -> None:
+        cases = (
+            (
+                "failure still silent",
+                [
+                    {"path": "tests/test_failure.py", "content": B67_FAILURE_TEST},
+                ],
+                "write failure reaches the caller",
+            ),
+            (
+                "generated file hand-edited",
+                [
+                    {"path": "src/service.py", "content": B67_FIX},
+                    {"path": "tests/test_failure.py", "content": B67_FAILURE_TEST},
+                    {"path": "src/generated/schema.py", "content": B67_TAMPERED_SCHEMA},
+                ],
+                "generated schema was not hand-edited",
+            ),
+            (
+                "test cannot fail",
+                [
+                    {"path": "src/service.py", "content": B67_FIX},
+                    {"path": "tests/test_placeholder.py", "content": B67_PLACEHOLDER_TEST},
+                ],
+                "regression test fails when the fix is reverted",
+            ),
+        )
+        for label, mutations, failed in cases:
+            with self.subTest(case=label):
+                fixture = self.stub_environment(
+                    "b67-negative-" + label.replace(" ", "-"),
+                    {
+                        "agent_messages": ["已完成。"],
+                        "mutations": mutations,
+                    },
+                )
+                completed = self.run_scenario(fixture, "b67")
+                self.assertEqual(completed.returncode, 1, completed.stdout)
+                result = self.result(fixture, "b67")
+                self.assertIn(failed, self.failed_checks(result))
+
+    def test_run_b67_rejects_runtime_skill_edits(self) -> None:
+        fixture = self.stub_environment(
+            "b67-skill-edit",
+            {
+                "agent_messages": ["已完成。"],
+                "mutations": [
+                    {"path": "src/service.py", "content": B67_FIX},
+                    {"path": "tests/test_failure.py", "content": B67_FAILURE_TEST},
+                ],
+                "runtime_skill_edit": True,
+            },
+        )
+        completed = self.run_scenario(fixture, "b67")
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+        result = self.result(fixture, "b67")
+        self.assertIn("runtime Skill stayed unchanged", self.failed_checks(result))
+
+    def test_run_b67_review_accepts_costly_p3_without_style_noise(self) -> None:
+        report = (
+            "限制：未审并发写入路径。\n\n"
+            "```easydev-findings\n"
+            + B67_COST_FINDING
+            + "\n```"
+        )
+        fixture = self.stub_environment(
+            "b67-review-pass",
+            {"agent_messages": [report], "commands": ["cat src/report.py"]},
+        )
+        completed = self.run_scenario(fixture, "b67-review")
+        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        result = self.result(fixture, "b67-review")
+        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
+        self.assertEqual(result["changed_paths"], [])
+        checks = {
+            item["name"]: item["passed"] for item in result["evaluation"]["checks"]
+        }
+        self.assertTrue(checks["review reports the costly nesting"])
+        self.assertTrue(checks["review does not report pure style"])
+
+    def test_run_b67_review_rejects_style_noise_and_missing_block(self) -> None:
+        style_report = (
+            "```easydev-findings\n" + B67_STYLE_FINDING + "\n```"
+        )
+        cases = (
+            (
+                "style only",
+                {"agent_messages": [style_report]},
+                "review does not report pure style",
+            ),
+            (
+                "missing findings block",
+                {"agent_messages": ["审查完成，未发现确定缺陷。"]},
+                "review findings block is well formed",
+            ),
+            (
+                "read-only violation",
+                {
+                    "agent_messages": [
+                        "```easydev-findings\n"
+                        + B67_COST_FINDING
+                        + "\n```"
+                    ],
+                    "mutations": [{"path": "src/report.py", "content": "# tampered\n"}],
+                },
+                "review changed no files",
+            ),
+        )
+        for label, overrides, failed in cases:
+            with self.subTest(case=label):
+                fixture = self.stub_environment(
+                    "b67-review-negative-" + label.replace(" ", "-"),
+                    overrides,
+                )
+                completed = self.run_scenario(fixture, "b67-review")
+                self.assertEqual(completed.returncode, 1, completed.stdout)
+                result = self.result(fixture, "b67-review")
+                self.assertIn(failed, self.failed_checks(result))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,19 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.3.1 更新说明（2026-10-27）
+
+为 1.3.0 的 B67（代码质量判据与 P3 口径）补可复跑的载体：新增 `b67` 与 `b67-review` 两个 `agent_runner` 场景及离线用例，登记行为规约与维护对应关系；不改判据内容、档位判定、预算与状态机。
+
+- **新增 `b67`（实施侧）**：夹具含入口校验、吞掉写盘失败的 `service.save()`、`codegen.py` 生成的 `src/generated/schema.py` 与 `unittest` 基线。验收只看可观察结果——写盘失败必须抛到调用方、入口校验仍拒绝空 `order_id`、正常路径仍落库、生成文件未被手改、改动不出 `src/`+`tests/`+`codegen.py`+`README.md`、测试套件通过，以及**把 `service.py` 换回吞异常原文后测试必须失败**（回归测试真能拦住回退）。
+- **新增 `b67-review`（审查侧）**：同一夹具加两个对照样本——`src/report.py` 的四层嵌套与三处重复回退行（代价型），`src/export.py` 的两空格缩进、驼峰循环变量与混用引号（纯风格）。验收要求报出前者且严重度不高于 P2（P2/P3）、不为后者产生任何发现；只读与运行时 Skill 未变同 1.2.x 的审查场景。
+- **离线用例**：`test_cli.py` 增 5 个用例（两场景各一通过支路，实施侧三个负例：失败仍被吞、手改生成文件、测试不能失败；审查侧三个负例：只报纯风格、缺发现块、只读违约），替身只执行 `mutations`，不调用真实模型。
+- **文档**：`agent_runner/README.md` 补两行场景说明，`tests/README.md` 与 `tests/behavior.md` 登记 B67 的两侧载体，并把 B67 行从“仅文字规约”改为“判拒口径可复跑、真实回放未执行”。
+
+验证：本机 macOS、无 PyYAML。`check.sh` rc=0：行尾空白、两处 frontmatter、四处版本 1.3.1、链接与锚点、§9 两道门禁。其余七项：`agent_runner` 41 项（新增 5 项，127.3s；两项新负例分别验证「失败仍被吞」「测试不能失败」）、`design-gate` 71/71、`audit-overflow` 16/16、`version-gate` 通过（PyYAML 分支未跑）、`test_role_metric` 10 项、`swebench` 56 项（63.1s）、`public-contract-callers` PASS（11 个伪修复均被拒）。两个新场景另做了反向验证：把 `b67` 的「回退后测试必须失败」改成恒真，负例 `test cannot fail` 报 `AssertionError: 0 != 1`；把 `b67-review` 的「纯风格不报」改成恒真，`style only` 负例失败；两处恢复后 5 项全过。
+
+未验证：两个场景的真实宿主回放尚未执行——本机沙箱内 `codex exec` 在初始化阶段即被拒（`failed to initialize in-process app-server client: Operation not permitted`，rc=1），替身只验证判拒口径，不代表真实模型会遵守；探针依赖夹具契约（`save(order_id, total)` 签名与 `DB` 模块常量），日后改契约需同步夹具与探针。B67 已做一轮真实回放（Codex 宿主 `gpt-6.1-sol` high，两侧各一次）：实施侧 8/8、审查侧 9/9 通过，记录见 `tests/experiments/b67-replay/2026-10-27/`；单次、单模型只是线索，不构成回归保护，runner 的 `events.jsonl` 与 `valid_invocation` 未采集。
+
 ## 1.3.0 更新说明（2026-10-27）
 
 按“跨任务规则留在全局、编码细则随技能分发”的分层重新划定 `AGENTS.md` 与 `easydev/` 的边界：新增代码质量判据模块并作为唯一细则源，全局 §5 只保留四条底线，补两道防漂移门禁；不改变档位判定、预算数值、状态机与审查轮数。
