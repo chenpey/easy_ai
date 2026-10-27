@@ -271,13 +271,14 @@ def extract_slugs(file_path):
 
 files = [
     "README.md",
+    "AGENTS.md",
     "easythink/README.md",
     "easythink/SKILL.md",
     "easythink/CHANGELOG.md",
     "easythink/references/methods.md",
     "easythink/references/examples.md",
     "easythink/tests/behavior.md"
-] + sorted(glob.glob("easydev/**/*.md", recursive=True))
+] + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True))
 
 file_slugs = {f: extract_slugs(f) for f in files}
 link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -287,7 +288,7 @@ for f in files:
         content = fh.read()
     base_dir = os.path.dirname(f)
     for text, url in link_pattern.findall(content):
-        if url.startswith(("http://", "https://", "mailto:")):
+        if url.startswith(("http://", "https://", "mailto:", "file://")):
             continue
         if url.startswith("#"):
             anchor = url[1:]
@@ -314,7 +315,7 @@ echo "=== 5. README bash 代码块语法检查 (bash -n) ==="
 python3 -c '
 import re, subprocess, sys
 
-for readme in ("easythink/README.md", "easydev/README.md"):
+for readme in ("README.md", "easythink/README.md", "easydev/README.md"):
     with open(readme, "r", encoding="utf-8") as f:
         content = f.read()
 

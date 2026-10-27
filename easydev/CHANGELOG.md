@@ -2,6 +2,34 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.2.7 更新说明（2026-10-26）
+
+只修一处锚点、补齐交付前的完整检查口径、给入口腾字节并恢复高风险枚举、扩展 `check.sh` 的覆盖面，并补全局规则的分发说明；不改档位判定、预算或状态机。
+
+- **修复 `execution.md` 的锚点**：`references/execution.md` 的「quick 已完成」把「交付前三项微自检」链到
+  `../SKILL.md#开始工作`，而该清单实际在「quick 执行核心」一节。锚点改为 `#quick-执行核心`，链接不再落到
+  错误章节（`check.sh` §4 只校验锚点存在，看不出这种指错节）。
+- **交付前的完整检查三处对齐**：`SKILL.md` 的 quick 第 3 条压成一句「交付前跑完整检查」（不再重复列举与用户决定口径）；
+  `references/developer-role.md` 补「交付前跑项目规定的完整检查（lint + 类型 + 测试），耗时过长或需用户决定时
+  回报主代理（不直接向用户提问）」；`references/execution.md` 把「交付仍须完成完整检查」改为「最终交付前完成
+  一次项目规定的完整检查」，同版本同环境的既有证据（含子代理交接结果）直接复用、不重复跑全量，由主代理交
+  用户决定耗时。
+- **入口恢复高风险枚举、`check.sh` 扩大覆盖面**：`SKILL.md` 入口恢复 8 类高风险边界枚举（鉴权、支付、敏感
+  数据、并发与破坏性数据操作、密码学与随机数、CI/构建/IaC/部署权限、依赖与供应链、生产日志与遥测；紧凑一句，
+  详情仍以 `references/routing.md` 的「高风险边界」表为准），quick 第 2 条改为新增功能与 Bug 记红绿（先失败
+  后通过），第 4 条去掉「切路径或换实例不重置」，入口 4071 字节（上限 4096）。`scripts/check.sh` §4 覆盖
+  `AGENTS.md`、`agent-rules/**/*.md` 与根 `README.md`，并跳过 `file://` 链接（`agent-rules/antigravity.md` 的
+  示例不是相对链接）；§5 把根 `README.md` 的 bash 块纳入 `bash -n`。
+
+验证：八项检查全绿（`check.sh` rc=0：四处版本 1.2.7、SKILL 4071 字节（上限 4096，余量 25）、链接与
+标题锚点（含本轮新纳入的 `AGENTS.md`、`agent-rules/**/*.md` 与根 `README.md`）、内联示例字段契约；
+design-gate 65/65、version-gate 通过、public-contract-callers 通过（11 个伪修复均被拒）、audit-overflow
+16/16、`test_role_metric` 10 项、agent_runner 36 项、swebench 56 项）。本机未装 PyYAML，`check.sh` 与
+version-gate 均走降级分支，PyYAML 分支未在本机执行。
+
+未验证：本轮只改文案、锚点、门禁覆盖面与版本号，未做独立审查（审查后置）；入口字节减少与措辞压缩不证明 token、
+费用或耗时收益；`scripts/smoke-install.sh`（安装目录断链与版本同步）未运行。
+
 ## 1.2.6 更新说明（2026-10-26）
 
 只收口示例的分发口径，不改档位判定、预算或状态机。
