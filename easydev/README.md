@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`1.2.9`
+当前版本：`1.3.0`
 
 EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
@@ -118,9 +118,10 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [models.md]
 - [开发角色](references/developer-role.md)、[审查角色](references/reviewer-role.md)：短交接入口，不重新遍历完整技能
 - [独立设计](references/design.md)、[计划](references/planning.md)、[候选评审](references/candidates.md)
 - [重构](references/refactoring.md)、[排障](references/debugging.md)、[产品验证](references/verification.md)
+- [代码质量判据](references/code-quality.md)：克制复杂度、边界校验、结构与抽象、控制流、类型与异常、同步与异步、依赖方向、术语、注释、生成文件（代码写法的唯一细则源）
 - [基线恢复](references/baseline-safety.md)、[工作区](references/worktree.md)
 - [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[版本历史](CHANGELOG.md)
 
 `tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。
 
-入口 4096 字节上限触顶时按固定顺序腾挪，不临时压缩措辞、不放宽上限：先把计量与报告格式细节移进 routing，再把入口的高风险边界枚举压成一句并指向 routing，最后才考虑把按需加载表移进 routing（quick 需要它，因此放最后）。只改措辞、计数或错别字的补丁（不改判定条件、预算、状态机或可执行断言）最多跑一轮 normal 独立审查，不按 full 闭环反复复审；这一轮报 P0/P1、或改动实际超出措辞与计数范围时，按 [routing](references/routing.md) 的转 full 规则执行。
+入口 4096 字节上限触顶时按固定顺序腾挪，不临时压缩措辞、不放宽上限：先合并按需加载表里相近的行，或把新模块并入现有行，再把计量与报告格式细节移进 routing，然后才考虑把入口的高风险边界枚举压成一句并指向 routing，最后才把按需加载表移进 routing（quick 需要它，因此放最后）。只改措辞、计数或错别字的补丁（不改判定条件、预算、状态机或可执行断言）最多跑一轮 normal 独立审查，不按 full 闭环反复复审；这一轮报 P0/P1、或改动实际超出措辞与计数范围时，按 [routing](references/routing.md) 的转 full 规则执行。

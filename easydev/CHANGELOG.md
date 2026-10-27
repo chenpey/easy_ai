@@ -2,6 +2,22 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.3.0 更新说明（2026-10-27）
+
+按“跨任务规则留在全局、编码细则随技能分发”的分层重新划定 `AGENTS.md` 与 `easydev/` 的边界：新增代码质量判据模块并作为唯一细则源，全局 §5 只保留四条底线，补两道防漂移门禁；不改变档位判定、预算数值、状态机与审查轮数。
+
+- **新增 `references/code-quality.md`**：承接代码质量判据（克制复杂度、边界校验、结构与抽象、控制流、类型与异常、同步与异步、依赖方向、术语、注释、生成文件），每条配正例与反例，并声明为唯一细则源；`execution.md`、`review.md`、`developer-role.md`、`reviewer-role.md` 改为链接引用，`execution.md` 里重复抄写的命名、职责与注释细则删除（保留“移动/合并代码保留原错误处理与校验”与“不得削减”清单）。
+- **入口接入且未破字节上限**：`SKILL.md` 按需加载表把原本单模块的两行合并（execution 与 verification 合为“复杂验证、性能；实操产品”），并把 code-quality 并入原本单模块的 review 行（“代码质量；review、audit、full 审查”），不新增行、不压缩正文措辞；quick 第 3 条“只在新改动、失败或未决疑点使证据失效时重跑”等判定条件保持原样（quick 不读 execution，判定条件必须留在入口）。入口 4071 → 4087 字节，未动“三自问”、高风险边界枚举与 design-gate 文档契约断言的锚点。
+- **全局 §5 压成四条底线**：授权/资金/数据丢失/敏感信息不适用“几乎不会发生”的豁免、不删减必要的错误处理与资源清理、入口只校验一次且不可信结构化输入用 schema 校验库、生成文件不手改；其余判据随技能分发。“外部参考（开源实现借鉴）”从全局迁入 `execution.md`「最小充分实现」作为独立条目。
+- **审查口径**：明显违反代码质量判据、且实际增加理解或修改成本的写法可报 P3，须指明位置和代价（`review.md`「过滤噪音与归因」与 `reviewer-role.md` 第 2 条）；`review.md` 把 `AGENTS.md` 当“审查数据”举例的用法保留。
+- **新增两道门禁（`check.sh` §9）**：`AGENTS.md` 与 `routing.md`「尝试预算」的修复次数上限必须同值，措辞变动导致提取失败时直接报错；`easydev/` 除 `CHANGELOG.md` 外不得引用“全局规则”。
+- **文档契约与行为规约**：`design-gate/verify.py` 的 DOC_CONTRACT 新增 6 条断言（code-quality 为唯一细则源与关键判据、注释与生成文件判据、execution 的链接与外部参考、review 与 reviewer-role 的 P3 口径、developer-role 的链接）；`tests/behavior.md` 新增 B67 文字场景与维护对应关系，注明无离线载体、未做真实回放。
+- **腾挪顺序修正**：`README` 的入口字节腾挪顺序把“合并按需加载表里相近的行”提到最前，因为“计量细节移进 routing”在 1.2.x 已用完（入口只剩指向 routing 计量节的一句）。
+
+验证：本机 macOS、无 PyYAML（走降级分支）。`check.sh` rc=0：行尾空白、两处 frontmatter、四处版本 1.3.0、链接与标题锚点（含新增的 `code-quality.md` 与 `#测试硬约束`）、README bash 块 `bash -n`、示例字段契约、规则文件 frontmatter，以及新增 §9 两条（`OK: 修复次数上限一致 -> 3`、`OK: easydev 未引用“全局规则”（CHANGELOG 历史记录除外）`）；入口 `SKILL.md` 4087 字节（上限 4096）。新增门禁做了负向验证：把 `AGENTS.md` 的“累计修复 3 次”改成 4 次 → §9 报 `Error: 修复次数上限不一致：AGENTS.md=4，routing.md=3` 且 rc=1；把 `routing.md` 的“最多三次”改成四次 → 报 `AGENTS.md=3，routing.md=4`；在 `execution.md` 临时写入“见全局规则第 5 节” → 报 `Error: easydev 不得引用“全局规则”`；三处恢复后复跑全绿。新增文档契约同样做了负向验证：把 `review.md` 的“须指明位置和代价”改成“须指明位置”后，design-gate 报 `FAIL: review 给出代码质量 P3 口径 -> easydev/references/review.md 的「过滤噪音与归因」附近缺 [位置和代价]`（rc=1），恢复后 71/71。`scripts/smoke-install.sh` 以 `SMOKE_TMP=$PWD/.smoke-tmp bash scripts/smoke-install.sh` 跑通（rc=0，7 个场景全过，含场景 7 的 easydev 文件集），运行后删除该临时目录。其余七项：version-gate 通过（PyYAML 分支未跑）、design-gate 71/71、audit-overflow 16/16、public-contract-callers PASS（11 个伪修复均被拒）、`test_role_metric` 10 项、agent_runner 36 项（110.1s）、swebench 56 项（63.1s）。
+
+未验证：本轮没有真实模型回放，`code-quality.md` 的判据与新增的 P3 口径只有文档契约与既有离线载体，没有回放样本；B67 仍是文字规约，静态契约只保证引用与口径存在，不证明模型遵守；新一轮全局规则尚未发布到运行时副本，需用户在自己终端执行 `scripts/sync-agent-rules.sh --check/--apply/--check`，发布前宿主仍按旧规则运行。本轮未做独立审查，未提交、未推送。
+
 ## 1.2.9 更新说明（2026-10-27）
 
 复评模型组后重写 README 的示例分配：升级阶段开发从 `grok-4.7` 改为 `gemini-4-argon`，审查从 Antigravity 的 `claude-sonnet-5-5` 改为同一 `gpt-6.1-sol` 的 `max` 档；不改档位判定、预算、字段契约或状态机。

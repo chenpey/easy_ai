@@ -608,6 +608,42 @@ DOC_CONTRACT = [
         "## 计量",
         ["计量：模块=", "审查=<N>；d=<x>/3；r=<y>/5", "未进 full 记", "main:", "reviewer:", "读取事件"],
     ),
+    (
+        "code-quality 声明为唯一细则源并覆盖关键判据",
+        "easydev/references/code-quality.md",
+        "# 代码质量判据",
+        ["唯一细则源", "克制复杂度", "边界校验"],
+    ),
+    (
+        "code-quality 覆盖注释与生成文件判据",
+        "easydev/references/code-quality.md",
+        "## 注释",
+        ["关键安全条件", "## 生成文件", "不手改"],
+    ),
+    (
+        "execution 的最小充分实现链接代码质量判据并保留外部参考",
+        "easydev/references/execution.md",
+        "## 最小充分实现",
+        ["code-quality.md", "外部参考"],
+    ),
+    (
+        "review 给出代码质量 P3 口径",
+        "easydev/references/review.md",
+        "过滤噪音与归因",
+        ["code-quality.md", "P3", "位置和代价"],
+    ),
+    (
+        "reviewer-role 同步代码质量 P3 口径与位置代价",
+        "easydev/references/reviewer-role.md",
+        "2. 只报有位置",
+        ["code-quality.md", "P3", "位置与代价"],
+    ),
+    (
+        "developer-role 链接代码质量判据",
+        "easydev/references/developer-role.md",
+        "做最小完整改动",
+        ["code-quality.md"],
+    ),
 ]
 
 

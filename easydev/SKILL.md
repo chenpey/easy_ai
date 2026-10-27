@@ -3,7 +3,7 @@ name: easydev
 description: >-
   编码、修复、重构、设计、计划、排障与审查；按风险选择 quick / normal / full。适用于 coding 或显式调用；纯解释及非编码请求不启动开发流程。
 metadata:
-  version: "1.2.9"
+  version: "1.3.0"
 ---
 
 # easydev
@@ -44,12 +44,11 @@ metadata:
 | --- | --- |
 | normal、风险判定、升降级 | [routing](references/routing.md) |
 | full 编排 | [orchestration](references/orchestration.md)；[独立设计环节门控](references/design.md#启用门控) |
-| 复杂验证、性能效果声明 | [execution](references/execution.md) |
+| 复杂验证、性能；实操产品 | [execution](references/execution.md)；[verification](references/verification.md) |
 | 设计、计划、探针；实质多方案 | [planning](references/planning.md)；[candidates](references/candidates.md) |
 | 排障；非机械重构 | [debugging](references/debugging.md)；[refactoring](references/refactoring.md) |
-| 现有检查不足，需实际操作产品 | [verification](references/verification.md) |
 | 脏工作区、敏感文件、恢复；工作树 | [baseline-safety](references/baseline-safety.md)；[worktree](references/worktree.md) |
-| review、audit、full 审查 | [review](references/review.md) |
+| 代码质量；review、audit、full 审查 | [code-quality](references/code-quality.md)；[review](references/review.md) |
 | 实际分派或用户要求配置；能力受阻 | [models](references/models.md)；[setup](references/setup.md) |
 
 ## 全程约束

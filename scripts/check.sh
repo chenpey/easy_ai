@@ -517,4 +517,59 @@ else:
     print(f"OK: {len(paths)} 个宿主规则文件 frontmatter 合法")
 PY
 
+echo "=== 9. 边界与预算一致性检查 ==="
+# 两条门禁：① 全局规则与技能内的修复次数上限必须同值（各处手写，防漂移）；
+# ② 可分发的 easydev 不得引用“全局规则”，CHANGELOG 的历史记录除外。
+python3 - <<'PY'
+import re, subprocess, sys
+
+errors = []
+CN = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def extract(pattern, text, label):
+    m = re.search(pattern, text)
+    if not m:
+        errors.append(f"无法从 {label} 提取修复次数上限（措辞变了就同步更新本门禁）")
+        return None
+    raw = m.group(1)
+    return int(raw) if raw.isdigit() else CN.get(raw)
+
+
+global_limit = extract(r"同一问题累计修复\s*(\d+)\s*次仍未解决", read("AGENTS.md"), "AGENTS.md")
+skill_limit = extract(
+    r"最多\s*([一二三四五六七八九十\d]+)\s*次有新证据的候选修复尝试",
+    read("easydev/references/routing.md"),
+    "easydev/references/routing.md「尝试预算」",
+)
+if global_limit is not None and skill_limit is not None:
+    if global_limit != skill_limit:
+        errors.append(f"修复次数上限不一致：AGENTS.md={global_limit}，routing.md={skill_limit}")
+    else:
+        print(f"OK: 修复次数上限一致 -> {global_limit}")
+
+# review.md 把 AGENTS.md 当作“审查数据”举例属正常用法，本门禁只拦“全局规则”这类跨层引用。
+proc = subprocess.run(
+    ["git", "grep", "-nI", "全局规则", "--", "easydev", ":!easydev/CHANGELOG.md"],
+    capture_output=True,
+    text=True,
+)
+if proc.returncode not in (0, 1):
+    errors.append(f"git grep 执行失败 (exit {proc.returncode}): {proc.stderr.strip()}")
+elif proc.returncode == 0:
+    errors.append("easydev 不得引用“全局规则”：\n" + proc.stdout.rstrip())
+else:
+    print("OK: easydev 未引用“全局规则”（CHANGELOG 历史记录除外）")
+
+if errors:
+    for err in errors:
+        print(f"Error: {err}", file=sys.stderr)
+    sys.exit(1)
+PY
+
 echo "=== 全部自动化门禁检查通过 ==="
