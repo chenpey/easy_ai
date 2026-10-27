@@ -44,3 +44,17 @@ cd /path/to/easy_ai
 bash scripts/sync-agent-rules.sh --apply   # 首次部署直接发布；日常更新同样用它
 bash scripts/sync-agent-rules.sh --check   # 发布后核对内容一致
 ```
+
+### 平台
+
+`scripts/*.sh` 面向 POSIX（macOS/Linux）。Windows 使用 `scripts/sync-agent-rules.ps1`，语义相同：默认 `-Check` 只读核对，发布用 `-Apply`。Windows 上创建入口软链需要开发者模式或管理员权限；若某个 harness 在 Windows 使用不同加载路径，改脚本顶部那三个数组，不要另写一份。
+
+```powershell
+New-Item -ItemType SymbolicLink -Path "$HOME\.pi\agent\AGENTS.md" -Target "$HOME\.config\agent-rules\AGENTS.md"
+pwsh -NoProfile -File scripts/sync-agent-rules.ps1 -Check
+pwsh -NoProfile -File scripts/sync-agent-rules.ps1 -Apply
+```
+
+两个开关互斥，同时传入按用法错误退出（码 2）。
+
+PowerShell 脚本目前只有语法门禁（本机 `check.sh` 在装有 `pwsh` 时解析、CI 的 Windows 作业固定解析），运行时行为尚未在 Windows 上实测。

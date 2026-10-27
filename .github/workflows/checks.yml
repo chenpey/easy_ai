@@ -74,3 +74,19 @@ jobs:
       - name: 执行矩阵检查
         working-directory: ${{ matrix.working_directory }}
         run: ${{ matrix.command }}
+
+  powershell-syntax:
+    name: PowerShell 语法门禁
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 解析 sync-agent-rules.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/sync-agent-rules.ps1", [ref]$null, [ref]$errors)
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Output "OK: scripts/sync-agent-rules.ps1 语法合法"

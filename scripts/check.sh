@@ -433,9 +433,19 @@ if provider_of(first["reviewer"]["model"]) != developer_provider:
 print("OK: easydev/README.md 内联示例符合字段契约与跨供应商对调示例")
 '
 
-echo "=== 7. 规则同步脚本语法检查 (bash -n) ==="
+echo "=== 7. 规则同步脚本语法检查 ==="
 bash -n scripts/sync-agent-rules.sh
 echo "OK: scripts/sync-agent-rules.sh 语法合法"
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -Command '
+    $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/sync-agent-rules.ps1", [ref]$null, [ref]$errors)
+    if ($errors) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }; exit 1 }
+  '
+  echo "OK: scripts/sync-agent-rules.ps1 语法合法"
+else
+  echo "SKIP: 未安装 pwsh，跳过 sync-agent-rules.ps1 语法检查（CI 的 Windows 作业覆盖）"
+fi
 
 echo "=== 8. 宿主规则文件 frontmatter 校验 ==="
 python3 - <<'PY'
