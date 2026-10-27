@@ -2,6 +2,19 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.2.9 更新说明（2026-10-27）
+
+复评模型组后重写 README 的示例分配：升级阶段开发从 `grok-4.7` 改为 `gemini-4-argon`，审查从 Antigravity 的 `claude-sonnet-5-5` 改为同一 `gpt-6.1-sol` 的 `max` 档；不改档位判定、预算、字段契约或状态机。
+
+- **升级阶段开发换 `gemini-4-argon`**：1.2.8 用 AA Agentic 58.4 与 SWE-bench Pro 74.5 证明 `grok-4.7` 强于阶段 0，但阶段 0 开发是按 DeepSWE 选的（77.0 对 Grok 的 71.0，Grok 反而更低），审查是按 Bug Hunt 选的（high 档 19.3，为可调用模型最低）。Argon 是唯一两条实现指标都不低于阶段 0 的候选：DeepSWE 77.9、SWE-bench Pro 81.5（估算）对 62.7，AA Intelligence 39.5 → 52.6，Bug Hunt high 40.7。
+- **升级阶段审查改为档位升级**：1.2.8 的理由是 Sonnet 5.5 的 Bug Hunt 51.3「当前可得最高」，但该行是 Claude Code 的 `max` 档；1.2.9 的宿主（Antigravity）只到 `high`，同档实测 34.3，低于 Sol high 的 36.5，所谓升级拿不到。改为同一 Sol 的 `max`（44.3 对 36.5），代价约 1.8× 成本与 2× 墙上时间，且只在一次修复失败后触发。
+- **副作用口径**：示例段补两条判据说明——`gpt-6-astra` 的 max 45.0 与 Sol 的 44.3 之差在重跑噪声内（同配置重跑中位偏移 1.8 分）却要 5× credits 与 5–45 条/5h；`antigravity/claude-opus-5-5`（SWE-bench Pro 89.9 实测最强）额度只够偶尔手动调用，按对话显式指定一次性覆盖，不进 `upgrades`。
+- **可比性口径**：说明同一档位才有可比性（同模型 `high` 与 `max` 可差 7–18 分），并补“Codex 侧可到 max，但请求值是否生效要用实际返回值核对”。示例仍是唯一一份、仍不自动加载，仍保留“换宿主必须逐字替换 ID”的说明。
+
+验证：本机 macOS、无 PyYAML（走降级分支）。`check.sh` rc=0：行尾空白、两处 frontmatter、四处版本 1.2.9、链接与标题锚点、README bash 块 `bash -n`、§6 跨供应商升级契约（`OK: easydev/README.md 内联示例符合字段契约与跨供应商升级示例`）、§8 规则 frontmatter。契约本身未改，但做了负向验证：把 `upgrades[1].developer` 临时改回 `opencode-go/grok-4.7`（与阶段 0 同供应商）后，§6 报 `Error: 内联示例 upgrades[1] 未更换任何一个角色的供应商，无法演示跨供应商升级`；恢复后复跑全绿。其余七项：version-gate 通过（PyYAML 分支未跑）、design-gate 65/65、audit-overflow 16/16、public-contract-callers PASS（11 个伪修复均被拒）、`test_role_metric` 10 项、agent_runner 36 项（112.2s）、swebench 56 项（64.2s）。`scripts/smoke-install.sh` 未完成：沙箱禁止在 `/var/folders` 下 `mktemp`，建临时 `HOME` 时即失败（rc=1）。
+
+未验证：本轮没有重跑任何基准，判据全部来自 2026-10-26/27 的公开榜单（Bug Hunt Bench、DeepSWE、SWE-bench Pro、AA Index）与本机可调用清单；没有对 `codex/gpt-6.1-sol` 的 `max` 做生效性探针（避免消耗 Codex 额度），所以“请求 max”是否真被服务端接受仍未确认；本轮未做独立审查。用户级 `~/.config/easydev/models.json` 按用户授权另行写入，内容与本节示例一致（已比对相等），不随仓库分发。
+
 ## 1.2.8 更新说明（2026-10-27）
 
 把 README 的模型配置示例从占位符换成一组建模依据可查的具体分配，并同步 `check.sh` 的示例契约与 `models.md` 的引用口径；不改档位判定、预算或状态机。
