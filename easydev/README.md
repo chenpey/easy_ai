@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`1.3.2`
+当前版本：`1.4.1`
 
 EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
@@ -46,6 +46,8 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 ```
 
 模型、密钥、网络、沙箱与子代理能力由宿主提供。安装成功不代表宿主已经加载；能力要求与故障处理见 [环境适配](references/setup.md)。
+
+可选 Hook Plugin 独立于上述安装集，用于把可观测的 Git、脏目标首次快照、reviewer 只读、模型配置与交接、审后写提醒下沉为确定性检查；未激活会话在入口 O(1) 放行，未安装时 Skill 行为完全照旧。安装、能力差异与未验证项见 [Hooks Plugin](hooks/README.md)。
 
 ## 模型配置
 

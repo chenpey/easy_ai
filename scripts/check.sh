@@ -8,7 +8,7 @@ echo "=== 1. 已跟踪文件行尾空白检查（不依赖提交深度） ==="
 # 直接扫描已跟踪文本文件：浅克隆（fetch-depth=1）或干净工作区都不会退化为空检查。
 # 新增文件类型时同步补充扩展名，否则该类型不受门禁覆盖。
 # *.patch 等格式文件含语义化行尾空格，不纳入扫描。
-WS_PATHS=('*.md' '*.sh' '*.yml' '*.yaml' '*.json' '*.py' '*.svg' '*.txt')
+WS_PATHS=('*.md' '*.sh' '*.yml' '*.yaml' '*.json' '*.py' '*.ts' '*.svg' '*.txt')
 ws_status=0
 ws_report="$(git grep -nI -E $'[ \t]+$' -- "${WS_PATHS[@]}")" || ws_status=$?
 if [ "$ws_status" -gt 1 ]; then
@@ -157,7 +157,8 @@ groups = {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
         "README.md": ("easydev/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
         "SKILL.md": ("easydev/SKILL.md", None),
-        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明")
+        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
+        "hooks/manifest.json": ("easydev/hooks/manifest.json", r"^\s*\"release\":\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"")
     }
 }
 
@@ -334,12 +335,14 @@ for readme in ("README.md", "easythink/README.md", "easydev/README.md"):
 print("OK: 所有 README bash 代码块语法均合法")
 '
 
-echo "=== 6. 模型配置内联示例校验 ==="
-python3 -c '
+echo "=== 6. 模型配置内联示例校验（共享 validator） ==="
+# schema 与运行期共用 easydev/hooks/models.py：这里只负责从 README 提取示例，
+# 再断言示例演示的跨供应商升级形状；不再复制一份字段规则。
+python3 - <<'PY'
 import json, re, sys
 
-EFFORTS = {"inherit", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
-REQUIRED_ROLES = ("developer", "reviewer")
+sys.path.insert(0, "easydev")
+from hooks import models
 
 
 def fail(message):
@@ -352,70 +355,23 @@ def provider_of(model):
     return None if model == "inherit" else model.split("/", 1)[0]
 
 
-def check_role(label, value):
-    """按 references/models.md 的字段节校验一个角色对象。"""
-    if not isinstance(value, dict):
-        fail(f"{label} 不是对象")
-    extra = sorted(set(value) - {"model", "reasoning_effort"})
-    if extra:
-        fail(f"{label} 含未知键: {extra}")
-    model = value.get("model")
-    if not isinstance(model, str) or not model.strip():
-        fail(f"{label}.model 必须是非空字符串")
-    if model != "inherit":
-        parts = model.split("/", 1)
-        if len(parts) != 2 or not all(part.strip() for part in parts):
-            fail(f"{label}.model 必须是完整 ID（供应商与模型名都非空）或 inherit: {model!r}")
-    effort = value.get("reasoning_effort")
-    if not isinstance(effort, str) or effort not in EFFORTS:
-        fail(f"{label}.reasoning_effort 非法: {effort!r}")
-
-
 with open("easydev/README.md", encoding="utf-8") as f:
     readme = f.read()
 m = re.search(r"^```json\n(.*?)^```", readme, re.DOTALL | re.MULTILINE)
 if not m:
     fail("easydev/README.md 未找到 json 代码块")
 try:
-    block = json.loads(m.group(1))
-except json.JSONDecodeError as exc:
+    block = models.parse_json_text(m.group(1))
+except models.ConfigError as exc:
     fail(f"easydev/README.md 内联示例不是合法 JSON: {exc}")
-if not isinstance(block, dict):
-    fail("内联示例顶层不是对象")
-
-unknown = sorted(set(block) - set(REQUIRED_ROLES) - {"designer", "upgrades"})
-if unknown:
-    fail(f"内联示例含未知键: {unknown}")
-for role in REQUIRED_ROLES:
-    if role not in block:
-        fail(f"内联示例缺角色: {role}")
-    check_role(role, block[role])
-if "designer" in block:
-    check_role("designer", block["designer"])
-
-upgrades = block.get("upgrades", [])
-if not isinstance(upgrades, list):
-    fail("upgrades 不是数组")
-if len(upgrades) > 2:
-    fail(f"upgrades 超过两项: {len(upgrades)}")
-previous = {role: (block[role]["model"], block[role]["reasoning_effort"]) for role in REQUIRED_ROLES}
-for index, item in enumerate(upgrades, 1):
-    if not isinstance(item, dict):
-        fail(f"upgrades[{index}] 不是对象")
-    extra = sorted(set(item) - set(REQUIRED_ROLES))
-    if extra:
-        fail(f"upgrades[{index}] 含非法键: {extra}")
-    for role in REQUIRED_ROLES:
-        if role not in item:
-            fail(f"upgrades[{index}] 缺 {role}")
-        check_role(f"upgrades[{index}].{role}", item[role])
-    current = {role: (item[role]["model"], item[role]["reasoning_effort"]) for role in REQUIRED_ROLES}
-    if all(current[role] == previous[role] for role in REQUIRED_ROLES):
-        fail(f"upgrades[{index}] 与上一阶段完全相同")
-    previous = current
+try:
+    models.validate_config(block)
+except models.ConfigError as exc:
+    fail(f"easydev/README.md 内联示例不符合共享模型 schema: {exc}")
 
 # README 是唯一示例事实源，所以示例要演示它自己声明的形状：
 # 「开发与审查分属不同供应商，升级阶段换更强模型且两级都保持不同供应商」。
+upgrades = block.get("upgrades", [])
 if not upgrades:
     fail("内联示例的 upgrades 为空，无法演示升级阶段的模型更换")
 developer_provider = provider_of(block["developer"]["model"])
@@ -434,8 +390,160 @@ if first_developer == first_reviewer:
 if first_developer == developer_provider and first_reviewer == reviewer_provider:
     fail("内联示例 upgrades[1] 未更换任何一个角色的供应商，无法演示跨供应商升级")
 
-print("OK: easydev/README.md 内联示例符合字段契约与跨供应商升级示例")
-'
+print("OK: easydev/README.md 内联示例符合共享模型 schema 与跨供应商升级示例")
+PY
+
+echo "=== 6b. Plugin 脚本、模板与分发契约静态检查 ==="
+# 只锁可机器判断的事实：语法、JSON 可解析、分发文件清单、pi 适配器契约与
+# 专用回放守卫的关键常量。字符串门禁不等于类型检查，也不证明宿主已加载。
+python3 - <<'PY'
+import ast
+import glob
+import json
+import os
+import sys
+
+errors = []
+
+python_files = sorted(glob.glob("easydev/hooks/**/*.py", recursive=True))
+python_files.append("easydev/tests/experiments/agent_runner/replay_read_guard.py")
+for path in python_files:
+    try:
+        ast.parse(open(path, encoding="utf-8").read(), filename=path)
+    except SyntaxError as exc:
+        errors.append(f"{path} 语法错误: {exc}")
+
+for path in sorted(glob.glob("easydev/hooks/templates/*.json")) + ["easydev/hooks/manifest.json"]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"{path} 不是合法 JSON: {exc}")
+
+try:
+    with open("easydev/hooks/manifest.json", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    for key in ("name", "release", "protocol", "distribution"):
+        if key not in manifest:
+            errors.append(f"manifest.json 缺 {key}")
+    files = manifest.get("distribution", {}).get("files", [])
+    if not isinstance(files, list) or not files:
+        errors.append("manifest.json distribution.files 为空")
+    forbidden = [item for item in files if item.startswith("tests") or item in {"SKILL.md"} or item.startswith("references")]
+    if forbidden:
+        errors.append(f"Plugin 分发不得包含 Skill/tests: {forbidden}")
+    for required in ("core.py", "install.py", "pi/index.ts", "templates/codex.json"):
+        if required not in files:
+            errors.append(f"manifest.json 分发清单缺 {required}")
+except (OSError, json.JSONDecodeError) as exc:
+    errors.append(f"manifest.json 不可读: {exc}")
+
+required_events = ("SessionStart", "PreToolUse", "PostToolUse", "Stop")
+# Antigravity 官方两种事件数组结构：工具事件 Grouped（matcher + hooks[]），
+# 其余事件 Flat（直接是 handler 对象）；把非工具事件包一层就读不到 command。
+ANTIGRAVITY_TOOL_EVENTS = ("PreToolUse", "PostToolUse")
+
+
+def hook_buckets(path, template):
+    """Codex/DSH 用顶层 hooks；Antigravity 用唯一命名组 easydev-hooks。"""
+    hooks = template.get("hooks")
+    if isinstance(hooks, dict):
+        return hooks
+    named = template.get("easydev-hooks")
+    if isinstance(named, dict):
+        others = [key for key in template if key != "easydev-hooks"]
+        if others:
+            errors.append(f"{path} 命名 Hook 组之外还有顶层键: {others}")
+        return named
+    errors.append(f"{path} 缺 hooks 映射或 easydev-hooks 命名组")
+    return None
+
+
+for path in sorted(glob.glob("easydev/hooks/templates/*.json")):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            template = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        continue
+    hooks = hook_buckets(path, template)
+    if hooks is None:
+        continue
+    events = list(required_events)
+    if path.endswith("antigravity.json"):
+        # 激活事件（PreInvocation）是 EasyDev 能否生效的前提，必须注册且为 Flat。
+        events.append("PreInvocation")
+    for event in events:
+        if event not in hooks:
+            errors.append(f"{path} 缺事件 {event}")
+            continue
+        flat = path.endswith("antigravity.json") and event not in ANTIGRAVITY_TOOL_EVENTS
+        for entry in hooks[event]:
+            if not isinstance(entry, dict):
+                errors.append(f"{path} 的 {event} 槽位条目必须是对象")
+                continue
+            if flat:
+                if isinstance(entry.get("hooks"), list):
+                    errors.append(
+                        f"{path} 的 {event} 是非工具事件，必须是 Flat handler 对象，不能再包 hooks 数组"
+                    )
+                elif entry.get("type") != "command" or not isinstance(entry.get("command"), str):
+                    errors.append(f"{path} 的 {event} 槽位必须是 {type: command, command: …} handler")
+            elif not isinstance(entry.get("hooks"), list):
+                errors.append(f"{path} 的 {event} 槽位条目必须是含 hooks 数组的匹配器对象")
+            elif "matcher" not in entry and path.endswith("antigravity.json"):
+                errors.append(f"{path} 的 {event} 槽位必须带 matcher")
+    text = json.dumps(template)
+    for token in ("additionalContext", "overwrite", "systemPrompt", "instructionsText"):
+        if token in text:
+            errors.append(f"{path} 含注入/覆写字段 {token}")
+
+pi_entry = "easydev/hooks/index.ts"
+pi_adapter = "easydev/hooks/pi/index.ts"
+for path in (pi_entry, pi_adapter):
+    if not os.path.isfile(path):
+        errors.append(f"缺少 pi 适配文件 {path}")
+if os.path.isfile(pi_entry):
+    entry_text = open(pi_entry, encoding="utf-8").read()
+    if 'export { default } from "./pi/index.ts"' not in entry_text:
+        errors.append("hooks/index.ts 必须只做 ./pi/index.ts 的薄入口")
+if os.path.isfile(pi_adapter):
+    adapter = open(pi_adapter, encoding="utf-8").read()
+    for needle in ('pi.on("input"', 'pi.on("tool_call"', 'pi.on("tool_result"', 'pi.on("agent_before_settle"'):
+        if needle not in adapter:
+            errors.append(f"pi 适配器缺 {needle}")
+    for needle in ("EXEC_TIMEOUT_MS = 2000", "MAX_BUFFER = 256 * 1024", "block: true", "catch"):
+        if needle not in adapter:
+            errors.append(f"pi 适配器缺契约: {needle}")
+    if "exec(" in adapter:
+        errors.append("pi 适配器不得使用 shell exec")
+
+core_source = open("easydev/hooks/core.py", encoding="utf-8").read()
+for name in ("normalize_antigravity", "normalize_codex", "normalize_dsh", "normalize_pi"):
+    if f"def {name}" not in core_source:
+        errors.append(f"core.py 缺宿主归一化 {name}")
+if '"force_ask"' not in core_source and "'force_ask'" not in core_source:
+    errors.append("core.py 缺 force_ask 适配语义")
+if 'add_argument("--event"' not in core_source:
+    errors.append("core.py 缺 --event（Antigravity stdin 不带事件名）")
+
+install_source = open("easydev/hooks/install.py", encoding="utf-8").read()
+for needle in ('subparsers.add_parser("generate")', 'subparsers.add_parser("apply")', 'subparsers.add_parser("uninstall")', '"install_tests": False', '"install_skill": False', '--event %s', 'HOOK_EVENT_NAMES'):
+    if needle not in install_source:
+        errors.append(f"install.py 缺契约: {needle}")
+if "SKILL.md" in install_source or "tests/" in install_source:
+    errors.append("install.py 不得安装 Skill 或 tests")
+
+guard_source = open("easydev/tests/experiments/agent_runner/replay_read_guard.py", encoding="utf-8").read()
+for needle in ("DEFAULT_MAX_ENTRIES = 20000", "DEFAULT_DEADLINE_MS = 2000", "permissionDecision"):
+    if needle not in guard_source:
+        errors.append(f"replay_read_guard.py 缺契约: {needle}")
+
+if errors:
+    for error in errors:
+        print(f"Error: {error}", file=sys.stderr)
+    sys.exit(1)
+print("OK: Plugin 脚本语法、模板/manifest JSON、分发清单与适配契约通过")
+PY
 
 echo "=== 7. 规则同步脚本语法检查 ==="
 bash -n scripts/sync-agent-rules.sh
@@ -577,6 +685,31 @@ elif proc.returncode == 0:
 else:
     print("OK: easydev 未引用“全局规则”（CHANGELOG 历史记录除外）")
 
+# Hook 契约：只锁可机器判断的事实，不用关键词模拟安全行为。
+# ① 模板不得含 SessionStart 注入/覆写字段，也不得替模型定档；
+# ② 可选 Plugin 不进入 Skill 安装集（manifest 与安装器都不含 SKILL/tests）；
+# ③ 核心不得出现自动档位选择开关。
+import glob as _glob
+import json as _json
+
+template_text = ""
+for _path in _glob.glob("easydev/hooks/templates/*.json"):
+    template_text += open(_path, encoding="utf-8").read()
+for _token in ("additionalContext", "overwrite", "systemPrompt", "instructionsText"):
+    if _token in template_text:
+        errors.append(f"Hook 模板出现 SessionStart 注入/覆写字段：{_token}")
+_manifest = _json.load(open("easydev/hooks/manifest.json", encoding="utf-8"))
+_manifest_files = _manifest.get("distribution", {}).get("files", [])
+if any(item.startswith(("tests", "references")) or item == "SKILL.md" for item in _manifest_files):
+    errors.append("Plugin 分发清单不得包含 Skill 或 tests")
+_install_source = open("easydev/hooks/install.py", encoding="utf-8").read()
+if "SKILL.md" in _install_source or "tests/" in _install_source:
+    errors.append("安装器不得安装 Skill 或 tests")
+_core_source = open("easydev/hooks/core.py", encoding="utf-8").read()
+for _token in ("auto_select", "auto_tier", "set_path"):
+    if _token in _core_source:
+        errors.append(f"Hook 核心出现自动定档开关：{_token}")
+
 if errors:
     for err in errors:
         print(f"Error: {err}", file=sys.stderr)
@@ -586,9 +719,9 @@ PY
 echo "=== 10. 规则文档总量棘轮（只减不增） ==="
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
-# 基线取 1.3.2 新增后总量（含本版新增），之后只允许在删除正文后向下重设。
+# 基线取 1.4.0 实测总量（1.3.2 之后随 models.md 措辞与精简同步下调），之后只允许在删除正文后向下重设。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=131723
+MAX_TOTAL=131715
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

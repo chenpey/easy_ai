@@ -58,6 +58,11 @@ jobs:
             command: python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py'
             install_pyyaml: false
             timeout_minutes: 10
+          - name: 可选 Hook Plugin 离线回归
+            working_directory: easydev
+            command: python3 -m unittest discover -s tests/hooks -p 'test_*.py'
+            install_pyyaml: false
+            timeout_minutes: 5
     steps:
       - name: 检出
         uses: actions/checkout@v4

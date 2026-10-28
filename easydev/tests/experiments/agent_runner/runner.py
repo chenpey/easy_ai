@@ -25,6 +25,10 @@ SWEBENCH_ROOT = EXPERIMENTS_ROOT / "swebench"
 if str(SWEBENCH_ROOT) not in sys.path:
     sys.path.insert(0, str(SWEBENCH_ROOT))
 
+if str(AGENT_RUNNER_ROOT) not in sys.path:
+    sys.path.insert(0, str(AGENT_RUNNER_ROOT))
+
+import replay_read_guard  # noqa: E402
 from analyze_events import analyze_run  # noqa: E402
 from adapters.codex_cli import run_codex  # noqa: E402
 from scenarios import SCENARIO_MODULES, all_scenarios, load_scenario  # noqa: E402
@@ -379,6 +383,55 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
         case_root=args.case_root,
     )
     skill_path = Path(prepared["skill"])
+    # 回放读取守卫：先部署、再实际执行生成的原命令自检；自检失败即阻止模型启动。
+    guard_info: Optional[Dict[str, Any]] = None
+    guard_probe: Dict[str, Any] = {"ok": False, "error": "not_installed", "cases": {}}
+    guard_digests: Dict[str, str] = {}
+    guard_invocations_before = 0
+    try:
+        guard_info = replay_read_guard.install_replay_guard(
+            str(run_dir),
+            str(workspace),
+            str(skill_path),
+            str(Path.home()),
+        )
+        guard_digests = {
+            path: replay_read_guard.file_digest(path) for path in guard_info["files"]
+        }
+        guard_probe = replay_read_guard.probe(guard_info["policy_path"], guard_info["command"])
+        guard_invocations_before = replay_read_guard.read_invocations(
+            guard_info["invocations_path"]
+        )
+    except Exception as error:  # 部署/自检异常：不启动模型
+        guard_probe = {
+            "ok": False,
+            "error": error.__class__.__name__,
+            "detail": str(error)[:300],
+            "cases": {},
+        }
+    read_guard = {
+        "probe": guard_probe,
+        "health": [],
+        "invocations": 0,
+        "tampered": False,
+        "files_intact": False,
+        "hooks": guard_info["hooks_path"] if guard_info else "",
+        "policy": guard_info["policy_path"] if guard_info else "",
+        "command": guard_info["command"] if guard_info else "",
+    }
+    if not guard_probe.get("ok"):
+        result = {
+            "scenario": args.scenario,
+            "title": prepared["title"],
+            "repeat": args.repeat,
+            "behavior_result_protocol": BEHAVIOR_RESULT_PROTOCOL,
+            "valid_invocation": False,
+            "error": "replay_guard_unhealthy",
+            "read_guard": read_guard,
+            "changed_paths": [],
+        }
+        write_json(run_dir / "result.json", result)
+        return result
     runtime_before = snapshot_runtime_tree(skill_path)
     workspace_before = snapshot_workspace(workspace)
     git_metadata_before = snapshot_git_metadata(workspace)
@@ -414,12 +467,32 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
         workspace,
     )
     (run_dir / "agent.patch").write_text(captured["patch"], encoding="utf-8")
+    guard_health = replay_read_guard.read_health(guard_info["health_path"])
+    guard_files_intact = replay_read_guard.guard_files_intact(
+        guard_info["files"], guard_digests
+    )
+    guard_invocations = (
+        replay_read_guard.read_invocations(guard_info["invocations_path"])
+        - guard_invocations_before
+    )
+    read_guard.update(
+        {
+            "health": guard_health,
+            "invocations": guard_invocations,
+            "files_intact": guard_files_intact,
+            "tampered": not guard_files_intact,
+        }
+    )
     valid_invocation = bool(
         agent.get("returncode") == 0
         and agent.get("turn_completed")
         and not agent.get("timed_out")
         and (agent.get("event_count") or 0) > 0
         and agent.get("malformed_event_lines") == 0
+        # 守卫健康、文件完整、且运行期确实被调用过，才算有效样本。
+        and guard_files_intact
+        and not guard_health
+        and guard_invocations > 0
     )
     result = {
         "scenario": args.scenario,
@@ -433,6 +506,7 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
             "base_url": args.base_url,
         },
         "valid_invocation": valid_invocation,
+        "read_guard": read_guard,
         "wall_seconds": agent.get("wall_seconds"),
         "usage": agent.get("usage", {}),
         "agent": {

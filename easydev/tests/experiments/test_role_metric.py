@@ -227,6 +227,282 @@ class RoleMetricTests(unittest.TestCase):
         self.assertEqual([row["role"] for row in parsed], ["main", "reviewer"])
         self.assertIn("tool_calls", parsed[0])
 
+    def test_antigravity_transcript_attributes_reads_only(self) -> None:
+        transcript = Path(self.tmp.name) / "antigravity.jsonl"
+        events = [
+            {
+                "PLANNER_RESPONSE": {
+                    "type": "PLANNER_RESPONSE",
+                    "cwd": "/repo",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "name": "read_file",
+                            "args": {"Path": "/repo/easydev/references/routing.md"},
+                        },
+                        {
+                            "id": "call-2",
+                            "name": "view_file",
+                            "args": {"Path": "easydev/references/review.md"},
+                        },
+                        {
+                            "id": "call-3",
+                            "name": "run_command",
+                            "args": {"CommandLine": "cat /repo/easydev/references/execution.md", "Cwd": "/repo"},
+                        },
+                        {
+                            "id": "call-4",
+                            "name": "invoke_subagent",
+                            "args": {"Prompt": "读 easydev/references/verification.md 并审查"},
+                        },
+                        {
+                            "id": "call-5",
+                            "name": "run_command",
+                            "args": {"CommandLine": "echo 'references/debugging.md'", "Cwd": "/repo"},
+                        },
+                    ],
+                    "tool_results": [
+                        {"tool_call_id": "call-1", "status": "success"},
+                        {"tool_call_id": "call-2", "status": "success"},
+                    ],
+                }
+            },
+            {"type": "PLANNER_RESPONSE", "tool_calls": [{"name": "read_file", "args": {"Path": "/repo/a.md"}}]},
+            {"type": "NOT_A_PLANNER_RESPONSE"},
+        ]
+        transcript.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+        rows, warnings = role_metric.collect_transcripts(
+            "antigravity", transcript, [], [], {}, Path("/repo")
+        )
+        self.assertEqual(warnings, [])
+        main = rows[0]
+        self.assertEqual(
+            main["references"], ["execution.md", "review.md", "routing.md"]
+        )
+        self.assertNotIn("verification.md", main["references"])
+        self.assertNotIn("debugging.md", main["references"])
+        self.assertEqual(main["attribution_status"], "partial")
+        confirmed = {entry["path"] for entry in main["file_access"] if entry["confirmed"]}
+        self.assertIn("/repo/easydev/references/routing.md", confirmed)
+        self.assertNotIn("/repo/easydev/references/execution.md", confirmed)
+
+    def test_antigravity_requested_without_results_is_not_confirmed(self) -> None:
+        transcript = Path(self.tmp.name) / "antigravity-pending.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "PLANNER_RESPONSE",
+                    "tool_calls": [
+                        {"name": "read_file", "args": {"Path": "/repo/easydev/references/routing.md"}}
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        rows, _ = role_metric.collect_transcripts("antigravity", transcript, [], [], {}, Path("/repo"))
+        self.assertEqual(rows[0]["attribution_status"], "requested")
+        self.assertEqual(rows[0]["references"], ["routing.md"])
+
+    def test_codex_rollout_dedupes_completed_and_ignores_patch_paths(self) -> None:
+        transcript = Path(self.tmp.name) / "rollout.jsonl"
+        events = [
+            {"type": "session_meta", "payload": {"id": "s-1", "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "read_file",
+                    "arguments": json.dumps({"path": "/repo/easydev/SKILL.md"}),
+                    "call_id": "call-a",
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call-a",
+                    "output": "ok",
+                    "is_error": False,
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "Bash",
+                    "arguments": json.dumps({"command": "cat easydev/references/routing.md"}),
+                    "call_id": "call-b",
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "update_plan",
+                    "arguments": json.dumps({"plan": "读 easydev/references/review.md"}),
+                    "call_id": "call-c",
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "apply_patch",
+                    "arguments": "*** Begin Patch\n*** Update File: easydev/references/execution.md\n*** End Patch",
+                    "call_id": "call-d",
+                },
+            },
+            "not-an-object",
+        ]
+        transcript.write_text("\n".join(json.dumps(e) if not isinstance(e, str) else e for e in events) + "\n", encoding="utf-8")
+        rows, warnings = role_metric.collect_transcripts("codex", transcript, [], [], {}, Path("/repo"))
+        main = rows[0]
+        self.assertEqual(main["references"], ["routing.md"])
+        self.assertNotIn("review.md", main["references"])
+        self.assertNotIn("execution.md", main["references"])
+        self.assertEqual(main["tools"].get("read_file"), 1)
+        self.assertEqual(main["attribution_status"], "partial")
+        self.assertTrue(any("跳过" in warning for warning in warnings))
+
+    def test_codex_exec_dedupes_same_item_id(self) -> None:
+        transcript = Path(self.tmp.name) / "exec.jsonl"
+        events = [
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "exec-1",
+                    "type": "command_execution",
+                    "command": "grep -n TODO /repo/easydev/references/code-quality.md",
+                },
+            },
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "exec-1",
+                    "type": "command_execution",
+                    "command": "grep -n TODO /repo/easydev/references/code-quality.md",
+                    "exit_code": 0,
+                },
+            },
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "exec-2",
+                    "type": "command_execution",
+                    "command": "cat /repo/easydev/references/review.md",
+                    "exit_code": 1,
+                },
+            },
+        ]
+        transcript.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+        rows, _ = role_metric.collect_transcripts("codex", transcript, [], [], {}, Path("/repo"))
+        main = rows[0]
+        self.assertEqual(main["references"], ["code-quality.md", "review.md"])
+        self.assertEqual(main["tools"].get("exec_command"), 2)
+        statuses = {(entry["path"], entry["confirmed"]) for entry in main["file_access"]}
+        self.assertIn(("/repo/easydev/references/code-quality.md", True), statuses)
+        self.assertIn(("/repo/easydev/references/review.md", False), statuses)
+
+    def test_child_transcript_and_role_map(self) -> None:
+        parent = Path(self.tmp.name) / "parent.jsonl"
+        child = Path(self.tmp.name) / "child.jsonl"
+        parent.write_text(
+            json.dumps(
+                {
+                    "type": "PLANNER_RESPONSE",
+                    "tool_calls": [{"name": "read_file", "args": {"Path": "/repo/easydev/SKILL.md"}}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        child.write_text(
+            json.dumps(
+                {
+                    "type": "PLANNER_RESPONSE",
+                    "tool_calls": [
+                        {"name": "read_file", "args": {"Path": "/repo/easydev/references/reviewer-role.md"}}
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        rows, _ = role_metric.collect_transcripts(
+            "antigravity",
+            parent,
+            [child],
+            [],
+            {child.name: {"role": "reviewer", "parent": parent.name}},
+            Path("/repo"),
+        )
+        self.assertEqual([row["role"] for row in rows], ["main", "reviewer"])
+        self.assertTrue(rows[1]["child"])
+        self.assertEqual(rows[1]["parent"], parent.name)
+        self.assertEqual(rows[1]["references"], ["reviewer-role.md"])
+
+    def test_host_cli_requires_explicit_transcript(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                role_metric.main(["--host", "codex"])
+
+    def test_cli_role_map_labels_child_transcript(self) -> None:
+        parent = Path(self.tmp.name) / "parent-map.jsonl"
+        child = Path(self.tmp.name) / "child-map.jsonl"
+        line = json.dumps(
+            {
+                "type": "PLANNER_RESPONSE",
+                "tool_calls": [{"name": "read_file", "args": {"Path": "/repo/easydev/references/reviewer-role.md"}}],
+            }
+        )
+        parent.write_text(line + "\n", encoding="utf-8")
+        child.write_text(line + "\n", encoding="utf-8")
+        role_map = json.dumps({child.name: {"role": "reviewer", "parent": parent.name}})
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+            code = role_metric.main(
+                [
+                    "--host",
+                    "antigravity",
+                    "--transcript",
+                    str(parent),
+                    "--child-transcript",
+                    str(child),
+                    "--role-map",
+                    role_map,
+                    "--json",
+                ]
+            )
+        self.assertEqual(code, 0)
+        rows = json.loads(buffer.getvalue())
+        self.assertEqual([row["role"] for row in rows], ["main", "reviewer"])
+
+    def test_codex_cli_outputs_json_rows(self) -> None:
+        transcript = Path(self.tmp.name) / "cli.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "read",
+                        "arguments": json.dumps({"path": "/repo/easydev/references/planning.md"}),
+                        "call_id": "c1",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
+            code = role_metric.main(["--host", "codex", "--transcript", str(transcript), "--json"])
+        self.assertEqual(code, 0)
+        parsed = json.loads(buffer.getvalue())
+        self.assertEqual(parsed[0]["references"], ["planning.md"])
+        self.assertEqual(parsed[0]["attribution_status"], "requested")
+
 
 if __name__ == "__main__":
     unittest.main()

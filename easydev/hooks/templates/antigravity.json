@@ -1,0 +1,44 @@
+{
+  "easydev-hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "__EASYDEV_COMMAND__"
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "__EASYDEV_COMMAND__"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__EASYDEV_COMMAND__"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__EASYDEV_COMMAND__"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "__EASYDEV_COMMAND__"
+      }
+    ]
+  }
+}

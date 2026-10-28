@@ -137,6 +137,8 @@ def run_codex(
         "-C",
         str(workspace),
         "--json",
+        # 跳过非 managed Hook 的信任确认，不是跳过 sandbox/approval。
+        "--dangerously-bypass-hook-trust",
         "-c",
         "sandbox_workspace_write.network_access=false",
         "-o",

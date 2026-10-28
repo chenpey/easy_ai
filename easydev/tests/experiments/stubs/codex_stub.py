@@ -61,6 +61,12 @@ keys (all optional):
     ``[{"path": ..., "output": ...}]`` copies a file's text to ``output``.
 ``chmod_files``
     ``[{"path": ..., "mode": 0o755}]`` applies an octal mode after mutations.
+``delete_files``
+    ``["path", ...]`` deletes files after mutations (used to simulate tampering).
+``skip_hooks``
+    When true the stub never invokes the generated PreToolUse hook.
+``hook_log``
+    Append one JSON line per hook invocation (``{"tool","decision","reason"}``).
 ``final_message``
     Content written to the ``-o`` path (defaults to the last agent message).
 
@@ -245,20 +251,117 @@ def observe_modes(probes: object) -> None:
         output.write_text(f"{source.stat().st_mode & 0o777:o}\n", encoding="utf-8")
 
 
-def apply_mutations(workdir: Path, mutations: object) -> None:
+def load_hook_commands(workdir: Path) -> List[str]:
+    """读取宿主配置里的 PreToolUse 命令，模拟宿主真实调用 Hook。"""
+    path = workdir / ".codex" / "hooks.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    commands: List[str] = []
+    buckets = value.get("hooks") if isinstance(value, dict) else None
+    if isinstance(buckets, dict):
+        for entries in buckets.values():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                hooks = entry.get("hooks") if isinstance(entry, dict) else None
+                for hook in hooks or []:
+                    command = hook.get("command") if isinstance(hook, dict) else None
+                    if isinstance(command, str) and command:
+                        commands.append(command)
+    return commands
+
+
+def call_hooks(
+    commands: List[str],
+    workdir: Path,
+    tool: str,
+    tool_input: Dict[str, object],
+    log_path: object,
+) -> Tuple[str, str]:
+    """逐个执行 Hook 命令；返回 (decision, reason)。"""
+    payload = json.dumps(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": tool,
+            "tool_input": tool_input,
+            "cwd": str(workdir),
+        }
+    )
+    decision = "allow"
+    reason = ""
+    for command in commands:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            input=payload,
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        try:
+            value = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        specific = value.get("hookSpecificOutput")
+        specific = specific if isinstance(specific, dict) else {}
+        if specific.get("permissionDecision") == "deny":
+            decision = "deny"
+            reason = str(specific.get("permissionDecisionReason") or "")
+            break
+    if log_path:
+        log = Path(str(log_path))
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {"tool": tool, "decision": decision, "reason": reason},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return decision, reason
+
+
+def apply_mutations(
+    workdir: Path,
+    mutations: object,
+    commands: Optional[List[str]] = None,
+    log_path: object = None,
+) -> None:
     for mutation in mutations or []:
         target = Path(str(mutation["path"]))
         if not target.is_absolute():
             target = workdir / target
+        if commands:
+            decision, _reason = call_hooks(
+                commands, workdir, "Write", {"file_path": str(target)}, log_path
+            )
+            if decision == "deny":
+                continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(str(mutation["content"]), encoding="utf-8")
 
 
-def append_files(workdir: Path, entries: object) -> None:
+def append_files(
+    workdir: Path,
+    entries: object,
+    commands: Optional[List[str]] = None,
+    log_path: object = None,
+) -> None:
     for entry in entries or []:
         target = Path(str(entry["path"]))
         if not target.is_absolute():
             target = workdir / target
+        if commands:
+            decision, _reason = call_hooks(
+                commands, workdir, "Write", {"file_path": str(target)}, log_path
+            )
+            if decision == "deny":
+                continue
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(str(entry["content"]))
@@ -308,6 +411,13 @@ def main(argv: List[str]) -> int:
     if sleep_seconds:
         time.sleep(sleep_seconds)
 
+    hook_commands = [] if plan.get("skip_hooks") else load_hook_commands(workdir)
+    hook_log = plan.get("hook_log")
+    # 真实宿主会在命令执行前调用 PreToolUse；替身同样先走生成配置里的命令。
+    for command in plan.get("commands") or []:
+        if hook_commands and isinstance(command, str):
+            call_hooks(hook_commands, workdir, "Bash", {"command": command}, hook_log)
+
     for event in valid_events(plan):
         print(json.dumps(event, ensure_ascii=False), flush=True)
     invalid_events = plan.get("invalid_events")
@@ -315,8 +425,8 @@ def main(argv: List[str]) -> int:
         for _ in range(int(plan.get("malformed_lines") or 1)):
             print("{not-json", flush=True)
 
-    apply_mutations(workdir, plan.get("mutations"))
-    append_files(workdir, plan.get("append_files"))
+    apply_mutations(workdir, plan.get("mutations"), hook_commands, hook_log)
+    append_files(workdir, plan.get("append_files"), hook_commands, hook_log)
     if plan.get("stage"):
         subprocess.run(
             ["git", "add", "-A"],
@@ -327,9 +437,27 @@ def main(argv: List[str]) -> int:
             check=False,
             timeout=60,
         )
-    apply_mutations(workdir, plan.get("post_stage_mutations"))
+    apply_mutations(workdir, plan.get("post_stage_mutations"), hook_commands, hook_log)
     chmod_files(workdir, plan.get("chmod_files"))
+    for entry in plan.get("delete_files") or []:
+        target = Path(str(entry))
+        if not target.is_absolute():
+            target = workdir / target
+        try:
+            target.unlink()
+        except OSError:
+            pass
     for command in plan.get("git_commands") or []:
+        if hook_commands:
+            decision, _reason = call_hooks(
+                hook_commands,
+                workdir,
+                "Bash",
+                {"command": " ".join(str(part) for part in command)},
+                hook_log,
+            )
+            if decision == "deny":
+                continue
         subprocess.run(
             [str(part) for part in command],
             cwd=str(workdir),
