@@ -296,8 +296,8 @@ def _strip_line_continuations(text: str) -> str:
 
     引号状态必须与注释和词边界共用一份词法状态：`#` 只在词首（行首、空白或
     运算符之后）开始注释，注释里的引号没有语法作用。注释到**物理行尾**结束
-    （`\`+换行在注释里不是续接）：让注释跨行会把下一行的真实命令当注释文本
-    静默放行，例如 `# note \` + 换行 + `git reset --hard` 在 Bash 里确实执行。
+    （`\\`+换行在注释里不是续接）：让注释跨行会把下一行的真实命令当注释文本
+    静默放行，例如 `# note \\` + 换行 + `git reset --hard` 在 Bash 里确实执行。
     """
     stripped: List[str] = []
     quote: Optional[str] = None

@@ -19,6 +19,8 @@ python3 -m unittest discover -s tests/hooks -p 'test_*.py' -v
 
 八项互不依赖，在同一冻结快照上批量并发并分别保存日志；CI 另将仓库门禁与安装冒烟同这八项共十个检查拆为 fail-fast=false 的矩阵任务。只有固定补丁复验内部须串行，按“红 → 参考补丁 → 绿 → 独立验收 → 伪修复拒绝”，因为后一步依赖前一步的仓库状态。本机全量耗时目标 < 120s。
 
+`agent_runner` 套件里的 `rg --files` 正例需要本机装有 `ripgrep`（不在 POSIX 必备工具内）：装有 `rg` 时断言原工具真的执行并列出工作区文件，缺失时只校验守卫的放行判定、不宣称原工具已执行；CI 的行为 runner 作业先用 `apt-get` 安装 ripgrep，真实执行分支由 CI 覆盖。
+
 ## 覆盖什么
 
 - **固定补丁复验** (`tests/cases/public-contract-callers/`)：初始仓库的红测、参考补丁后的 403 与契约检查、独立验收，以及 11 类伪修复被拒绝；红绿两段仍运行夹具自带的 `check_orders.py`，独立验收 `acceptance.py` 不依赖它。

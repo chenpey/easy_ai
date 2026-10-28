@@ -158,7 +158,7 @@ class HookCase(unittest.TestCase):
     def write_context(self, **overrides: Any) -> None:
         context = {
             "protocol": 1,
-            "version": "1.4.1",
+            "version": "1.4.2",
             "host": self.host,
             "mode": "enforce",
             "state_root": str(self.state),

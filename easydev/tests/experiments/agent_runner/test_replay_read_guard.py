@@ -730,6 +730,11 @@ class DeployedGuardCommandTests(unittest.TestCase):
         # 允许根内干净目录正例：真的执行 rg，只列出工作区文件。
         inside = self.host_run("rg --files src")
         self.assertEqual(inside["decision"], "allow", inside)
+        if shutil.which("rg") is None:
+            # ripgrep 不是 POSIX 必备工具（ubuntu-latest 默认无），缺失时只校验
+            # 守卫放行判定，不宣称原工具已执行（与 `cp -t` 的 GNU 差异同一口径）；
+            # CI 先安装 ripgrep，真实执行分支由 CI 覆盖。
+            return
         self.assertIsNotNone(inside["executed"])
         self.assertIn("app.py", inside["executed"].stdout)
         self.assertEqual(inside["executed"].returncode, 0)

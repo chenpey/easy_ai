@@ -2,6 +2,19 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.2 更新说明（2026-10-28）
+
+修复 1.4.1 在 GitHub Actions 上的失败：回放守卫的 `rg --files` 正例假定了宿主机已装 `ripgrep`；同时清掉 `hooks/shell.py` 文档字符串里的非法转义（Python 3.12 起报 `SyntaxWarning`，CI 日志已出现）并把编译期告警纳入门禁。不改变守卫判定口径、规则正文、预算与状态机，规则文档总量仍为 131715 字节。
+
+- **CI 失败根因**：1.4.1 新增的 `test_replay_read_guard.py::test_rg_files_roots_are_all_checked` 在允许根内真实执行 `rg --files src` 并断言 stdout 含 `app.py`，但 `ubuntu-latest` 默认没有 ripgrep，`rg` 未找到时 stdout 为空，报 `AssertionError: 'app.py' not found in ''`（run `40713332719` 的「行为 runner 与进程清理回归」；同轮其余九项与 PowerShell 语法门禁均通过）。本机 macOS 装有 ripgrep，该环境假设此前未暴露；两条 deny 正例在拒绝时不执行原工具，所以只有放行正例受影响。
+- **修复**：放行正例保留“守卫必须 allow”的断言，只有 `shutil.which("rg")` 命中时才断言原工具真的执行并列出工作区文件——与本套件 `cp -t` 的 GNU 差异同一口径（缺工具就不宣称真实执行）；CI 的行为 runner 作业新增 `install_ripgrep: true`，用 `apt-get` 安装 ripgrep 后覆盖真实执行分支。守卫解析、放行与拒绝口径未改。`tests/README.md` 补记这一环境前提。
+- **非法转义与门禁**：`hooks/shell.py` 的 `_strip_line_continuations` 文档字符串写成 `\``，在 Python 3.12 起是非法转义（`SyntaxWarning: invalid escape sequence '\`'`，CI 日志已在导入时出现，未来版本会变硬错误；`ast.parse` 不报，只有真编译才暴露）。改写为 `\\``，渲染结果与语义不变（仍是 Bash 行续接的说明文字），无行为改动。`scripts/check.sh` §6b 的 Python 检查从 Plugin 脚本扩到全仓库 `*.py`，并在 `warnings.catch_warnings()` + `simplefilter("error", SyntaxWarning)` 下真编译一次，把非法转义这类编译期问题挡在本地与 CI（3.12 之前不会触发，CI 的 3.12 生效）。
+- **版本**：根 README、`easydev/README.md`、`SKILL.md` metadata、本 CHANGELOG、`hooks/manifest.json` 与 `hooks/README.md` 的安装示例路径同步为 1.4.2；`tests/hooks/support.py` 的安装上下文夹具版本同步；规则文档总量未变（131715 字节，棘轮与 1.4.0 的双写数值不变）。
+
+验证：修复前用 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`（无 ripgrep）复现 CI 的同一失败（`AssertionError: 'app.py' not found in ''`），修复后同一环境用例通过；装有 ripgrep 的本机仍走真实执行分支，将断言改为 `app.pyx` 后用例失败、恢复后通过。转义：本机 `python3.12 -W error::SyntaxWarning` 全仓库 `py_compile` 在修复前报 `hooks/shell.py:299: invalid escape sequence '\`'`、修复后 0 个告警；把临时 `x = "\d"` 文件放进仓库后，3.12 下 `check.sh` rc=1 并点名该文件，删除后恢复 rc=0。本机 macOS、无 PyYAML（降级分支）：`check.sh` rc=0（§3 版本一致 1.4.2，§10 总量 131715 ≤ 131715）、`smoke-install.sh` 通过（本机沙箱拒绝 `mktemp -d` 建临时 HOME，改用脚本自带的 `SMOKE_TMP` 指向工作区临时目录，脚本不删除调用方目录，测完手工清理）、`version-gate`/`design-gate`/`audit-overflow`/`public-contract-callers` 通过（11 个伪修复均被拒）、`test_role_metric` 18 项、`agent_runner` 71 项、`swebench` 56 项、`hooks` 758 项全部 OK。
+
+未验证：未取得推送后的 CI 运行结果，`install_ripgrep` 步骤只在 CI 生效；无 ripgrep 的机器上该正例只覆盖守卫的放行判定，真实执行证据仍只来自装有 ripgrep 的环境。
+
 ## 1.4.1 更新说明（2026-10-28）
 
 修正 1.4.0 的四处真实适配与性能问题（Antigravity transcript 归因、Antigravity Hook 协议、未激活会话开销、脏目标基线协议），并按 v2 复审修正带 transcript 的未激活短路、Antigravity `PostToolUse` 归一与非工具事件 Flat 结构，按 v3 复审修正未激活 child 成功读取 `SKILL.md` 后的局部激活及其读取消费去重；规则正文未新增，总量不变。

@@ -402,14 +402,26 @@ import glob
 import json
 import os
 import sys
+import warnings
 
 errors = []
 
-python_files = sorted(glob.glob("easydev/hooks/**/*.py", recursive=True))
-python_files.append("easydev/tests/experiments/agent_runner/replay_read_guard.py")
+python_files = sorted(glob.glob("**/*.py", recursive=True))
 for path in python_files:
+    source = open(path, encoding="utf-8").read()
     try:
-        ast.parse(open(path, encoding="utf-8").read(), filename=path)
+        ast.parse(source, filename=path)
+    except SyntaxError as exc:
+        errors.append(f"{path} 语法错误: {exc}")
+        continue
+    # 非法转义等编译期问题在 3.12 起是 SyntaxWarning（未来版本会变硬错误），
+    # ast.parse 不报，必须真编译一次并按错误处理；3.12 之前这里的编译不会告警。
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SyntaxWarning)
+            compile(source, path, "exec")
+    except SyntaxWarning as exc:
+        errors.append(f"{path} 编译期告警（如非法转义序列）: {exc}")
     except SyntaxError as exc:
         errors.append(f"{path} 语法错误: {exc}")
 
@@ -542,7 +554,7 @@ if errors:
     for error in errors:
         print(f"Error: {error}", file=sys.stderr)
     sys.exit(1)
-print("OK: Plugin 脚本语法、模板/manifest JSON、分发清单与适配契约通过")
+print("OK: 全部 Python 文件语法与编译期告警、Plugin 模板/manifest JSON、分发清单与适配契约通过")
 PY
 
 echo "=== 7. 规则同步脚本语法检查 ==="

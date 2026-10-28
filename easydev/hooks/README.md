@@ -31,12 +31,12 @@ Plugin 分发不包含 `tests/` 与 Skill 文件；安装器也不会安装它�
 
 ## 安装（默认只生成，不碰宿主配置）
 
-先人工把本目录复制到一个受信位置，例如 `~/.local/share/easydev-hooks/1.4.1/`，然后用同目录 `install.py` 生成配置：
+先人工把本目录复制到一个受信位置，例如 `~/.local/share/easydev-hooks/1.4.2/`，然后用同目录 `install.py` 生成配置：
 
 ```bash
-python3 ~/.local/share/easydev-hooks/1.4.1/install.py generate \
+python3 ~/.local/share/easydev-hooks/1.4.2/install.py generate \
   --host codex \
-  --plugin-root ~/.local/share/easydev-hooks/1.4.1 \
+  --plugin-root ~/.local/share/easydev-hooks/1.4.2 \
   --skill-root ~/.agents/skills/easydev \
   --output /tmp/easydev-hooks-codex \
   --mode probe
@@ -60,12 +60,12 @@ python3 ~/.local/share/easydev-hooks/1.4.1/install.py generate \
 
 ```bash
 # 默认用法：清单从 --source 同目录的 install-manifest.json 读取
-python3 ~/.local/share/easydev-hooks/1.4.1/install.py apply \
+python3 ~/.local/share/easydev-hooks/1.4.2/install.py apply \
   --target <repo>/.codex/hooks.json \
   --source /tmp/easydev-hooks-codex/codex-hooks.json
 
 # 清单不在默认位置时显式指定
-python3 ~/.local/share/easydev-hooks/1.4.1/install.py apply \
+python3 ~/.local/share/easydev-hooks/1.4.2/install.py apply \
   --target <repo>/.codex/hooks.json \
   --manifest /tmp/easydev-hooks-codex/install-manifest.json
 ```
@@ -122,7 +122,7 @@ Hook 默认对所有会话生效，因此每个入口先做可信激活判定，
 ## 卸载
 
 ```bash
-python3 ~/.local/share/easydev-hooks/1.4.1/install.py uninstall \
+python3 ~/.local/share/easydev-hooks/1.4.2/install.py uninstall \
   --target <repo>/.codex/hooks.json \
   --manifest /tmp/easydev-hooks-codex/install-manifest.json
 ```
