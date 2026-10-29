@@ -2,6 +2,21 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.3 更新说明（2026-10-29）
+
+修掉生成物残留与默认模式两个使用问题：此前 `generate --output <root>/<release>/<host>` 的版本号目录由调用方手工选择，脚本从不清理旧目录，升级后 1.4.1/1.4.2 这类历史生成物会一直留在配置根下并容易被误读（其中还可能有 probe 模式的旧 context）。本版把 `generate` 默认改为 `enforce`，新增 `--output-root` 稳定布局与 `prune` 清理旧版本目录；`apply`/`uninstall` 的“不动用户改动”语义不变（同标识但内容不同直接非零退出并保留原文件）。规则正文与预算未变，总量仍为 131715 字节。
+
+- **默认 enforce**：`generate --mode` 的默认值从 `probe` 改为 `enforce`。此前照 README 首次接入会生成 probe 配置（只记录、不拦截），用户容易以为已生效。现在不写 `--mode` 就是真拦截；需要先观察的宿主仍可显式 `--mode probe`。模式写在生成命令与 `install-context.json` 里，切换后必须重新 `apply`。
+- **稳定输出布局（`--output-root`）**：新增与 `--output` 互斥的 `--output-root <root>`，把生成物固定写到 `<root>/<host>/`。同一路径重复生成只覆盖本插件自己的文件，升级不再堆积 `<root>/<X.Y.Z>/`；`generate` 发现同级的旧版本目录时在 stderr 提示，并把它列进结果的 `stale` 字段。
+- **`prune` 清理旧版本目录**：默认 dry-run，`--apply` 才删除，`--keep <release>` 保留指定版本（当前 release 始终保留）。只删“完全由本插件生成”的版本号目录：目录名须为 `X.Y.Z`，每个宿主子目录必须带 `name`/`release` 与目录名一致的 `install-manifest.json`，且不得含未知文件、未知子目录或任何软链——不满足就跳过并给出原因。删除后该版本的 `uninstall` 清单不可用，输出会提示：旧版本若仍 apply 在宿主上，先用旧清单卸载或用当前版本重新 apply 覆盖。root 自身是软链直接拒绝，祖先链软链（如 macOS `/tmp`）按真实目录处理。
+- **升级不动用户改动（保持）**：`apply` 仍按条目摘要匹配，未知/被改过的条目保留；被改条目若与本插件同标识（同一 `core.py`）则拒绝写入并非零退出，原文件与备份都保留；`uninstall` 只移除与清单一致的条目。新增用例 `test_upgrade_never_overwrites_user_modified_entry` 固定“重新生成 + 再次 apply”时用户改过的条目不被覆盖。
+- **测试与门禁**：`tests/hooks/test_install.py` 新增 7 项（默认 enforce、`--output-root` 原地覆盖、两个输出参数互斥、`stale` 提示、prune 的 dry-run/apply/keep、用户内容与软链/外来清单跳过、软链 root 拒绝、升级不覆盖用户改动）；`check.sh` §6b 的 install.py 契约串补 `prune`、`--output-root` 与 `default="enforce"`。
+- **版本**：根 README、`easydev/README.md`、`SKILL.md` metadata、本 CHANGELOG 与 `hooks/manifest.json` 同步为 1.4.3，`tests/hooks/support.py` 夹具版本同步；规则文档总量未变（131715 字节）。
+
+验证：本机 macOS、无 PyYAML。hooks 套件 765 项（新增 7 项）通过；`agent_runner` 71 项、`swebench` 56 项、`test_role_metric` 18 项，`version-gate`/`design-gate`/`audit-overflow`/`public-contract-callers`/`smoke-install` 与 `check.sh`（§3 版本一致 1.4.3、§6b 新契约串、§10 总量 131715）全部通过。真实执行：用 1.4.3 安装器把本地插件树更新到 1.4.3，四个宿主改走 `--output-root <plugin-root>/config` 稳定布局，`prune --root <plugin-root>/config` 先 dry-run 再 `--apply`，删掉 `config/1.4.1` 与 `config/1.4.2` 两个旧目录，`config/{pi,codex,antigravity,dsh}` 留在原处；`install-context.json` 为 1.4.3/enforce，激活后危险 Git 实跑仍返回 block。
+
+未验证：codex 与 antigravity 的宿主 hooks 文件仍需用户在自己终端 `apply`（本沙箱不能写 `~/.codex`、`~/.gemini`），四宿主真实 Hook 信任与端到端拦截仍需各自 probe；`prune` 无法判断旧版本是否仍 apply 在宿主配置里，只能靠目录形状与清单核对，删除前的风险提示已写进输出。
+
 ## 1.4.2 更新说明（2026-10-28）
 
 修复 1.4.1 在 GitHub Actions 上的失败：回放守卫的 `rg --files` 正例假定了宿主机已装 `ripgrep`；同时清掉 `hooks/shell.py` 文档字符串里的非法转义（Python 3.12 起报 `SyntaxWarning`，CI 日志已出现）并把编译期告警纳入门禁。不改变守卫判定口径、规则正文、预算与状态机，规则文档总量仍为 131715 字节。

@@ -539,7 +539,7 @@ if 'add_argument("--event"' not in core_source:
     errors.append("core.py 缺 --event（Antigravity stdin 不带事件名）")
 
 install_source = open("easydev/hooks/install.py", encoding="utf-8").read()
-for needle in ('subparsers.add_parser("generate")', 'subparsers.add_parser("apply")', 'subparsers.add_parser("uninstall")', '"install_tests": False', '"install_skill": False', '--event %s', 'HOOK_EVENT_NAMES'):
+for needle in ('subparsers.add_parser("generate")', 'subparsers.add_parser("apply")', 'subparsers.add_parser("uninstall")', 'subparsers.add_parser("prune")', '--output-root', 'default="enforce"', '"install_tests": False', '"install_skill": False', '--event %s', 'HOOK_EVENT_NAMES'):
     if needle not in install_source:
         errors.append(f"install.py 缺契约: {needle}")
 if "SKILL.md" in install_source or "tests/" in install_source:

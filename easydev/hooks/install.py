@@ -8,11 +8,18 @@
 
 用法：
   install.py generate --host <antigravity|codex|dsh|pi> --plugin-root <abs>
-                      --skill-root <abs> --output <abs> [--mode probe|enforce]
+                      --skill-root <abs> (--output <abs> | --output-root <abs>)
+                      [--mode probe|enforce]      # 默认 enforce
   install.py apply --target <abs-config> --source <abs-generated-config>
                    [--manifest <abs-install-manifest>]
   install.py uninstall --target <abs-config> [--manifest <abs-install-manifest>
                         | --source <abs-generated-config>]
+  install.py prune --root <abs-config-root> [--keep <release> ...] [--apply]
+
+升级建议用 `--output-root <plugin-root>/config` 的稳定布局：生成物固定落在
+`<root>/<host>/`，同一路径下重新生成只覆盖本插件自己的文件，升级不再堆积
+`<root>/<X.Y.Z>/` 版本号目录；确实需要保留旧版本时用 `prune --keep`。`apply`
+从不覆盖用户改过的条目：同标识但内容不同直接非零退出并保留原文件。
 """
 
 from __future__ import annotations
@@ -22,7 +29,9 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shlex
+import shutil
 import stat
 import sys
 import tempfile
@@ -56,6 +65,9 @@ HOOK_EVENT_NAMES = {
     "SubagentStop",
     "Stop",
 }
+# 与 generate --host 的 choices 保持一致：prune 只把已知宿主子目录当作本插件生成物。
+HOST_DIRS = {"antigravity", "codex", "dsh", "pi"}
+RELEASE_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def load_manifest() -> Dict[str, Any]:
@@ -288,7 +300,9 @@ def _previous_entries(output: str, current: List[Dict[str, Any]]) -> List[Dict[s
 def generate(args: argparse.Namespace) -> Dict[str, Any]:
     plugin_root = resolve_path(args.plugin_root)
     skill_root = resolve_path(args.skill_root)
-    output = resolve_path(args.output)
+    output_root = resolve_path(args.output_root) if args.output_root else None
+    # 稳定布局：`--output-root <root>` 固定写 `<root>/<host>`，升级不再产生版本号目录。
+    output = os.path.join(output_root, args.host) if output_root else resolve_path(args.output)
     if not os.path.isfile(os.path.join(plugin_root, "core.py")):
         raise SystemExit("plugin-root 缺少 core.py")
     if not os.path.isdir(os.path.join(skill_root, "references")):
@@ -353,16 +367,148 @@ def generate(args: argparse.Namespace) -> Dict[str, Any]:
     }
     manifest_path = os.path.join(output, INSTALL_MANIFEST_NAME)
     write_json(manifest_path, install_manifest)
+    # 只在“生成目录的上一级”是配置根时才有意义：稳定布局下会看到旧的版本号目录。
+    layout_root = output_root or os.path.dirname(output)
+    stale = _stale_release_dirs(layout_root, release, manifest.get("name"))
+    if stale:
+        print(
+            "提示: 发现本插件的旧版本生成目录 %s；确认不再需要后运行 "
+            "`python3 %s prune --root %s --apply` 清理（默认 dry-run）。"
+            % (
+                "、".join(stale),
+                os.path.join(PLUGIN_ROOT_DEFAULT, "install.py"),
+                layout_root,
+            ),
+            file=sys.stderr,
+        )
     return {
         "host": args.host,
         "mode": args.mode,
         "output": output,
+        "output_root": output_root,
+        "stale": stale,
         "config": config_path,
         "context": context_path,
         "plugin_context": plugin_context,
         "manifest": manifest_path,
         "command": command if args.host != "pi" else None,
     }
+
+
+def _release_dir_reason(path: str, child: str, plugin_name: Any) -> str:
+    """版本号目录是否完全由本插件生成；返回空串表示可安全清理。
+
+    只接受 `<root>/<X.Y.Z>/<host>/{install-manifest.json, …}` 这一种形状：
+    任何软链、未知文件、缺失或对不上的清单都跳过。宁可留下也不误删用户内容。
+    """
+    if not RELEASE_PATTERN.match(child):
+        return "目录名不是发布版本号"
+    if os.path.islink(path):
+        return "是软链，未跟随"
+    if not os.path.isdir(path):
+        return "不是目录"
+    hosts = sorted(os.listdir(path))
+    if not hosts:
+        return "空目录"
+    unknown = [host for host in hosts if host not in HOST_DIRS]
+    if unknown:
+        return "含未知子目录: %s" % unknown
+    for host in hosts:
+        host_dir = os.path.join(path, host)
+        if os.path.islink(host_dir) or not os.path.isdir(host_dir):
+            return "%s 不是真实目录" % host
+        expected = {INSTALL_MANIFEST_NAME, CONTEXT_NAME, "%s-hooks.json" % host}
+        for item in sorted(os.listdir(host_dir)):
+            if item not in expected:
+                return "%s 含未知文件: %s" % (host, item)
+        manifest_path = os.path.join(host_dir, INSTALL_MANIFEST_NAME)
+        if not os.path.isfile(manifest_path):
+            return "%s 缺 %s" % (host, INSTALL_MANIFEST_NAME)
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                value = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            return "%s 清单不可读" % host
+        if not isinstance(value, dict) or value.get("name") != plugin_name:
+            return "%s 清单不是本插件生成" % host
+        if value.get("release") != child:
+            return "%s 清单版本与目录名不一致" % host
+        for base, dirs, files in os.walk(host_dir):
+            for item in list(dirs) + list(files):
+                if os.path.islink(os.path.join(base, item)):
+                    return "含软链，未处理"
+    return ""
+
+
+def _stale_release_dirs(root: str, release: Any, plugin_name: Any) -> List[str]:
+    """`root` 下由本插件生成、但版本不是当前 release 的版本号目录。"""
+    stale: List[str] = []
+    try:
+        children = sorted(os.listdir(root))
+    except OSError:
+        return stale
+    for child in children:
+        if child == release:
+            continue
+        path = os.path.join(root, child)
+        if not RELEASE_PATTERN.match(child):
+            continue
+        if _release_dir_reason(path, child, plugin_name) == "":
+            stale.append(path)
+    return stale
+
+
+def prune(args: argparse.Namespace) -> Dict[str, Any]:
+    """清理旧版本生成目录；默认 dry-run，只删除“完全由本插件生成”的版本号目录。"""
+    root = resolve_path(args.root)
+    manifest = load_manifest()
+    plugin_name = manifest.get("name")
+    release = manifest.get("release")
+    if not isinstance(plugin_name, str) or not isinstance(release, str):
+        raise SystemExit("manifest.json 缺 name/release")
+    if os.path.islink(root) or not os.path.isdir(root):
+        raise SystemExit("prune root 必须是已存在的真实目录（非软链）：%s" % root)
+    # 祖先链上的软链（如 macOS 的 `/tmp` → `/private/tmp`）按真实目录处理；
+    # 待删目录自身与内部条目仍逐项拒绝软链。
+    root = os.path.realpath(root)
+    keep = set(args.keep or [])
+    keep.add(release)
+    removed: List[str] = []
+    skipped: List[Dict[str, str]] = []
+    for child in sorted(os.listdir(root)):
+        path = os.path.join(root, child)
+        if child in keep:
+            if RELEASE_PATTERN.match(child):
+                skipped.append({"path": path, "reason": "当前或显式保留的版本"})
+            continue
+        reason = _release_dir_reason(path, child, plugin_name)
+        if reason:
+            if RELEASE_PATTERN.match(child):
+                skipped.append({"path": path, "reason": reason})
+            continue
+        if not args.apply:
+            removed.append(path)
+            continue
+        # 删除前复核一次，避免检查与删除之间被替换。
+        reason = _release_dir_reason(path, child, plugin_name)
+        if reason:
+            skipped.append({"path": path, "reason": reason})
+            continue
+        shutil.rmtree(path)
+        removed.append(path)
+    result: Dict[str, Any] = {
+        "root": root,
+        "release": release,
+        "dry_run": not args.apply,
+        "removed": removed,
+        "skipped": skipped,
+    }
+    if removed and args.apply:
+        result["note"] = (
+            "已删除旧版本生成目录；若该版本仍 apply 在某个宿主配置里，它已无法再按旧清单卸载，"
+            "请用当前版本重新 generate/apply 覆盖。"
+        )
+    return result
 
 
 def _iter_entries(value: Any) -> List[Dict[str, Any]]:
@@ -615,8 +761,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     generate_parser.add_argument("--host", choices=("antigravity", "codex", "dsh", "pi"), required=True)
     generate_parser.add_argument("--plugin-root", required=True)
     generate_parser.add_argument("--skill-root", required=True)
-    generate_parser.add_argument("--output", required=True)
-    generate_parser.add_argument("--mode", choices=("probe", "enforce"), default="probe")
+    output_target = generate_parser.add_mutually_exclusive_group(required=True)
+    output_target.add_argument("--output", default=None)
+    output_target.add_argument("--output-root", default=None)
+    generate_parser.add_argument("--mode", choices=("probe", "enforce"), default="enforce")
     apply_parser = subparsers.add_parser("apply")
     apply_parser.add_argument("--target", required=True)
     apply_parser.add_argument("--source", default=None)
@@ -625,6 +773,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     uninstall_parser.add_argument("--target", required=True)
     uninstall_parser.add_argument("--manifest", default=None)
     uninstall_parser.add_argument("--source", default=None)
+    prune_parser = subparsers.add_parser("prune")
+    prune_parser.add_argument("--root", required=True)
+    prune_parser.add_argument("--keep", action="append", default=None)
+    prune_parser.add_argument("--apply", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -636,6 +788,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         result = generate(args)
     elif args.command == "apply":
         result = apply_config(args)
+    elif args.command == "prune":
+        result = prune(args)
     else:
         result = uninstall(args)
     print(json.dumps(result, ensure_ascii=False, indent=2))

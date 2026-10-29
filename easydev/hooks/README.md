@@ -22,7 +22,7 @@ Plugin 的目标是把可观测、可机器判断的安全与交接检查下沉�
 | `paths.py` | 仓库根、路径/patch 提取、基线只读核对 |
 | `models.py` | 唯一模型 schema/validator；`scripts/check.sh` 与运行时共用 |
 | `transcripts.py` | 宿主 transcript 的只读读取归因 |
-| `install.py` | 生成配置、显式 `apply` 合并、卸载 |
+| `install.py` | 生成配置、显式 `apply` 合并、卸载、清理旧版本生成目录（`prune`） |
 | `pi/index.ts`、`index.ts` | pi 薄适配器与生成入口 |
 | `templates/` | Antigravity / Codex / DSH 原生事件注册模板 |
 | `manifest.json` | Plugin 名、release、内部 protocol 与分发文件清单 |
@@ -31,18 +31,17 @@ Plugin 分发不包含 `tests/` 与 Skill 文件；安装器也不会安装它�
 
 ## 安装（默认只生成，不碰宿主配置）
 
-先人工把本目录复制到一个受信位置，例如 `~/.local/share/easydev-hooks/1.4.2/`，然后用同目录 `install.py` 生成配置：
+先人工把本目录复制到一个受信位置，然后用同目录 `install.py` 生成配置。插件根推荐用**固定路径**（升级就替换文件，路径不变）；pi 的插件根同时是扩展目录，必须固定为 `~/.pi/agent/extensions/easydev-hooks`：
 
 ```bash
-python3 ~/.local/share/easydev-hooks/1.4.2/install.py generate \
+python3 ~/.local/share/easydev-hooks/install.py generate \
   --host codex \
-  --plugin-root ~/.local/share/easydev-hooks/1.4.2 \
+  --plugin-root ~/.local/share/easydev-hooks \
   --skill-root ~/.agents/skills/easydev \
-  --output /tmp/easydev-hooks-codex \
-  --mode probe
+  --output-root ~/.local/share/easydev-hooks/config
 ```
 
-`--output` 是生成目录，不是宿主配置；`generate` 只写这里（`--host pi` 例外，见下）。生成物包含：
+`--output-root <root>` 把生成物固定写到 `<root>/<host>/`（推荐）：同一路径重新生成只覆盖本插件自己的文件，升级不再堆积 `<root>/<X.Y.Z>/` 版本目录。`--output <dir>` 仍保留，用于显式指定一个独立生成目录（两者互斥）。生成物包含：
 
 - `<host>-hooks.json`：可直接合并进对应宿主的 hooks 配置；
 - `install-context.json`：Python 核心需要的绝对路径、Host、模式、Skill 根与**绝对解释器路径**（`python` 字段）；
@@ -52,7 +51,24 @@ python3 ~/.local/share/easydev-hooks/1.4.2/install.py generate \
 
 解释器、`core.py` 与 context 路径都会逐项按 POSIX shell 规则引用；pi 走 `execFile`/`spawn` 的 argv，不经过 shell，并默认使用生成物记录的绝对解释器路径而不是 PATH 里的 `python3`。生成物含本机绝对路径，不能直接提交为可搬迁的发布配置。
 
-**先 probe 后 enforce**：`probe` 只记录事件名、工具名、字段名/类型、能力缺项和判定代码，不记录 prompt、命令、补丁、路径正文、工具结果或凭据；确认宿主真实消费输出后，再用 `--mode enforce` 重新生成。
+**默认 `enforce`**：不带 `--mode` 就是真正拦截（危险 Git、reviewer 写、脏目标、模型配置与交接缺项等）；`--mode probe` 只记录事件名、工具名、字段名/类型、能力缺项和判定代码，不记录 prompt、命令、补丁、路径正文、工具结果或凭据，适合首次接入尚未真实 probe 的宿主。模式写在生成命令与 `install-context.json` 里：**切换模式后必须重新 `apply`**，否则宿主仍用旧命令。
+
+### 升级与清理
+
+升级分两步：用新版本替换插件根的文件，再用同一 `--output-root` 重新生成。命令路径不变时 `apply` 报告 `changed=false`，无需重跑；只有 `--mode`、解释器或插件根变了才需要重新 `apply`。
+
+若仍按版本号目录保存插件副本（如 `~/.local/share/easydev-hooks/1.4.3/`），或历史上用过 `<root>/<X.Y.Z>/` 布局，旧目录可显式清理：
+
+```bash
+# 默认 dry-run，只列出可清理项；加 --apply 才删除
+python3 ~/.local/share/easydev-hooks/install.py prune \
+  --root ~/.local/share/easydev-hooks/config
+# 需要留一两个版本比对时
+python3 ~/.local/share/easydev-hooks/install.py prune \
+  --root ~/.local/share/easydev-hooks/config --keep 1.4.2 --apply
+```
+
+`prune` 只删“完全由本插件生成”的版本号目录：目录名必须是 `X.Y.Z`、每个宿主子目录必须带 `name`/`release` 对得上的 `install-manifest.json`，且不能有未知文件、未知子目录或任何软链；不满足就跳过并列原因。删除后该版本的 `uninstall` 清单不再可用——若旧版本仍 apply 在某个宿主配置里，先用旧清单卸载或用当前版本重新 `apply` 覆盖。
 
 ### 合并到宿主
 
@@ -60,14 +76,14 @@ python3 ~/.local/share/easydev-hooks/1.4.2/install.py generate \
 
 ```bash
 # 默认用法：清单从 --source 同目录的 install-manifest.json 读取
-python3 ~/.local/share/easydev-hooks/1.4.2/install.py apply \
+python3 ~/.local/share/easydev-hooks/install.py apply \
   --target <repo>/.codex/hooks.json \
-  --source /tmp/easydev-hooks-codex/codex-hooks.json
+  --source ~/.local/share/easydev-hooks/config/codex/codex-hooks.json
 
 # 清单不在默认位置时显式指定
-python3 ~/.local/share/easydev-hooks/1.4.2/install.py apply \
+python3 ~/.local/share/easydev-hooks/install.py apply \
   --target <repo>/.codex/hooks.json \
-  --manifest /tmp/easydev-hooks-codex/install-manifest.json
+  --manifest ~/.local/share/easydev-hooks/config/codex/install-manifest.json
 ```
 
 | 宿主 | 挂载 | 生效与能力差异 |
@@ -122,9 +138,9 @@ Hook 默认对所有会话生效，因此每个入口先做可信激活判定，
 ## 卸载
 
 ```bash
-python3 ~/.local/share/easydev-hooks/1.4.2/install.py uninstall \
+python3 ~/.local/share/easydev-hooks/install.py uninstall \
   --target <repo>/.codex/hooks.json \
-  --manifest /tmp/easydev-hooks-codex/install-manifest.json
+  --manifest ~/.local/share/easydev-hooks/config/codex/install-manifest.json
 ```
 
 只移除仍与清单摘要一致的条目：用户改过的条目与其他 hooks 原样保留，重复卸载幂等（第二次 `changed=false`）；含空格/单引号/`$`/反引号的 Plugin 根也能识别。随后按宿主要求重载/重启。回滚顺序：先解除宿主注册（pi 移除扩展目录后 `/reload`），再删除独立 Plugin 安装目录。不要只删 Python 核心而留下仍加载的 TS 扩展。任务目录、`baseline/`、自动快照与 Hook 私有状态默认保留；确认无需恢复后再由用户清理，不删除未知 owner 或链接目标。

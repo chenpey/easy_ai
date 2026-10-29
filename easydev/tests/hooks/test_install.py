@@ -715,5 +715,198 @@ class ApplyManifestTests(HookCase):
         self.assertEqual(value["custom"], {"keep": True})
 
 
+class GenerateLayoutAndPruneTests(HookCase):
+    """1.4.3：默认 enforce、`--output-root` 稳定布局、旧版本生成目录清理。"""
+
+    host = "codex"
+
+    def _install(self, *args: str) -> dict:
+        completed = subprocess.run(
+            [sys.executable, str(INSTALL), *args],
+            capture_output=True,
+            text=True,
+            env=clean_env(),
+            timeout=60,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def _generate(
+        self,
+        output: Path | None = None,
+        output_root: Path | None = None,
+        host: str = "codex",
+        mode: str | None = None,
+    ) -> dict:
+        args = [
+            "generate",
+            "--host",
+            host,
+            "--plugin-root",
+            str(HOOKS_ROOT / "hooks"),
+            "--skill-root",
+            str(self.skill),
+        ]
+        if output is not None:
+            args += ["--output", str(output)]
+        else:
+            args += ["--output-root", str(output_root)]
+        if mode is not None:
+            args += ["--mode", mode]
+        return self._install(*args)
+
+    def _old_release(self, config_root: Path, version: str, host: str = "codex") -> Path:
+        """模拟上一代 release 留下的生成目录：目录名与清单 release 一致。"""
+        target = config_root / version / host
+        self._generate(output=target, host=host, mode="enforce")
+        manifest_path = target / "install-manifest.json"
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["release"] = version
+        manifest_path.write_text(json.dumps(value), encoding="utf-8")
+        context_path = target / "install-context.json"
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+        context["version"] = version
+        context_path.write_text(json.dumps(context), encoding="utf-8")
+        return config_root / version
+
+    def test_generate_defaults_to_enforce_and_uses_stable_layout(self) -> None:
+        config_root = self.root / "config"
+        result = self._generate(output_root=config_root)
+        self.assertEqual(result["mode"], "enforce")
+        self.assertEqual(Path(result["output"]), config_root / "codex")
+        self.assertEqual(result["stale"], [])
+        context = json.loads((config_root / "codex" / "install-context.json").read_text(encoding="utf-8"))
+        self.assertEqual(context["mode"], "enforce")
+        # 再次生成同一稳定目录：原地覆盖，不产生版本号目录。
+        self._generate(output_root=config_root, mode="probe")
+        self.assertEqual(sorted(item.name for item in config_root.iterdir()), ["codex"])
+        context = json.loads((config_root / "codex" / "install-context.json").read_text(encoding="utf-8"))
+        self.assertEqual(context["mode"], "probe")
+
+    def test_generate_requires_exactly_one_output_target(self) -> None:
+        base = [
+            sys.executable,
+            str(INSTALL),
+            "generate",
+            "--host",
+            "codex",
+            "--plugin-root",
+            str(HOOKS_ROOT / "hooks"),
+            "--skill-root",
+            str(self.skill),
+        ]
+        both = subprocess.run(
+            base + ["--output", str(self.root / "a"), "--output-root", str(self.root / "b")],
+            capture_output=True,
+            text=True,
+            env=clean_env(),
+            timeout=60,
+        )
+        self.assertEqual(both.returncode, 2)
+        neither = subprocess.run(base, capture_output=True, text=True, env=clean_env(), timeout=60)
+        self.assertEqual(neither.returncode, 2)
+        self.assertFalse((self.root / "a").exists())
+
+    def test_generate_reports_stale_release_dirs(self) -> None:
+        config_root = self.root / "config"
+        old = self._old_release(config_root, "0.9.0")
+        result = self._generate(output_root=config_root)
+        self.assertEqual(result["stale"], [str(old)])
+
+    def test_prune_dry_run_then_apply_keeps_current_and_keep(self) -> None:
+        config_root = self.root / "config"
+        old = self._old_release(config_root, "0.9.0")
+        kept = self._old_release(config_root, "0.9.1")
+        self._generate(output_root=config_root)
+
+        dry = self._install("prune", "--root", str(config_root))
+        self.assertTrue(dry["dry_run"])
+        self.assertEqual(dry["removed"], [os.path.realpath(old), os.path.realpath(kept)])
+        self.assertTrue(old.is_dir() and kept.is_dir())
+
+        applied = self._install("prune", "--root", str(config_root), "--keep", "0.9.1", "--apply")
+        self.assertFalse(applied["dry_run"])
+        self.assertEqual(applied["removed"], [os.path.realpath(old)])
+        self.assertFalse(old.exists())
+        self.assertTrue(kept.is_dir())
+        self.assertIn("note", applied)
+        # 当前 release 与稳定布局的宿主目录都不能被删。
+        self.assertTrue((config_root / "codex").is_dir())
+        self.assertEqual(
+            [item["reason"] for item in applied["skipped"]],
+            ["当前或显式保留的版本"],
+        )
+
+    def test_prune_skips_user_content_symlinks_and_foreign_manifests(self) -> None:
+        config_root = self.root / "config"
+        notes = self._old_release(config_root, "0.8.0")
+        (notes / "codex" / "NOTES.md").write_text("mine\n", encoding="utf-8")
+        foreign = config_root / "0.8.1" / "codex"
+        foreign.mkdir(parents=True)
+        (foreign / "install-manifest.json").write_text(
+            json.dumps({"name": "other-hooks", "release": "0.8.1"}), encoding="utf-8"
+        )
+        unexpected = config_root / "0.8.2"
+        (unexpected / "notes").mkdir(parents=True)
+        (unexpected / "notes" / "a.txt").write_text("x\n", encoding="utf-8")
+        real = config_root / "real"
+        (real / "codex").mkdir(parents=True)
+        (real / "codex" / "install-manifest.json").write_text(
+            json.dumps({"name": "easydev-hooks", "release": "0.8.3"}), encoding="utf-8"
+        )
+        (config_root / "0.8.3").symlink_to(real)
+
+        result = self._install("prune", "--root", str(config_root), "--apply")
+        self.assertEqual(result["removed"], [])
+        reasons = " ".join(item["reason"] for item in result["skipped"])
+        self.assertIn("未知文件", reasons)
+        self.assertIn("不是本插件生成", reasons)
+        self.assertIn("未知子目录", reasons)
+        self.assertIn("软链", reasons)
+        for path in (notes, config_root / "0.8.1", unexpected, config_root / "0.8.3"):
+            self.assertTrue(os.path.lexists(path), path)
+
+    def test_prune_rejects_symlinked_root(self) -> None:
+        real_root = self.root / "real-config"
+        real_root.mkdir()
+        link = self.root / "link-config"
+        link.symlink_to(real_root)
+        completed = subprocess.run(
+            [sys.executable, str(INSTALL), "prune", "--root", str(link)],
+            capture_output=True,
+            text=True,
+            env=clean_env(),
+            timeout=60,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("非软链", completed.stderr)
+
+    def test_upgrade_never_overwrites_user_modified_entry(self) -> None:
+        config_root = self.root / "config"
+        target = self.root / "hooks.json"
+        target.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+        first = self._generate(output_root=config_root)
+        self._install("apply", "--target", str(target), "--source", first["config"])
+        value = json.loads(target.read_text(encoding="utf-8"))
+        entry = [item for item in value["hooks"]["PreToolUse"] if "core.py" in json.dumps(item)][0]
+        entry["hooks"][0]["command"] += " --user-edit"
+        target.write_text(json.dumps(value), encoding="utf-8")
+        edited = json.dumps(entry, sort_keys=True)
+
+        # 升级 = 同一稳定目录重新生成 + 再次 apply。
+        upgraded = self._generate(output_root=config_root, mode="enforce")
+        failed = subprocess.run(
+            [sys.executable, str(INSTALL), "apply", "--target", str(target), "--source", upgraded["config"]],
+            capture_output=True,
+            text=True,
+            env=clean_env(),
+            timeout=60,
+        )
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("同标识", failed.stderr)
+        after = json.dumps(json.loads(target.read_text(encoding="utf-8")), sort_keys=True)
+        self.assertIn(edited, after)
+
+
 if __name__ == "__main__":
     unittest.main()
