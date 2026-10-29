@@ -11,9 +11,9 @@
 - **非法转义与门禁**：`hooks/shell.py` 的 `_strip_line_continuations` 文档字符串写成 `\``，在 Python 3.12 起是非法转义（`SyntaxWarning: invalid escape sequence '\`'`，CI 日志已在导入时出现，未来版本会变硬错误；`ast.parse` 不报，只有真编译才暴露）。改写为 `\\``，渲染结果与语义不变（仍是 Bash 行续接的说明文字），无行为改动。`scripts/check.sh` §6b 的 Python 检查从 Plugin 脚本扩到全仓库 `*.py`，并在 `warnings.catch_warnings()` + `simplefilter("error", SyntaxWarning)` 下真编译一次，把非法转义这类编译期问题挡在本地与 CI（3.12 之前不会触发，CI 的 3.12 生效）。
 - **版本**：根 README、`easydev/README.md`、`SKILL.md` metadata、本 CHANGELOG、`hooks/manifest.json` 与 `hooks/README.md` 的安装示例路径同步为 1.4.2；`tests/hooks/support.py` 的安装上下文夹具版本同步；规则文档总量未变（131715 字节，棘轮与 1.4.0 的双写数值不变）。
 
-验证：修复前用 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`（无 ripgrep）复现 CI 的同一失败（`AssertionError: 'app.py' not found in ''`），修复后同一环境用例通过；装有 ripgrep 的本机仍走真实执行分支，将断言改为 `app.pyx` 后用例失败、恢复后通过。转义：本机 `python3.12 -W error::SyntaxWarning` 全仓库 `py_compile` 在修复前报 `hooks/shell.py:299: invalid escape sequence '\`'`、修复后 0 个告警；把临时 `x = "\d"` 文件放进仓库后，3.12 下 `check.sh` rc=1 并点名该文件，删除后恢复 rc=0。本机 macOS、无 PyYAML（降级分支）：`check.sh` rc=0（§3 版本一致 1.4.2，§10 总量 131715 ≤ 131715）、`smoke-install.sh` 通过（本机沙箱拒绝 `mktemp -d` 建临时 HOME，改用脚本自带的 `SMOKE_TMP` 指向工作区临时目录，脚本不删除调用方目录，测完手工清理）、`version-gate`/`design-gate`/`audit-overflow`/`public-contract-callers` 通过（11 个伪修复均被拒）、`test_role_metric` 18 项、`agent_runner` 71 项、`swebench` 56 项、`hooks` 758 项全部 OK。
+验证：修复前用 `PATH=/usr/bin:/bin:/usr/sbin:/sbin`（无 ripgrep）复现 CI 的同一失败（`AssertionError: 'app.py' not found in ''`），修复后同一环境用例通过；装有 ripgrep 的本机仍走真实执行分支，将断言改为 `app.pyx` 后用例失败、恢复后通过。转义：本机 `python3.12 -W error::SyntaxWarning` 全仓库 `py_compile` 在修复前报 `hooks/shell.py:299: invalid escape sequence '\`'`、修复后 0 个告警；把临时 `x = "\d"` 文件放进仓库后，3.12 下 `check.sh` rc=1 并点名该文件，删除后恢复 rc=0。本机 macOS、无 PyYAML（降级分支）：`check.sh` rc=0（§3 版本一致 1.4.2，§10 总量 131715 ≤ 131715）、`smoke-install.sh` 通过（本机沙箱拒绝 `mktemp -d` 建临时 HOME，改用脚本自带的 `SMOKE_TMP` 指向工作区临时目录，脚本不删除调用方目录，测完手工清理）、`version-gate`/`design-gate`/`audit-overflow`/`public-contract-callers` 通过（11 个伪修复均被拒）、`test_role_metric` 18 项、`agent_runner` 71 项、`swebench` 56 项、`hooks` 758 项全部 OK。推送后 CI run `40794067670` 11/11 项通过（`headSha` 即本版本提交，含 3.12 下的全仓库编译期告警门禁与安装 ripgrep 后的 `rg` 正例真实执行）。
 
-未验证：未取得推送后的 CI 运行结果，`install_ripgrep` 步骤只在 CI 生效；无 ripgrep 的机器上该正例只覆盖守卫的放行判定，真实执行证据仍只来自装有 ripgrep 的环境。
+未验证：无 ripgrep 的机器上该正例只覆盖守卫的放行判定，真实执行证据仍只来自装有 ripgrep 的环境；本版未在四宿主真实进程做 Hook 端到端 probe。
 
 ## 1.4.1 更新说明（2026-10-28）
 
