@@ -170,6 +170,8 @@ class T02NumericRedirectTests(HookCase):
         (self.repo / "2").write_text("USER-SENTINEL\n", encoding="utf-8")
 
     def test_numeric_filenames_are_file_targets_for_developer(self) -> None:
+        # 拒绝必须来自“缺手工基线”而不是别的副作用：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.activate("s1")
         for index, (command, target) in enumerate(
             (("printf x > 1", "baseline/1"), ("printf x >> 2", "baseline/2"), ("printf x 2> 1", "baseline/1"))
@@ -216,6 +218,7 @@ class T03CdRedirectTests(HookCase):
         (self.repo / "src" / "app.py").write_text("SRC-USER\n", encoding="utf-8")
 
     def test_cd_same_segment_redirect_uses_pre_cd_cwd(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         for index, command in enumerate(("cd . > app.py", "cd src > app.py", "cd src > ./app.py")):
             with self.subTest(command=command):
@@ -625,6 +628,8 @@ class T11InputEvidenceLockScopeTests(CodexTranscriptMixin, StateHelpers, HookCas
 
     def setUp(self) -> None:
         super().setUp()
+        # 并发写必须因“缺手工基线”被拒绝，而不是因锁忙降级放行。
+        self.use_manual_baseline()
         self.activate("s1")
         self.touch_dirty("src/app.py", "USER CONTENT\n")
         self.reads = self.root / "transcript-reads"

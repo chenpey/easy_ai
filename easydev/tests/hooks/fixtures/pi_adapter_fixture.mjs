@@ -6,7 +6,8 @@
  * 核心。夹具本身不实现任何 EasyDev 规则，只回报适配器返回值。
  *
  * 用法：node pi_adapter_fixture.mjs '<json spec>'
- * spec: {entry, plugin, repo, session, activation, calls: [{toolName, input, toolCallId}]}
+ * spec: {entry, plugin, repo, session, activation, transcript?, calls: [{toolName, input, toolCallId}]}
+ * transcript 可指定为目录等非普通文件，用来制造核心的降级诊断。
  */
 import { pathToFileURL } from "node:url";
 
@@ -22,7 +23,7 @@ const ctx = {
   cwd: spec.repo,
   sessionManager: {
     getSessionId: () => spec.session,
-    getSessionFile: () => "",
+    getSessionFile: () => spec.transcript || "",
   },
 };
 

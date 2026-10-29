@@ -158,22 +158,33 @@ class HookCase(unittest.TestCase):
     def write_context(self, **overrides: Any) -> None:
         context = {
             "protocol": 1,
-            "version": "1.4.3",
+            "version": "1.4.4",
             "host": self.host,
             "mode": "enforce",
             "state_root": str(self.state),
             "skill_root": str(self.skill),
             "repo_root": str(self.repo),
-            # 默认走显式手工任务根（旧严格核对路径），基线用例不再依赖隐式默认值；
-            # 自动快照路径由专项用例显式传 task_root="" 打开。
-            "task_root": str(self.manual_task_root()),
+            # 默认与生产一致：不配置 task_root，走自动快照路径。
+            # 需要旧严格核对路径（手工 baseline、逐层软链检查）的用例显式传
+            # task_root=str(self.make_task_root(...)) 或 manual_task_root()。
+            "task_root": "",
             "doc_paths": [],
         }
         context.update(overrides)
         self.context_path.write_text(json.dumps(context), encoding="utf-8")
 
+    def use_manual_baseline(self) -> Path:
+        """切到显式手工任务根（生产里由 --context task_root 打开）：缺合规 baseline 必须 deny。
+
+        默认上下文不配置 task_root，走自动快照；只有要证明旧严格核对路径（缺基线
+        必须拒绝、权限与逐层软链核对、旧根复用）的用例才调用它。
+        """
+        task_root = self.manual_task_root()
+        self.write_context(task_root=str(task_root))
+        return task_root
+
     def manual_task_root(self) -> Path:
-        """私有手工任务根（0700，不含 baseline/）：默认上下文用它，用例可自行改。"""
+        """私有手工任务根（0700，不含 baseline/）：use_manual_baseline 用它。"""
         root = self.root / "manual-task"
         if not root.exists():
             root.mkdir(mode=0o700)

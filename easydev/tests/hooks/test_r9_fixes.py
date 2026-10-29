@@ -89,6 +89,8 @@ class X01CommentLexicalStateTests(HookCase):
         return value
 
     def test_developer_names_real_target_behind_comment_quotes(self) -> None:
+        # 拒绝必须点名真实词法目标并指向缺手工基线：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.redirect_deny_cases()):
             with self.subTest(command=command):
@@ -142,6 +144,7 @@ class X01CommentLexicalStateTests(HookCase):
         )
 
     def test_single_quote_hash_and_fd_controls_unchanged(self) -> None:
+        self.use_manual_baseline()
         self.activate("dev")
         # 单引号内的 `\`+换行是数据，不是续接：目标是那个字面文件名。
         quoted = shell.analyze("printf x >&'1\\\n.txt'")

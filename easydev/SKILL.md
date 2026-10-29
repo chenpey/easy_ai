@@ -3,7 +3,7 @@ name: easydev
 description: >-
   编码、修复、重构、设计、计划、排障与审查；按风险选择 quick / normal / full。适用于 coding 或显式调用；纯解释及非编码请求不启动开发流程。
 metadata:
-  version: "1.4.3"
+  version: "1.4.4"
 ---
 
 # easydev

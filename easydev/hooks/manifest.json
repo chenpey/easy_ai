@@ -1,12 +1,13 @@
 {
   "name": "easydev-hooks",
-  "release": "1.4.3",
+  "release": "1.4.4",
   "protocol": 1,
   "description": "EasyDev 可选 Hook Plugin：四个宿主共用的 Python 共享核心与薄适配器。",
   "distribution": {
     "files": [
       "README.md",
       "manifest.json",
+      "__init__.py",
       "index.ts",
       "install.py",
       "core.py",

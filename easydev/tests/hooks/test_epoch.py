@@ -137,9 +137,82 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         self.assertEqual(child["role"], "reviewer")
         self.assertEqual(child["dispatch_id"], "D1")
 
+    def child_state(self, parent: str = "P") -> dict:
+        return [
+            state for state in self.actor_states().values() if state.get("parent_id") == parent
+        ][0]
+
+    def test_old_epoch_digest_does_not_ambiguous_current_dispatch(self) -> None:
+        """旧 epoch 同摘要分派不得把当前 epoch 的唯一候选降级为 role_only。"""
+        self.activate("P")
+        handoff = self.developer_handoff()
+        self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D1"))
+        # 父开始新任务（epoch 2），再用同一份交接正文分派：两份记录摘要相同。
+        self.allow(self.new_task_input("使用 easydev，开始另一个任务", "turn-2"))
+        self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D2"))
+        _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertNotIn("未匹配到有效分派记录", stderr)
+        child = self.child_state()
+        self.assertEqual(child["activation_scope"], "task_active")
+        self.assertEqual(child["dispatch_id"], "D2")
+        self.assertEqual(child["role"], "developer")
+        self.assertEqual(int(child["epoch"]), 2)
+        # 绑定落在当前 epoch 的任务上：写序列记入当前任务。
+        self.write_path("C", "cw", content="value = 8\n")
+        self.assertEqual(self.total_write_seq(), 1)
+
+    def test_current_epoch_ambiguous_dispatch_stays_role_only_for_developer(self) -> None:
+        self.activate("P")
+        handoff = self.developer_handoff()
+        self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D1"))
+        self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D2"))
+        _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("未匹配到有效分派记录", stderr)
+        child = self.child_state()
+        self.assertEqual(child["activation_scope"], "role_only")
+        self.assertFalse(child.get("dispatch_id"))
+
+    def test_current_epoch_ambiguous_dispatch_stays_role_only_for_reviewer(self) -> None:
+        self.activate("P")
+        handoff = self.reviewer_handoff()
+        self.allow(self.dispatch_payload("P", handoff, tool_id="D1"))
+        self.allow(self.dispatch_payload("P", handoff, tool_id="D2"))
+        _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("未匹配到有效分派记录", stderr)
+        child = self.child_state()
+        self.assertEqual(child["activation_scope"], "role_only")
+        self.assertFalse(child.get("dispatch_id"))
+
 
 class CodexEpochBindingTests(EpochBindingMixin, HookCase):
     host = "codex"
+
+    def test_unique_fallback_ignores_old_epoch_dispatches(self) -> None:
+        """无 dispatch_id/prompt 的 SubagentStart 只认当前 epoch 的唯一候选。"""
+        self.activate("P")
+        handoff = self.reviewer_handoff()
+        self.allow(self.dispatch_payload("P", handoff, tool_id="R1"))
+        self.allow(
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "P",
+                "prompt": "使用 easydev，开始另一个任务",
+                "cwd": str(self.repo),
+                "turn_id": "turn-2",
+            }
+        )
+        self.allow(self.dispatch_payload("P", handoff, tool_id="R2"))
+        self.allow(self.child_start_payload("agent-1"))
+        bound = [state for state in self.actor_states().values() if state.get("dispatch_id")]
+        self.assertEqual(len(bound), 1)
+        self.assertEqual(bound[0]["dispatch_id"], "R2")
+        self.assertEqual(bound[0]["activation_scope"], "task_active")
+        # 完成事件计入当前 epoch 的 review checkpoint。
+        self.allow(self.child_done_payload("P", dispatch_id="R2", agent="agent-1"))
+        self.assertTrue(self.any_completed_review())
 
     def test_child_start_binding_then_epoch_switch_is_retired(self) -> None:
         self.activate("P")

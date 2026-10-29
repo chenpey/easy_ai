@@ -2,6 +2,29 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.4 更新说明（2026-10-29）
+
+按独立深度审查（`review-2026-10-29-v1.md`，针对 1.4.1 的 20 条确定发现：P1×2、P2×11、P3×7）逐一复核并修复；在 1.4.3 之后发布。规则正文（`SKILL.md` / `references/`）未增删一字，总量仍为 131715 字节。
+
+- **P1 复合结构绕过（Hook）**：`shell.py` 新增有限复合结构解析（`( list )`、`{ list; }`、`if/elif/else/fi`、`while/until/do/done`、`for … in …; do…done`、`case…esac`、命令位 `!`），括号与控制流关键字按真实语法参与分析，不再把 `(git reset --hard)` 这类命令算成未知词；能拆解的复合结构照常进入 Git/只读/读写的既有管线。只有「已识别复合结构但拆解失败」进入新的窄类别 `compound_unresolved`：reviewer 只读 `deny` 并提示改用简单命令，其他会话告警放行；其余既有 `opaque`/未知结构仍维持原 fail-open 口径。`tokenize` 增加 `raw_source`，结构扫描与既有词法状态（注释止于物理行、引号内字面、单引号外反斜杠+换行在运算符组合前消除）共用一份状态。
+- **P1 回放守卫 `~user` 绕过**：`replay_read_guard._resolve` 在主目录展开后若仍残留 `~` 一律 `GuardFailure("target_unresolved")`，不查 `getpwnam`、不回显目标；`~/x`、`$HOME/x` 的既有展开与归属规则不变。
+- **P2 命令替换复杂度**：`_expand_substitutions` 改为单趟栈式配对（未闭合只丢弃自身、提升完整后代、非重叠切片），消除未闭合 `$(` 的二次方退化；提取移到 `_strip_redirects` 与前置 `KEY=VALUE` 剥离**之前**，覆盖重定向目标、无命令名重定向、`<<<`、`>&/<&` 动态词、前置/纯赋值、`env/sudo/command/exec/shell -c/eval` 外层词、find/sort 带值选项、`for`-in 值、`case` selector/pattern，关闭「替换源码被过滤后漏扫」这一整类。
+- **P2 cwd 已知性贯通**：`analyze()` / `reviewer_violation()` / `read_command_paths()` 增加末位可选 `cwd_known`（位置调用兼容，无 CLI/协议变化）；`(路径, 已知性)` 成对跨替换、包装、控制结构与短路出口传递，未知 cwd 下相对读记 `read_unknown`、相对写记 `write_unknown` 且目标不完整，绝对目标仍可判定；回放守卫 `analyze(command)` 的既有 `(None, True)` 语义不变。
+- **P2 Git 判定**：`git push` 的任意 `+ref`（含无冒号的 `+main`）一律判强推（`--dry-run` 仍豁免）；`git checkout` 按已知选项布局取位置参数，`.`/`..`、绝对路径与可信 cwd 下确实存在的相对路径判为路径还原并 `deny`，普通分支切换仍放行，未知选项布局不猜、无 cwd 时不用进程 cwd 兜底；`_git_actions` 支持连续 `-C` 并把有效 cwd 带到规则侧（`_prelock_deny`、正式规则、reviewer 调用点都补传可信 cwd）。
+- **P2 find/sort 读写分离**：`find -delete` 记写目标并置 `write_unknown`；`find -exec/-execdir/-ok` 同时置 `write_unknown` 与 `read_unknown`（参数不再当搜索根，回放守卫因此 fail-closed）；`sort` 纳入只读分类，`-o/--output` 记写目标且该值不进读取集合，缺值时不完整。
+- **P2 中文语境显式调用**：`EXPLICIT_INVOCATION_RE` 边界改用 ASCII 字符类，`请使用 easydev`、`帮我用$easydev`、`开始使用easydev` 都能激活守卫；ASCII 连写（如 `easydev_helpers`）仍不误判。
+- **P2 分派 epoch**：`_match_dispatch` 的摘要匹配与唯一兜底两个候选推导式补 `epoch` 过滤，旧 epoch 的同摘要分派不再把新 epoch 的 child 降级为 `role_only`。
+- **P2 激活作用域文档化**：`hooks/README.md` 明确状态与激活按仓库（含 worktree）分区，跨仓库需各自激活、不继承保护（实现未改）。
+- **P2 测试默认上下文**：`tests/hooks/support.py` 默认改为与生产一致（不配 `task_root`，走自动快照），旧手工核对路径用例改用新的 `use_manual_baseline()` 显式 opt-in，缺基线必须 `deny` 与权限/软链核对的断言全部保留。
+- **P2 Git wrapper 自递归**：测试夹具在改写 `PATH` **之前**用 `shutil.which("git")` 解析真 Git 绝对路径，缺失时 skip，不再生成会 exec 自身的 wrapper。
+- **P2 pi 适配器 stderr**：stderr 改为 `pipe` 并做有界聚合（8192 字节捕获、2048 字节输出上限），每次调用至多一条汇总告警，只披露白名单类别，不回显路径、payload 或异常 stack；spawn 失败/非 0 退出/信号终止/超时/输出超限都可见且仍 fail-open 放行。
+- **P2 fail-open 宿主编码**：`core.run()` 的三处（输入超限/非法 JSON、协议故障、内部异常）改经 `encode()` 输出，Antigravity `PreToolUse` 得 `{"decision": "allow"}`、DSH 得 `{"permissionDecision": "allow"}`、pi `input` 得 `{"action": "continue"}`，不再是空对象。
+- **P3 六项**：`models.select` 对出现但为空/非字符串的 `models_file` 直接失败（不再静默回退）；`_check_baseline` 不再对正常首跑报「首次运行或状态丢失」；`check.sh` §6 逐级校验升级示例并修正诊断索引；`manifest.json` 分发清单补 `__init__.py`，`test_install.py` 断言源分发目录文件集与清单一致；`read_health` 缺失返回 `health_unreadable` 且安装时用 `O_EXCL` 初始化空健康文件（不覆盖已有）；`_evidence_lines` 对同时含冻结模板字面量的「模板如下」行不再整行丢弃；`Locks.acquire` 中途失败逆序释放已获 fd 后再抛原异常。
+
+验证（本机 macOS、无 PyYAML，基线 1.4.3 / `4fe1ec0`）：`bash scripts/check.sh` rc=0（§3 版本一致 1.4.4、§10 总量 131715 ≤ 131715）；`tests/hooks` 898 项 OK、`tests/experiments/agent_runner` 77 项 OK、`swebench` 56 项 OK、`test_role_metric` 18 项 OK；`public-contract-callers`/`version-gate`/`design-gate`/`audit-overflow` 四个 `run.sh` 全部 rc=0。反例逐条留红绿：复合结构的主代理/reviewer 判定、未闭合替换的 watchdog 耗时、`printf x >$(…git reset --hard…)` 与 `OUT=$(…) true` 的替换漏扫回归、checkout 分支切换与路径还原对照、find/sort 读写目标分离、中文触发词、旧 epoch 同摘要分派、默认自动快照首写原字节、`~root` 拒绝、pi stderr 单条汇总、三类 fail-open 的宿主形状、锁失败后重获、manifest 文件集。
+
+未验证：四宿主真实 Hook 信任、stdin 结构与输出消费仍需各自 probe（本版未在真实 Antigravity/DSH 进程执行）；pi 适配器仍只经 Node 夹具与字符串门禁验证，未做 TS 类型检查；Windows ACL/PowerShell 未验证；本版未取得 CI 运行结果；`transcripts.py` 的 Antigravity `GENERIC` 行错位与 `GIT_TIMEOUT_SECONDS=0.3` 大仓库降级仍是已知未验证风险。
+
 ## 1.4.3 更新说明（2026-10-29）
 
 修掉生成物残留与默认模式两个使用问题：此前 `generate --output <root>/<release>/<host>` 的版本号目录由调用方手工选择，脚本从不清理旧目录，升级后 1.4.1/1.4.2 这类历史生成物会一直留在配置根下并容易被误读（其中还可能有 probe 模式的旧 context）。本版把 `generate` 默认改为 `enforce`，新增 `--output-root` 稳定布局与 `prune` 清理旧版本目录；`apply`/`uninstall` 的“不动用户改动”语义不变（同标识但内容不同直接非零退出并保留原文件）。规则正文与预算未变，总量仍为 131715 字节。

@@ -85,6 +85,8 @@ class V01LineContinuationTests(HookCase):
         return value
 
     def test_developer_denies_continuation_redirect_targets(self) -> None:
+        # 拒绝必须点名真实词法目标并指向缺手工基线：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.REDIRECT_CASES):
             with self.subTest(command=command):
@@ -111,6 +113,7 @@ class V01LineContinuationTests(HookCase):
                 self.assertIn("Git", reason)
 
     def test_fd_duplication_and_numeric_targets_regress(self) -> None:
+        self.use_manual_baseline()
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
             with self.subTest(command=command):
@@ -238,6 +241,8 @@ class V02DirectSkillReadRestoreTests(object):
         )
 
     def test_direct_success_read_restores_new_epoch_and_old_caches_are_gone(self) -> None:
+        # 新 epoch 里旧任务留下的脏目标必须重新按手工基线核对，不能复用旧指纹。
+        self.use_manual_baseline()
         self.start_child_and_write()
         before = self.task_for_epoch(1)
         self.deactivate()

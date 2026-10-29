@@ -67,6 +67,8 @@ class U01FdWordRedirectTests(HookCase):
             )
 
     def test_developer_denies_fd_words_that_are_file_targets(self) -> None:
+        # 拒绝必须来自“缺手工基线”：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.activate("dev")
         for index, (command, target) in enumerate(self.FILE_TARGET_CASES):
             with self.subTest(command=command):
@@ -84,6 +86,7 @@ class U01FdWordRedirectTests(HookCase):
         self.assert_sentinels_intact()
 
     def test_multiple_fd_word_targets_do_not_hide_behind_fd_duplication(self) -> None:
+        self.use_manual_baseline()
         self.activate("dev")
         reason = self.deny(self.shell("dev", "printf x >&1.txt 2>&2log", tool_id="u01-multi"))
         self.assertIn("baseline/", reason)
@@ -98,6 +101,7 @@ class U01FdWordRedirectTests(HookCase):
 
     def test_numeric_file_targets_without_ampersand_stay_protected(self) -> None:
         # T02 的既有修复不得因为放宽 `>&word` 而退回：`> 1`/`>> 1`/`2> 1` 仍是文件。
+        self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(("printf x > 1", "printf x >> 1", "printf x 2> 1")):
             with self.subTest(command=command):

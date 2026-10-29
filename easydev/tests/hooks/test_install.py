@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -241,6 +242,68 @@ class InstallTests(HookCase):
         ]
 
 
+# `generate --host pi` 会把 `install-context.json` 写回 `--plugin-root`（含源码目录），
+# `.DS_Store` 是 macOS 目录残留：两者都不是分发源，也不能因此让清单比较变空转。
+GENERATED_ARTIFACTS = frozenset({"install-context.json", ".DS_Store"})
+
+
+def distribution_source_files(source_root: Path, excluded_top: set) -> list:
+    """源分发目录里的正式文件集（相对路径，已排序）。"""
+    actual = []
+    for path in source_root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(source_root).as_posix()
+        if relative.split("/")[0] in excluded_top:
+            continue
+        if "__pycache__" in relative or relative.endswith(".pyc"):
+            continue
+        if path.name in GENERATED_ARTIFACTS:
+            continue
+        actual.append(relative)
+    return sorted(actual)
+
+
+class DistributionManifestTests(unittest.TestCase):
+    """P3-4：源分发目录的正式文件集必须与 manifest.files 完全一致，防止清单再漏文件。"""
+
+    def test_manifest_lists_exactly_the_distributed_files(self) -> None:
+        manifest = json.loads((HOOKS_ROOT / "hooks" / "manifest.json").read_text(encoding="utf-8"))
+        files = manifest["distribution"]["files"]
+        # 防真空转：清单必须仍是那个完整分发集，不能靠“两边都排除成空”通过。
+        for required in (
+            "README.md",
+            "manifest.json",
+            "__init__.py",
+            "core.py",
+            "index.ts",
+            "pi/index.ts",
+        ):
+            self.assertIn(required, files)
+        actual = distribution_source_files(
+            HOOKS_ROOT / "hooks", set(manifest.get("excludes") or [])
+        )
+        self.assertEqual(actual, sorted(files))
+
+    def test_generated_and_system_files_are_not_distribution_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "core.py").write_text("", encoding="utf-8")
+            (root / "pi").mkdir()
+            (root / "pi" / "index.ts").write_text("", encoding="utf-8")
+            (root / "install-context.json").write_text("{}", encoding="utf-8")
+            (root / ".DS_Store").write_bytes(b"")
+            (root / "__pycache__").mkdir()
+            (root / "__pycache__" / "core.cpython-39.pyc").write_bytes(b"")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_x.py").write_text("", encoding="utf-8")
+            # 排除只针对生成物/系统文件/非分发目录，正式文件仍全部保留。
+            self.assertEqual(
+                distribution_source_files(root, {"tests"}),
+                ["core.py", "pi/index.ts"],
+            )
+
+
 class DistributionLaunchTests(HookCase):
     """F04：只用 manifest 分发集构建随机命名 Plugin，从仓库外 cwd 启动。"""
 
@@ -396,6 +459,167 @@ class PiExtensionTests(HookCase):
         self.assertIsNone(status_result["value"])
         # 核心确实运行过：私有状态已由本次调用写出。
         self.assertTrue(any((self.state / "actors").glob("*.json")))
+        # 判定不变，告警通道也不影响返回值：每次工具调用至多一条汇总，且不含细节。
+        # 本用例刻意清空 PATH，Git 不可用，因此每次调用都会披露“核心有诊断”。
+        lines = self.warning_lines(completed.stderr)
+        self.assertEqual(len(lines), 3, completed.stderr)
+        for line in lines:
+            self.assertEqual(line.count("[easydev-hooks] warning"), 1, line)
+        self.assert_no_detail_leak(completed.stderr, "git reset --hard", "git status")
+
+    # ---- P2-10：降级告警通道 --------------------------------------------
+    def warning_lines(self, stderr: str) -> list:
+        return [
+            line for line in stderr.splitlines() if line.startswith("[easydev-hooks] warning")
+        ]
+
+    def run_fixture(
+        self,
+        plugin: Path,
+        calls: list,
+        transcript: str = "",
+        context_overrides: dict | None = None,
+    ) -> subprocess.CompletedProcess:
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node 不可用，无法运行 pi 适配夹具")
+        context_path = plugin / "install-context.json"
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+        context.update({"state_root": str(self.state), "repo_root": str(self.repo)})
+        context.update(context_overrides or {})
+        context_path.write_text(json.dumps(context), encoding="utf-8")
+        spec = {
+            "entry": str(plugin / "index.ts"),
+            "plugin": str(plugin),
+            "repo": str(self.repo),
+            "session": "pi-session",
+            "activation": "使用 easydev 执行只读 review，不要修改代码",
+            "transcript": transcript,
+            "calls": calls,
+        }
+        return subprocess.run(
+            [node, str(FIXTURE), json.dumps(spec)],
+            capture_output=True,
+            text=True,
+            cwd=str(self.root),
+            # 清空 PATH：适配器若回落 PATH 里的 python3 就起不来核心，从而暴露问题。
+            env=clean_env({"PATH": "/nonexistent"}),
+            timeout=120,
+        )
+
+    def assert_no_detail_leak(self, stderr: str, *sentinels: str) -> None:
+        """告警只许出现类别与固定文案：路径、解释器、payload、stack 都不许进 stderr。"""
+        for sentinel in sentinels:
+            self.assertNotIn(sentinel, stderr)
+        self.assertNotIn(str(self.root), stderr)
+        self.assertNotIn("core.py", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_spawn_failure_warns_once_per_call_and_still_allows(self) -> None:
+        plugin = self.build()
+        sentinel = self.root / "PY-SENTINEL"
+        completed = self.run_fixture(
+            plugin,
+            [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "git reset --hard"}}],
+            context_overrides={"python": str(sentinel / "python3")},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        value = json.loads(completed.stdout)
+        # 无法启动核心：仍然 fail-open 放行（高危 Git 也不阻断），不冒充“已核对”。
+        self.assertIsNone(value["results"][0]["value"])
+        lines = self.warning_lines(completed.stderr)
+        # input 与 tool_call 各一次核心调用，每次一条汇总。
+        self.assertEqual(len(lines), 2, completed.stderr)
+        for line in lines:
+            self.assertEqual(line.count("[easydev-hooks] warning"), 1, line)
+            self.assertIn("core 启动失败，已放行", line)
+        self.assert_no_detail_leak(completed.stderr, "PY-SENTINEL")
+
+    def test_core_diagnostics_outside_the_whitelist_are_hidden(self) -> None:
+        plugin = self.build()
+        # transcript 指向目录：核心给出“不是普通文件”的降级诊断，但不属于白名单类别。
+        transcript = self.root / "TRANSCRIPT-SENTINEL"
+        transcript.mkdir()
+        completed = self.run_fixture(plugin, [], transcript=str(transcript))
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        lines = self.warning_lines(completed.stderr)
+        self.assertEqual(len(lines), 1, completed.stderr)
+        self.assertIn("core_stderr：核心有诊断，细节已隐藏", lines[0])
+        # 原文（含“transcript”）不落盘到宿主 stderr。
+        self.assertNotIn("transcript", completed.stderr)
+        self.assert_no_detail_leak(completed.stderr, "TRANSCRIPT-SENTINEL")
+
+    def build_with_core(self, source: str) -> Path:
+        """用替身核心驱动适配器故障分支：真实 spawn/pipe/close 语义不变。"""
+        plugin = self.build()
+        (plugin / "core.py").write_text(source, encoding="utf-8")
+        return plugin
+
+    def test_nonzero_exit_does_not_trust_stdout(self) -> None:
+        plugin = self.build_with_core(
+            "import json, sys\n"
+            "print(json.dumps({'block': True, 'reason': 'STUB-DENY'}))\n"
+            "sys.stdout.flush()\n"
+            "sys.exit(1)\n"
+        )
+        completed = self.run_fixture(
+            plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        value = json.loads(completed.stdout)
+        # 非 0 退出的 stdout 不可信：不返回 block，实际放行。
+        self.assertIsNone(value["results"][0]["value"])
+        lines = self.warning_lines(completed.stderr)
+        self.assertEqual(len(lines), 2, completed.stderr)  # input + tool_call
+        for line in lines:
+            self.assertIn("core 非 0 退出（1），已放行", line)
+        self.assertNotIn("STUB-DENY", completed.stderr)
+
+    def test_empty_or_non_object_output_is_disclosed(self) -> None:
+        cases = (
+            ("import sys\nsys.exit(0)\n", "core 无输出，已放行"),
+            ("print('null')\n", "core 输出不是 JSON 对象，已放行"),
+            ("print('[]')\n", "core 输出不是 JSON 对象，已放行"),
+            ("print('0')\n", "core 输出不是 JSON 对象，已放行"),
+            ("print('not-json')\n", "core 输出无效 JSON，已放行"),
+        )
+        for source, expected in cases:
+            plugin = self.build()
+            (plugin / "core.py").write_text(source, encoding="utf-8")
+            completed = self.run_fixture(
+                plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            value = json.loads(completed.stdout)
+            self.assertIsNone(value["results"][0]["value"], source)
+            self.assertEqual(self.warning_lines(completed.stderr).count(expected) if False else len(
+                [line for line in self.warning_lines(completed.stderr) if expected in line]
+            ), 2, (source, completed.stderr))
+
+    def test_valid_empty_object_stays_silent(self) -> None:
+        plugin = self.build_with_core("print('{}')\n")
+        completed = self.run_fixture(
+            plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        value = json.loads(completed.stdout)
+        self.assertIsNone(value["results"][0]["value"])
+        self.assertEqual(self.warning_lines(completed.stderr), [], completed.stderr)
+
+    def test_whitelisted_core_degradation_names_only_the_category(self) -> None:
+        plugin = self.build()
+        blocked_root = self.root / "STATE-ROOT-SENTINEL"
+        blocked_root.write_text("x\n", encoding="utf-8")
+        completed = self.run_fixture(
+            plugin, [], context_overrides={"state_root": str(blocked_root)}
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        lines = self.warning_lines(completed.stderr)
+        self.assertEqual(len(lines), 1, completed.stderr)
+        self.assertIn("状态不可用", lines[0])
+        # 只给类别，不回显核心原句与状态根路径。
+        self.assertNotIn("私有状态不可用", completed.stderr)
+        self.assert_no_detail_leak(completed.stderr, "STATE-ROOT-SENTINEL")
 
 
 class AntigravityNamedGroupTests(HookCase):

@@ -70,6 +70,8 @@ class W01OperatorContinuationTests(HookCase):
         return value
 
     def test_developer_denies_targets_across_operator_continuation(self) -> None:
+        # 拒绝必须点名真实词法目标并指向缺手工基线：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.DENY_CASES):
             with self.subTest(command=command):
@@ -92,6 +94,7 @@ class W01OperatorContinuationTests(HookCase):
         self.assert_sentinels_intact()
 
     def test_fd_numeric_and_git_controls_unchanged(self) -> None:
+        self.use_manual_baseline()
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
             with self.subTest(command=command):

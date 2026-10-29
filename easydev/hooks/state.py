@@ -402,35 +402,55 @@ class Locks(object):
             raise StateUnavailable("file locking unavailable on this platform")
         ensure_private_root(self.directory)
         deadline = time.monotonic() + LOCK_WAIT_SECONDS
-        for name in sorted(set(names)):
-            dir_fd = _open_chain(self.directory, create=True)
-            try:
-                fd = os.open(
-                    name + ".lock",
-                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                    0o600,
-                    dir_fd=dir_fd,
-                )
-            except OSError as error:
-                os.close(dir_fd)
-                raise StateUnavailable("cannot open lock: %s" % error.errno)
-            os.close(dir_fd)
-            while True:
+        try:
+            for name in sorted(set(names)):
+                dir_fd = _open_chain(self.directory, create=True)
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        os.close(fd)
-                        raise StateUnavailable("state lock busy")
-                    time.sleep(0.005)
-            self._fds.append(fd)
+                    fd = os.open(
+                        name + ".lock",
+                        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                        0o600,
+                        dir_fd=dir_fd,
+                    )
+                except OSError as error:
+                    raise StateUnavailable("cannot open lock: %s" % error.errno)
+                finally:
+                    os.close(dir_fd)
+                # 打开成功即归本对象所有：后面任一把锁失败都要统一释放。
+                self._fds.append(fd)
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise StateUnavailable("state lock busy")
+                        time.sleep(0.005)
+        except BaseException:
+            # 失败不再把已获锁留给下一次 acquire（长驻进程/进程内测试会持续 busy）。
+            self._release()
+            raise
 
-    def __exit__(self, exc_type, exc, traceback) -> None:
+    def _release(self) -> Optional[BaseException]:
+        """逆序解锁并关闭全部受管 fd；返回首个清理错误，但不中断其余释放。"""
+        first_error: Optional[BaseException] = None
         for fd in reversed(self._fds):
             try:
                 if fcntl is not None:
                     fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+            try:
                 os.close(fd)
+            except OSError as error:
+                if first_error is None:
+                    first_error = error
         self._fds = []
+        return first_error
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        error = self._release()
+        # 已有 body 异常时优先保留它，没有才把清理错误交给调用方。
+        if error is not None and exc_type is None:
+            raise error

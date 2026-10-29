@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -276,6 +277,30 @@ class ReplayReadGuardTests(unittest.TestCase):
             self.decision(self.run_guard(self.bash("grep -f patterns.txt src/app.py"))), "allow"
         )
 
+    def test_named_user_tilde_is_unresolved(self) -> None:
+        # 允许根下真的存在同名目录：拒绝不能靠“文件不存在”偶然成立。
+        for name in ("~root", "~other"):
+            decoy = self.workspace / name
+            decoy.mkdir()
+            (decoy / "secret").write_text("decoy\n", encoding="utf-8")
+        for target in ("~root/secret", "~other/secret"):
+            value = self.run_guard(self.bash("cat %s" % target))
+            self.assertEqual(self.decision(value), "deny", (target, value))
+            self.assertNotIn(target, json.dumps(value, ensure_ascii=False))
+        self.assertIn("target_unresolved", self.health_codes())
+
+    def test_plain_home_tilde_keeps_policy_expansion(self) -> None:
+        fake_home = self.workspace / "fakehome"
+        fake_home.mkdir()
+        (fake_home / "x").write_text("inside\n", encoding="utf-8")
+        self.write_policy(real_home=str(fake_home))
+        for command in ("cat ~/x", "cat $HOME/x", "cat ${HOME}/x"):
+            self.assertEqual(self.decision(self.run_guard(self.bash(command))), "allow", command)
+
+    def test_missing_health_is_unreadable(self) -> None:
+        self.assertFalse(self.health.exists())
+        self.assertEqual(guard.read_health(str(self.health)), ["health_unreadable"])
+
     def test_install_writes_absolute_command_and_excludes_hooks_file(self) -> None:
         run_dir = Path(self.tmp.name) / "run dir'quoted"
         workspace = run_dir / "workspace"
@@ -296,6 +321,42 @@ class ReplayReadGuardTests(unittest.TestCase):
             guard.install_replay_guard(
                 str(run_dir), str(workspace), str(self.skill), str(self.home)
             )
+
+    def test_install_initializes_private_empty_health(self) -> None:
+        run_dir = Path(self.tmp.name) / "health run"
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        info = guard.install_replay_guard(
+            str(run_dir), str(workspace), str(self.skill), str(self.home)
+        )
+        health = Path(info["health_path"])
+        self.assertTrue(health.is_file())
+        self.assertEqual(health.read_bytes(), b"")
+        self.assertEqual(stat.S_IMODE(health.stat().st_mode), 0o600)
+        # 运行期健康日志已存在时，重新安装不得覆盖或截断。
+        os.remove(info["hooks_path"])
+        kept = '{"hook": "replay-read-guard", "code": "kept"}\n'
+        health.write_text(kept, encoding="utf-8")
+        guard.install_replay_guard(
+            str(run_dir), str(workspace), str(self.skill), str(self.home)
+        )
+        self.assertEqual(health.read_text(encoding="utf-8"), kept)
+        self.assertEqual(stat.S_IMODE(health.stat().st_mode), 0o600)
+
+    def test_probe_fails_when_health_is_missing(self) -> None:
+        run_dir = Path(self.tmp.name) / "probe-missing-health"
+        workspace = run_dir / "workspace"
+        workspace.mkdir(parents=True)
+        info = guard.install_replay_guard(
+            str(run_dir), str(workspace), str(self.skill), str(self.home)
+        )
+        os.remove(info["health_path"])
+        result = guard.probe(info["policy_path"])
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["error"], "health_unreadable")
+        self.assertEqual(result["cases"], {})
+        # 探针不“修复”运行期被删除的健康日志。
+        self.assertFalse(Path(info["health_path"]).exists())
 
     def run_runner(self, label: str, plan_values: dict, scenario: str = "b01"):
         base = Path(self.tmp.name) / label
@@ -389,6 +450,26 @@ class ReplayReadGuardTests(unittest.TestCase):
         )
         self.assertTrue(result, completed.stderr + completed.stdout)
         self.assertIn("outside_allowed", result["read_guard"]["health"])
+        self.assertFalse(result["valid_invocation"])
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+
+    def test_runner_invalid_when_health_deleted_after_successful_invocations(self) -> None:
+        """守卫被成功调用过、但健康日志事后被删：样本必须判为无效（不可当通过证据）。"""
+        base = Path(self.tmp.name) / "health-gone"
+        health = base / "out" / "runs" / "b01" / "easydev" / "r1" / "policy" / "health.jsonl"
+        completed, result = self.run_runner(
+            "health-gone",
+            {
+                "events": 3,
+                "agent_messages": ["采用 quick，这是单文件文案修改。", "已完成按钮修改。"],
+                "mutations": [{"path": "src/ui.py", "content": 'BUTTON_LABEL = "保存"\n'}],
+                # 守卫已真实调用（前面 mutation 走过 PreToolUse）之后再删健康日志。
+                "delete_files": [str(health)],
+            },
+        )
+        self.assertTrue(result, completed.stderr + completed.stdout)
+        self.assertGreater(result["read_guard"]["invocations"], 0, result["read_guard"])
+        self.assertIn("health_unreadable", result["read_guard"]["health"])
         self.assertFalse(result["valid_invocation"])
         self.assertEqual(completed.returncode, 1, completed.stdout)
 
@@ -563,7 +644,145 @@ class DeployedGuardCommandTests(unittest.TestCase):
                 capture_output=True,
                 timeout=60,
             )
-        return {"decision": decision, "executed": executed, "health": self.health_codes()}
+        return {
+            "decision": decision,
+            "executed": executed,
+            "health": self.health_codes(),
+            "raw": value,
+        }
+
+    def current_health(self) -> str:
+        """本次调用写下的健康码：health 文件按调用追加，只看最后一条。"""
+        codes = self.health_codes()
+        return codes[-1] if codes else ""
+
+    def find_exec_command(self, action: str) -> str:
+        """`find <action> cat <sentinel> \\;`：终止符必须真的到达 find。
+
+        `host_run` 用 `shell=True`：裸 `;` 会被 shell 吃掉，find 收不到 `-exec`
+        必需的终止符，用例就变成“命令本身不完整”而不是真实布局。
+        """
+        return "find . " + action + " cat " + str(self.sentinel) + " \\;"
+
+    def test_find_exec_actions_cannot_smuggle_outside_reads(self) -> None:
+        """DR-02：`find -exec/-execdir/-ok` 的被执行程序不可证明，部署守卫必须拒绝，
+        且原命令不执行（sentinel 内容不会出现在任何输出里）。"""
+        for action in ("-exec", "-execdir", "-ok"):
+            command = self.find_exec_command(action)
+            with self.subTest(action=action):
+                # 终止符 `;` 确实在 find 的 argv 里（否则测的只是“命令不完整”）。
+                analysis = guard.shell.analyze(command)
+                self.assertEqual(analysis.commands[0][-1], ";", analysis.commands)
+                self.assertTrue(analysis.read_unknown, analysis.as_dict())
+                result = self.host_run(command)
+                self.assertEqual(result["decision"], "deny", (command, result))
+                self.assertIsNone(result["executed"], command)
+                self.assertEqual(self.current_health(), "target_unresolved", result)
+                self.assertNotIn("SENTINEL-OPERATOR-SECRET", json.dumps(result["raw"]))
+        # 对照：没有 exec 动作的 find 仍放行并真的执行。
+        for command, expected in (("find .", "./src/app.py"), ("find . -name '*.py'", "./src/app.py")):
+            with self.subTest(command=command):
+                result = self.host_run(command)
+                self.assertEqual(result["decision"], "allow", (command, result))
+                self.assertIsNotNone(result["executed"], command)
+                self.assertIn(expected, result["executed"].stdout)
+
+    def test_find_exec_is_denied_at_guard_entry_without_host_stand_in(self) -> None:
+        """不经宿主替身：守卫自己的入口对“带真实终止符的 find -exec”同样拒绝。"""
+        policy = json.loads(Path(self.info["policy_path"]).read_text(encoding="utf-8"))
+        for action in ("-exec", "-execdir", "-ok"):
+            command = self.find_exec_command(action)
+            with self.subTest(action=action):
+                with self.assertRaises(guard.GuardFailure) as caught:
+                    guard.check_request(
+                        {
+                            "tool_name": "Bash",
+                            "tool_input": {"command": command},
+                            "cwd": str(self.workspace),
+                        },
+                        policy,
+                    )
+                self.assertEqual(caught.exception.code, "target_unresolved")
+                self.assertIn("不可证明", caught.exception.message)
+                # 对照：同样带终止符的普通 find 不触发任何拒绝。
+                guard.check_request(
+                    {
+                        "tool_name": "Bash",
+                        "tool_input": {"command": "find . -name '*.py'"},
+                        "cwd": str(self.workspace),
+                    },
+                    policy,
+                )
+
+    def test_unknown_cwd_from_condition_cd_is_denied(self) -> None:
+        """DR-05：条件 cd 让 cwd 不可证明时，替换内的相对读取必须拒绝。"""
+        command = "until cd src; do true; done; printf '%s' \"$(cat app.py)\""
+        result = self.host_run(command)
+        self.assertEqual(result["decision"], "deny", result)
+        self.assertIsNone(result["executed"])
+        self.assertEqual(self.current_health(), "target_unresolved", result)
+
+    def test_request_cwd_relative_read_is_allowed(self) -> None:
+        """DR-05：默认请求 cwd 下可证明的相对读取放行并真的读到内容。"""
+        result = self.host_run("cat src/app.py")
+        self.assertEqual(result["decision"], "allow", result)
+        self.assertIn("workspace-app", result["executed"].stdout)
+
+    def test_substitution_cd_into_allowed_root_is_allowed(self) -> None:
+        """DR-05：`$(cd <允许根内绝对目录> && cat <根内文件>)` 在允许根内成立。"""
+        inside_dir = self.workspace / "src"
+        result = self.host_run("printf '%s' \"$(cd " + str(inside_dir) + " && cat app.py)\"" )
+        self.assertEqual(result["decision"], "allow", result)
+        self.assertIn("workspace-app", result["executed"].stdout)
+        # 换到根外目录：同一写法必须拒绝。
+        outside = self.host_run(
+            "printf '%s' \"$(cd " + str(self.operator) + " && cat patterns.txt)\""
+        )
+        self.assertEqual(outside["decision"], "deny", outside)
+        self.assertIsNone(outside["executed"])
+        self.assertEqual(self.current_health(), "outside_allowed", outside)
+
+    def test_default_cwd_substitution_read_is_allowed(self) -> None:
+        """DR-05①：默认（请求）cwd 下的命令替换读取 → allow 且真的读到内容。"""
+        result = self.host_run("printf '%s' \"$(cat src/app.py)\"")
+        self.assertEqual(result["decision"], "allow", result)
+        self.assertIn("workspace-app", result["executed"].stdout)
+
+    def test_absolute_cd_after_unknown_cwd_restores_read_boundary(self) -> None:
+        """DR-05②：先进入未知 cwd，再用**绝对 cd** 恢复后读取：根内 allow、根外 deny。"""
+        prefix = "until cd src; do true; done; printf '%s' "
+        inside = self.host_run(
+            prefix + "\"$(cd " + str(self.workspace) + " && cat src/app.py)\""
+        )
+        self.assertEqual(inside["decision"], "allow", inside)
+        self.assertIn("workspace-app", inside["executed"].stdout)
+        outside = self.host_run(
+            prefix + "\"$(cd " + str(self.operator) + " && cat patterns.txt)\""
+        )
+        self.assertEqual(outside["decision"], "deny", outside)
+        self.assertIsNone(outside["executed"])
+        self.assertEqual(self.current_health(), "outside_allowed", outside)
+
+    def test_substitution_absolute_outside_read_is_denied(self) -> None:
+        """DR-05：替换内的绝对根外读取与根内绝对读取组成一对对照。"""
+        outside = self.host_run("printf '%s' \"$(cat " + str(self.sentinel) + ")\"")
+        self.assertEqual(outside["decision"], "deny", outside)
+        self.assertIsNone(outside["executed"])
+        self.assertEqual(self.current_health(), "outside_allowed", outside)
+        inside = self.host_run(
+            "printf '%s' \"$(cat " + str(self.workspace / "src" / "app.py") + ")\""
+        )
+        self.assertEqual(inside["decision"], "allow", inside)
+        self.assertIn("workspace-app", inside["executed"].stdout)
+
+    def test_named_user_tilde_is_denied(self) -> None:
+        decoy = self.workspace / "~root"
+        decoy.mkdir()
+        (decoy / "secret").write_text("decoy\n", encoding="utf-8")
+        result = self.host_run("cat ~root/secret")
+        self.assertEqual(result["decision"], "deny", result)
+        self.assertIsNone(result["executed"])
+        self.assertIn("target_unresolved", result["health"])
 
     def test_env_chdir_read_is_denied_at_deployed_command(self) -> None:
         result = self.host_run("env -C %s cat patterns.txt" % self.operator)

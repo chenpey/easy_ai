@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 import subprocess
@@ -23,6 +24,16 @@ GIT_ALLOWED = (
     "echo 'git reset --hard'",
     "printf '%s' 'git stash'",
 )
+
+# 冻结的嵌套替换词法输入（`\` 与真实换行是真实两个字节），只作为字符串投递。
+COMMENT_SUBSTITUTION = (
+    "printf '%s' \"$(printf pre\n"
+    "# note \\\n"
+    "git reset --hard\n"
+    "printf post)\""
+)
+SINGLE_QUOTED_SUBSTITUTION = "printf '%s' \"$(printf '%s' 'literal\\\n$(git reset --hard)')\""
+CONTINUATION_SUBSTITUTION = "printf '%s' \"$(g\\\nit reset --ha\\\nrd)\""
 
 GIT_DENIED = (
     "git reset --hard",
@@ -66,6 +77,7 @@ class SafetyMixin(object):
         self.allow(self.shell("s1", "git -c alias.wipe='reset --hard' wipe"))
 
     def test_dirty_write_requires_baseline(self) -> None:
+        self.use_manual_baseline()
         self.touch_dirty("src/app.py")
         self.activate()
         reason = self.deny(self.write_tool("s1", "src/app.py"))
@@ -76,6 +88,8 @@ class SafetyMixin(object):
         self.allow(self.write_tool("s1", "src/app.py", tool_id="write-2"))
 
     def test_untracked_write_requires_baseline(self) -> None:
+        # 手工任务根下未跟踪目标同样必须要求基线（自动快照路径另见 test_baseline_auto）。
+        self.use_manual_baseline()
         (self.repo / "notes.txt").write_text("user notes\n", encoding="utf-8")
         self.activate()
         self.deny(self.write_tool("s1", "notes.txt"))
@@ -144,7 +158,33 @@ class SafetyMixin(object):
         self.activate("s1")
         self.allow(self.write_tool("s1", "src/app.py", tool_id="clean-b"))
 
+    def test_first_manual_baseline_has_no_degradation_warning(self) -> None:
+        """正常的首次手工任务根不报“状态丢失”：那会把真正的降级信号淹没。"""
+        self.touch_dirty("src/app.py", "value = 2\n")
+        self.use_manual_baseline()
+        self.save_baseline(self.manual_task_root(), "src/app.py")
+        self.activate("s1")
+        _code, value, stderr = self.run_core(self.write_tool("s1", "src/app.py", tool_id="first"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertNotIn("首次运行", stderr)
+        self.assertNotIn("归属索引", stderr)
+
+    def test_existing_root_missing_baseline_index_warns(self) -> None:
+        """读到非空 root 却缺归属索引：旧版本写入或结构丢失，必须披露。"""
+        self.activate("s1")
+        roots = sorted((self.state / "roots").glob("*.json"))
+        self.assertEqual(len(roots), 1, roots)
+        payload = json.loads(roots[0].read_text(encoding="utf-8"))
+        self.assertIn("baseline_roots_seen", payload)
+        payload.pop("baseline_roots_seen")
+        roots[0].write_text(json.dumps(payload), encoding="utf-8")
+        _code, value, stderr = self.run_core(self.shell("s1", "git status", tool_id="index"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("归属索引", stderr)
+        self.assertNotIn("Traceback", stderr)
+
     def test_shell_write_target_is_checked(self) -> None:
+        self.use_manual_baseline()
         self.touch_dirty("src/app.py")
         self.activate()
         self.deny(self.shell("s1", "printf x >> src/app.py"))
@@ -194,6 +234,205 @@ class SafetyMixin(object):
         custom = self.tool_payload("rev", "some_custom_tool", {"x": 1}, tool_id="custom")
         _code, value, stderr = self.run_core(custom)
         self.assertFalse(self.is_denied(value))
+        self.assertIn("warning", stderr)
+
+    def test_compound_git_and_reviewer_guards(self) -> None:
+        self.activate("s1")
+        for index, command in enumerate(
+            ("(git reset --hard)", "if true; then git reset --hard; fi")
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="compound-%d" % index))
+            self.assertIn("Git", reason)
+        self.activate("rev", self.reviewer_handoff())
+        for index, command in enumerate(("(rm -rf src)", "{ rm -rf src; }")):
+            reason = self.deny(self.shell("rev", command, tool_id="compound-rev-%d" % index))
+            self.assertIn("只读", reason)
+        # 只读的复合结构不是拒绝面：分组本身不构成写副作用。
+        self.allow(self.shell("rev", "(rg -n foo src)", tool_id="compound-readonly"))
+
+    def test_unresolved_compound_has_narrow_reviewer_deny(self) -> None:
+        self.activate("s1")
+        _code, value, stderr = self.run_core(self.shell("s1", "(", tool_id="unresolved-main"))
+        # 普通活动会话只告警放行：窄类别只收紧 reviewer。
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("warning", stderr)
+        _code, value, _stderr = self.run_core(
+            self.shell("s1", "(", tool_id="unresolved-probe"), mode="probe"
+        )
+        self.assertFalse(self.is_denied(value), value)
+        self.deny(self.shell("s1", "git reset --hard", tool_id="unresolved-direct"))
+        self.allow(self.shell("s1", "rg foo", tool_id="unresolved-plain"))
+        self.activate("rev", self.reviewer_handoff())
+        reason = self.deny(self.shell("rev", "(", tool_id="unresolved-rev"))
+        self.assertIn("复合结构", reason)
+        # 对照：普通简单命令与原有只读命令不被这个窄类别牵连。
+        for index, command in enumerate(("test -f x", "[ -f x ]", "rg foo")):
+            self.allow(self.shell("rev", command, tool_id="unresolved-allow-%d" % index))
+
+    def test_git_denied_after_line_start_continuation(self) -> None:
+        """词首续行不得让下一物理行的 `#` 变成词内字符：注释尾部反斜杠不续行，
+        第三行的危险命令必须照常进入 Git 判定。"""
+        self.activate()
+        command = "\\\n# note \\\n" + ("git " + "reset --hard")
+        reason = self.deny(self.shell("s1", command, tool_id="cont-git"))
+        self.assertIn("Git", reason)
+
+    def test_git_denied_in_deep_async_and_pipeline_forms(self) -> None:
+        """长 `&&` 链、`&` 异步组、管道与 `!` 组合都不得让 Git 证据消失或抛异常。"""
+        self.activate()
+        dangerous = "git " + "reset --hard"
+        for index, command in enumerate(
+            (
+                ("true && " * 2000) + dangerous,
+                "cd /tmp; { cd /var; } & " + dangerous,
+                "cd /tmp && printf x | " + dangerous,
+                "! true || " + dangerous,
+            )
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="deep-git-%d" % index))
+            self.assertIn("Git", reason)
+
+    def test_git_denied_across_list_operator_newline_and_quoted_esac(self) -> None:
+        """`&&`/`||`/`|` 后的换行是续接、引号里的 `esac` 是 pattern：两者都不得
+        让危险 Git 从证据里消失。"""
+        self.activate()
+        for index, command in enumerate(
+            (
+                "true &&\ngit reset --hard",
+                "true ||\ngit reset --hard",
+                "true |\ngit reset --hard",
+                "case x in 'esac') git reset --hard ;; esac",
+            )
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="nl-git-%d" % index))
+            self.assertIn("Git", reason)
+        # reviewer 侧：这两种形状都不属于“无法拆解的复合结构”，普通只读命令照常放行。
+        self.activate("rev", self.reviewer_handoff())
+        for index, command in enumerate(
+            ("case $x in 'esac') echo hi ;; esac", "true &&\nrg foo")
+        ):
+            self.allow(self.shell("rev", command, tool_id="nl-rev-%d" % index))
+
+    def test_force_refspec_without_colon_is_denied(self) -> None:
+        self.activate()
+        for index, command in enumerate(
+            (
+                "git push origin +main",
+                "git push origin +main:main",
+                "git push +feature",
+            )
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="force-%d" % index))
+            self.assertIn("强制", reason)
+        # dry-run 仍先豁免：只观察不推送。
+        for index, command in enumerate(
+            ("git push --dry-run origin +main", "git push -n origin +main")
+        ):
+            self.allow(self.shell("s1", command, tool_id="dry-%d" % index))
+
+    def test_checkout_existing_paths_and_branch_switches(self) -> None:
+        self.activate()
+        absolute = str(self.repo / "src" / "app.py")
+        for index, command in enumerate(
+            (
+                "git checkout .",
+                "git checkout ..",
+                "git checkout src/app.py",
+                "git checkout docs",
+                "git checkout %s" % absolute,
+            )
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="checkout-path-%d" % index))
+            self.assertIn("工作区", reason)
+        # 没有同名路径的普通分支切换/-b 创建分支/提交表达式保持 allow。
+        for index, command in enumerate(
+            (
+                "git checkout main",
+                "git checkout HEAD~1",
+                "git checkout -b new main",
+                "git checkout -B new main",
+                "git checkout --orphan new",
+            )
+        ):
+            self.allow(self.shell("s1", command, tool_id="checkout-branch-%d" % index))
+
+    def test_checkout_effective_cwd_is_preserved(self) -> None:
+        (self.repo / "sub").mkdir()
+        (self.repo / "sub" / "only_here.py").write_text("x = 1\n", encoding="utf-8")
+        self.activate()
+        for index, command in enumerate(
+            (
+                "git -C sub checkout only_here.py",
+                "cd sub && git checkout only_here.py",
+                "env -C sub git checkout only_here.py",
+            )
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="checkout-cwd-%d" % index))
+            self.assertIn("only_here.py", reason)
+        # 反例：只在别的目录存在的同名路径不算路径（docs 下没有 src/app.py）。
+        self.allow(self.shell("s1", "git -C docs checkout src/app.py", tool_id="checkout-cwd-other"))
+        self.deny(self.shell("s1", "git -C src checkout app.py", tool_id="checkout-cwd-own"))
+
+    def test_find_actions_and_sort_output_are_reviewer_writes(self) -> None:
+        self.activate("rev", self.reviewer_handoff())
+        for index, command in enumerate(
+            (
+                "find . -name '*.pyc' -delete",
+                "find . -exec cat x ;",
+                "find src -execdir rm {} \\;",
+                "sort -o out.txt in.txt",
+                "sort --output=out.txt in.txt",
+            )
+        ):
+            reason = self.deny(self.shell("rev", command, tool_id="find-sort-w-%d" % index))
+            self.assertIn("只读", reason)
+        # 只读模式查询与普通读取保持 allow。
+        for index, command in enumerate(
+            ("find .", "find . -name '*.py'", "sort in.txt", "rg -n TODO src/")
+        ):
+            self.allow(self.shell("rev", command, tool_id="find-sort-r-%d" % index))
+
+    def test_literal_dollar_open_does_not_hide_real_git_substitution(self) -> None:
+        self.activate("s1")
+        command = "printf '%s' \"\\$(\" \"$(git reset --hard)\""
+        reason = self.deny(self.shell("s1", command, tool_id="dollar-open"))
+        self.assertIn("Git", reason)
+        for index, literal in enumerate(
+            (
+                "printf '%s' '$(git reset --hard)'",
+                "printf '%s' \"\\$(git reset --hard)\"",
+            )
+        ):
+            self.allow(self.shell("s1", literal, tool_id="dollar-literal-%d" % index))
+
+    def test_filtered_word_substitutions_deny_destructive_git(self) -> None:
+        self.activate("s1")
+        for index, command in enumerate(
+            (
+                "printf x >$(printf out; git reset --hard; printf out)",
+                "OUT=$(printf out; git reset --hard; printf out) true",
+                "env OUT=$(git reset --hard) true",
+            )
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="filtered-%d" % index))
+            self.assertIn("Git", reason)
+        # 字面量对照：单引号保护的目标不是执行证据，也不是 Git 拒绝。
+        self.allow(self.shell("s1", "printf x >'$(git reset --hard)'", tool_id="filtered-literal"))
+
+    def test_nested_substitution_comment_and_newline_preserve_git_guard(self) -> None:
+        self.activate("s1")
+        for index, command in enumerate(
+            (COMMENT_SUBSTITUTION, CONTINUATION_SUBSTITUTION)
+        ):
+            reason = self.deny(self.shell("s1", command, tool_id="nested-git-%d" % index))
+            self.assertIn("Git", reason)
+        # 内层单引号里的替换是数据：不产生 Git 拒绝，也不作为执行证据。
+        self.allow(self.shell("s1", SINGLE_QUOTED_SUBSTITUTION, tool_id="nested-literal"))
+
+    def test_unknown_find_write_warns_and_allows(self) -> None:
+        self.activate()
+        _code, value, stderr = self.run_core(self.shell("s1", "find . -exec cat x ;", tool_id="find-unknown"))
+        self.assertFalse(self.is_denied(value), value)
         self.assertIn("warning", stderr)
 
     def test_unactivated_write_is_allowed(self) -> None:

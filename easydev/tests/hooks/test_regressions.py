@@ -103,6 +103,8 @@ class RegressionMixin(object):
 
     # ---- F07：porcelain -z rename 路径顺序 -----------------------------
     def test_renamed_destination_modification_requires_baseline(self) -> None:
+        # 脏目标必须先有手工基线：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.git("mv", "src/app.py", "src/renamed.py")
         (self.repo / "src" / "renamed.py").write_text("value = 99\n", encoding="utf-8")
         self.activate()
@@ -124,6 +126,7 @@ class RegressionMixin(object):
         shutil.copyfile(self.repo / "docs" / "guide.md", self.repo / "docs" / "copied.md")
         self.git("add", "docs/copied.md")
         (self.repo / "docs" / "copied.md").write_text("copied-changed\n", encoding="utf-8")
+        self.use_manual_baseline()
         self.activate()
         self.deny(self.write_tool("s1", "docs/renamed space.md", tool_id="sp1"))
         self.deny(self.write_tool("s1", "docs/copied.md", tool_id="cp1"))
@@ -160,6 +163,7 @@ class RegressionMixin(object):
         self.git("add", "-A")
         self.git("commit", "-qm", "sub")
         (sub / "src" / "app.py").write_text("sub-value = 2\n", encoding="utf-8")
+        self.use_manual_baseline()
         self.activate()
         payload = self.tool_payload(
             "s1",
@@ -266,7 +270,8 @@ class RegressionMixin(object):
             payload["outcome"] = 5
         code, value, stderr = self.run_core(payload)
         self.assertEqual(code, 0)
-        self.assertEqual(value, {})
+        # 协议故障仍按已识别的宿主事件编码：pi 的 input 放行形状不是空对象。
+        self.assertEqual(value, {"action": "continue"} if self.host == "pi" else {})
         self.assertIn("warning", stderr)
         self.assertNotIn("Traceback", stderr)
 

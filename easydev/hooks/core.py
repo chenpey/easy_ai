@@ -154,8 +154,10 @@ CODE_SUFFIXES = (
     ".swift",
     ".sql",
 )
+# 边界用 ASCII 标识符字符类：`\w` 在 Unicode 下把汉字算进去，中文紧邻的
+# “请使用 easydev”“帮我用$easydev”会永不命中；`easydev_helpers` 仍不算调用。
 EXPLICIT_INVOCATION_RE = re.compile(
-    r"(?<![\w-])(?:\$easydev|/skill:easydev|使用\s*easydev|use\s+easydev)(?![\w-])",
+    r"(?<![A-Za-z0-9_-])(?:\$easydev|/skill:easydev|使用\s*easydev|use\s+easydev)(?![A-Za-z0-9_-])",
     re.IGNORECASE,
 )
 FENCED_BLOCK_RE = re.compile(r"```([A-Za-z0-9_-]*)\n(.*?)```", re.DOTALL)
@@ -748,6 +750,32 @@ def encode(host: str, event: str, decision: Decision) -> Dict[str, Any]:
     return {}
 
 
+def _fail_open_event(
+    host: str,
+    raw: Optional[Dict[str, Any]],
+    cli_event: str,
+    record_event: str = "",
+) -> str:
+    """故障开路时的事件名：只用字段别名，不调用可能已经抛错的 `normalize`。
+
+    优先采用已归一化记录的事件，否则按各宿主 normalizer 的同一字段顺序取名。
+    AG/DSH 的 PreToolUse 放行字段是必填的：事件完全无法恢复时按 `pre_tool` 兜底，
+    pi/Codex 保持 `unknown`（编码为 `{}`）。
+    """
+    if record_event and record_event != "unknown":
+        return record_event
+    names = {
+        "antigravity": ("hookEventName", "eventName", "event", "type"),
+        "pi": ("event", "hookEventName", "type"),
+    }.get(host, ("hook_event_name", "hookEventName", "event"))
+    event = _event_name(_first(raw, *names)) if isinstance(raw, dict) else "unknown"
+    if event == "unknown" and cli_event:
+        event = _event_name(cli_event)
+    if event != "unknown":
+        return event
+    return "pre_tool" if host in {"antigravity", "dsh"} else "unknown"
+
+
 def _strip_fences(text: str) -> str:
     return FENCED_BLOCK_RE.sub("\n", text)
 
@@ -791,7 +819,10 @@ def _evidence_lines(text: str) -> str:
         if any(marker in stripped for marker in NEGATION_MARKERS):
             continue
         if any(marker in lowered for marker in TEMPLATE_EXPLANATION_MARKERS):
-            continue
+            # “发现模板如下：**[P级] 简短标题**”这类同行写法本身就是格式证据：
+            # 只有该行不含任何冻结模板时才当纯解释丢掉，且只保留这一行。
+            if not finding_format_evidence(stripped):
+                continue
         kept.append(line)
     return "\n".join(kept)
 
@@ -1012,7 +1043,17 @@ class Engine(object):
         return os.path.join(self.state_root, kind)
 
     def _load(self, kind: str, key: str) -> Optional[Dict[str, Any]]:
-        return state.read_state(self._dir(kind), key + ".json")
+        value = state.read_state(self._dir(kind), key + ".json")
+        if (
+            kind == "roots"
+            and isinstance(value, dict)
+            and value
+            and "baseline_roots_seen" not in value
+        ):
+            # 读到已有 root 却缺归属索引：旧版本写入或结构丢失。首次运行的
+            # None/{} 与显式空索引都健康，不能把它们也报成降级。
+            self.warnings.append("已有任务状态缺少任务根归属索引：无法识别历史任务根的旧归属，按降级处理")
+        return value
 
     def _save(self, kind: str, key: str, value: Dict[str, Any]) -> None:
         state.write_state(self._dir(kind), key + ".json", value)
@@ -1813,17 +1854,24 @@ class Engine(object):
         if record.tool.get("kind") == "other" and record.tool.get("name"):
             self.warnings.append("未知自定义工具的写权限未推断，已放行并披露")
         if record.tool.get("kind") == "shell" and analysis is not None:
+            # 相对路径的 Git 路径判断需要该次工具调用的可信 cwd，不能回落到进程 cwd。
             violation = shell.reviewer_violation(
-                _string(_first(record.tool.get("args") or {}, "command", "CommandLine", "cmd"))
+                _string(_first(record.tool.get("args") or {}, "command", "CommandLine", "cmd")),
+                cwd=_tool_cwd(record) or None,
             )
             if violation and not violation.get("unknown"):
-                return Decision(
-                    "deny",
-                    "readonly",
-                    "reviewer_command_write",
-                    "reviewer 只读：命令含明确写副作用（%s），被拒绝；只读检查、测试与构建仍可执行。"
-                    % violation.get("detail"),
-                )
+                if violation.get("kind") == "compound_unresolved":
+                    # 这一类别没有可指认的写目标，给出的是“怎么改才能过”的可操作理由。
+                    reason = (
+                        "reviewer 只读：复合结构无法核对，被拒绝；请把命令拆成简单命令重跑，"
+                        "只读检查、测试与构建仍可执行。"
+                    )
+                else:
+                    reason = (
+                        "reviewer 只读：命令含明确写副作用（%s），被拒绝；"
+                        "只读检查、测试与构建仍可执行。" % violation.get("detail")
+                    )
+                return Decision("deny", "readonly", "reviewer_command_write", reason)
             if violation and violation.get("unknown"):
                 self.warnings.append("reviewer 命令结构未覆盖，已放行并披露")
         return None
@@ -1846,7 +1894,7 @@ class Engine(object):
             return None
         if tool.get("kind") == "shell":
             command = _string(_first(tool.get("args") or {}, "command", "CommandLine", "cmd"))
-            analysis = shell.analyze(command, cwd=_tool_cwd(record))
+            analysis = shell.analyze(command, cwd=_tool_cwd(record) or None)
             if analysis.opaque or analysis.too_deep:
                 self.warnings.append("命令结构无法完整解析，基线检查未覆盖")
                 return None
@@ -2098,8 +2146,6 @@ class Engine(object):
                     "请提供真实私有任务目录并保存 baseline/%s。" % (root_problem, relative),
                 )
             seen = root.setdefault("baseline_roots_seen", {})
-            if not seen:
-                self.warnings.append("首次运行或状态丢失：无法识别历史任务根的旧归属，按降级处理")
             registered = seen.get(safe_root)
             current_epoch = int(task.get("task_epoch") or 0)
             if registered and int(registered.get("epoch", -1)) != current_epoch and needs_baseline:
@@ -2288,7 +2334,7 @@ class Engine(object):
         analysis = None
         if record.tool.get("kind") == "shell":
             command = _string(_first(record.tool.get("args") or {}, "command", "CommandLine", "cmd"))
-            analysis = shell.analyze(command)
+            analysis = shell.analyze(command, cwd=_tool_cwd(record) or None)
         if scope == "task_active" and analysis is not None:
             decision = self._check_git(record, analysis)
             if decision:
@@ -2642,6 +2688,7 @@ class Engine(object):
                 for key, value in dispatches.items()
                 if isinstance(value, dict)
                 and not value.get("invalid")
+                and int(value.get("epoch") or 0) == epoch
                 and value.get("digest") == digest
             ]
             if len(candidates) == 1:
@@ -2652,6 +2699,7 @@ class Engine(object):
                 for key, value in dispatches.items()
                 if isinstance(value, dict)
                 and not value.get("invalid")
+                and int(value.get("epoch") or 0) == epoch
                 and not value.get("child_id")
             ]
             if len(candidates) == 1:
@@ -2836,7 +2884,7 @@ class Engine(object):
         analysis = None
         if record.tool.get("kind") == "shell":
             command = _string(_first(record.tool.get("args") or {}, "command", "CommandLine", "cmd"))
-            analysis = shell.analyze(command)
+            analysis = shell.analyze(command, cwd=_tool_cwd(record) or None)
         if record.event == "pre_tool":
             if record.activation_scope == "task_active" and analysis is not None:
                 decision = self._check_git(record, analysis)
@@ -3225,7 +3273,8 @@ def run(argv: Optional[List[str]] = None, stream: Any = None, env: Optional[Dict
     raw, error = read_request(stream if stream is not None else sys.stdin.buffer)
     if error:
         print("warning: %s；已放行" % error, file=sys.stderr)
-        print(json.dumps({}, ensure_ascii=False))
+        event = _fail_open_event(args.host, None, _string(args.event))
+        print(json.dumps(encode(args.host, event, Decision()), ensure_ascii=False))
         return 0
     context = load_context(args.context, args.host)
     if args.state_root:
@@ -3248,11 +3297,14 @@ def run(argv: Optional[List[str]] = None, stream: Any = None, env: Optional[Dict
         decision = engine.handle(record)
     except ProtocolFault as fault:
         print("warning: 协议字段类型不符（%s）；已放行" % fault, file=sys.stderr)
-        print(json.dumps({}, ensure_ascii=False))
+        event = _fail_open_event(args.host, raw, _string(args.event))
+        print(json.dumps(encode(args.host, event, Decision()), ensure_ascii=False))
         return 0
     except Exception:  # 运行期内部异常：告警放行
         print("warning: hook 内部异常；已放行", file=sys.stderr)
-        print(json.dumps({}, ensure_ascii=False))
+        normalized = record.event if record is not None else ""
+        event = _fail_open_event(args.host, raw, _string(args.event), normalized)
+        print(json.dumps(encode(args.host, event, Decision()), ensure_ascii=False))
         return 0
     if engine.warnings:
         seen = []

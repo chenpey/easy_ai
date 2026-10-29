@@ -131,9 +131,8 @@ def read_health(path: str) -> List[str]:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             lines = handle.read().splitlines()
-    except FileNotFoundError:
-        return []
     except OSError:
+        # 缺失与不可读都意味着没有可核对的健康证据。
         return ["health_unreadable"]
     codes: List[str] = []
     for line in lines:
@@ -257,6 +256,9 @@ def _resolve(target: str, cwd: Optional[str], real_home: str) -> str:
     if not isinstance(target, str) or not target or "\x00" in target:
         raise GuardFailure("target_unresolved", "读取目标无法解析")
     expanded = _expand(target, real_home)
+    if "~" in expanded:
+        # `~user` 需要查询系统账户；不查账户也不回显目标，残留即无法证明归属。
+        raise GuardFailure("target_unresolved", "读取目标含无法解析的用户主目录简写")
     if any(char in expanded for char in UNRESOLVED_CHARS):
         # 残留变量/通配符意味着目标无法证明，保守拒绝。
         raise GuardFailure("target_unresolved", "读取目标含未解析的变量或通配符")
@@ -488,6 +490,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
+def _create_empty_health(path: str) -> None:
+    """受信安装阶段建空健康日志：不跟随、不截断。
+
+    `O_EXCL` 让已存在的运行期日志在重新安装时原样保留：正常首次 probe 需要
+    空文件的 before_codes 基线，但删日志的证据不能被安装“修复”。
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        return
+    try:
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+
+
 def install_replay_guard(
     run_dir: str,
     workspace: str,
@@ -513,6 +532,7 @@ def install_replay_guard(
     shutil.copyfile(shell_source, deployed_shell)
     os.chmod(deployed_shell, 0o600)
     health_path = os.path.join(policy_dir, "health.jsonl")
+    _create_empty_health(health_path)
     policy = {
         "allowed_roots": [os.path.realpath(workspace), os.path.realpath(skill_root)],
         "real_home": os.path.realpath(real_home),
@@ -670,6 +690,9 @@ def probe(policy_path: str, command: Optional[str] = None) -> Dict[str, Any]:
     workspace = policy["allowed_roots"][0]
     health_path = str(policy.get("health_path") or "")
     before_codes = read_health(health_path) if health_path else []
+    if "health_unreadable" in before_codes:
+        # 运行期删日志后探针不“修复”它，否则删除证据会被掩盖。
+        return {"ok": False, "error": "health_unreadable", "cases": {}}
     before_size = _health_size(health_path)
     probe_home = os.path.join(os.path.dirname(policy_path), "probe-home")
     os.makedirs(probe_home, mode=0o700, exist_ok=True)

@@ -226,6 +226,7 @@ class S03BareRedirectTests(HookCase):
         (self.repo / "notes.txt").write_text("USER NOTES\n", encoding="utf-8")
 
     def test_bare_write_redirects_require_baseline(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         for index, command in enumerate(("> src/app.py", ">> src/app.py", "<> src/app.py")):
             with self.subTest(command=command):
@@ -237,6 +238,7 @@ class S03BareRedirectTests(HookCase):
         self.assertEqual((self.repo / "notes.txt").read_text(encoding="utf-8"), "USER NOTES\n")
 
     def test_redirect_after_cd_uses_that_cwd(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         reason = self.deny(self.shell("s1", "cd src; > app.py", tool_id="red-cd"))
         self.assertIn("baseline", reason)
@@ -273,6 +275,7 @@ class S04RelativeEnvChdirTests(HookCase):
         (sub / "app.py").write_text("SUB USER CONTENT\n", encoding="utf-8")
 
     def test_relative_env_c_checks_tool_cwd_relative_target(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         command = "env -C sub sh -c 'printf x >> app.py'"
         reason = self.deny(self.shell("s1", command, tool_id="env-rel"))
@@ -284,6 +287,7 @@ class S04RelativeEnvChdirTests(HookCase):
         self.allow(self.shell("s1", "env -C . sh -c 'printf x >> app.py'", tool_id="env-dot"))
 
     def test_absolute_env_c_and_baseline_satisfied(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         absolute = "env -C %s sh -c 'printf x >> app.py'" % (self.repo / "sub")
         self.assertIn("baseline", self.deny(self.shell("s1", absolute, tool_id="env-abs")))
@@ -294,6 +298,7 @@ class S04RelativeEnvChdirTests(HookCase):
         self.allow(self.shell("s1", "env -C sub sh -c 'printf x >> app.py'", tool_id="env-ok"))
 
     def test_multilayer_wrapper_with_relative_chdir(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         command = "env -C sub bash -lc \"env -C . sh -c 'printf x >> app.py'\""
         reason = self.deny(self.shell("s1", command, tool_id="env-multi"))
@@ -316,6 +321,7 @@ class S05CopyDirectoryTargetTests(HookCase):
         (sub / "app.py").write_text("SUB USER CONTENT\n", encoding="utf-8")
 
     def test_cp_into_directory_checks_overwritten_file(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         reason = self.deny(self.shell("s1", "cp src/app.py sub", tool_id="cp-dir"))
         self.assertIn("baseline", reason)
@@ -397,6 +403,7 @@ class S06SymlinkToOtherRepoTests(HookCase):
         self.assertEqual((nested / "app.py").read_text(encoding="utf-8"), "nested = 1\n")
 
     def test_explicit_other_repo_path_still_follows_baseline_rules(self) -> None:
+        self.use_manual_baseline()
         self.activate("s1")
         target = str(self.other / "app.py")
         reason = self.deny(self.write_tool("s1", target, tool_id="other-w"))
@@ -451,6 +458,8 @@ class S08LongTranscriptTests(StateHelpers, HookCase):
         self.write_path("P", "w1", content="value = 2\n")
         self.assertEqual(self.task_for_epoch(1)["write_seq"], 1)
         self.touch_dirty("src/app.py", "USER B CONTENT\n")
+        # 新 epoch 的首写仍走手工基线核对：脏目标必须缺基线拒绝。
+        self.use_manual_baseline()
         self.run_core(self.invocation(path, 2))
         epochs = {int(item.get("task_epoch") or 0) for item in task_states(self.state)}
         self.assertIn(2, epochs)
@@ -522,6 +531,8 @@ class S10CrossRepoPairingTests(HookCase):
 
     def setUp(self) -> None:
         super().setUp()
+        # 两个用例都围绕“脏目标先要手工基线”展开：显式打开手工核对路径。
+        self.use_manual_baseline()
         self.other = self.root / "repo2"
         (self.other / "src").mkdir(parents=True)
         subprocess.run(

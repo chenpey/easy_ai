@@ -67,6 +67,24 @@ class DispatchMixin(object):
             env={"HOME": str(self.home)},
         )
 
+    def test_invalid_models_file_at_dispatch_entry_never_falls_back(self) -> None:
+        """经真实上下文传递（install-context `models_file`）拒绝，而非只测选择层：
+
+        项目配置与用户配置都放合法哨兵——一旦回退就会被放行，因此 deny 同时证明
+        “没有回退到项目/用户配置”。
+        """
+        self.write_models(VALID)
+        (self.home / ".config" / "easydev" / "models.json").write_text(
+            json.dumps(VALID), encoding="utf-8"
+        )
+        self.activate()
+        for value in ("", "   ", 123, True, ["x"], {"path": "x"}, None):
+            with self.subTest(value=value):
+                self.write_context(models_file=value)
+                reason = self.deny(self.dispatch_payload("s1", self.developer_handoff()))
+                self.assertIn("对话指定", reason)
+                self.assertIn("不能静默回退", reason)
+
     def test_explicit_missing_models_file_denies(self) -> None:
         self.activate()
         self.write_context(models_file=str(self.root / "missing.json"))
@@ -100,6 +118,32 @@ class DispatchMixin(object):
         no_format = "role: reviewer\n只读审查 diff。\nreferences/reviewer-role.md\n"
         self.deny(self.dispatch_payload("s1", no_format))
         self.allow(self.dispatch_payload("s1", self.reviewer_handoff()))
+
+    def test_inline_template_explanation_keeps_complete_handoff(self) -> None:
+        """“模板如下：”同一行里的冻结模板仍是格式证据，纯解释行仍被丢弃。"""
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        base = "role: reviewer\n只读审查以下 diff。\n角色路径：%s\n" % role_path
+        self.allow(
+            self.dispatch_payload(
+                "s1", base + "发现模板如下：**[P级] 简短标题**\n", tool_id="inline-generic"
+            )
+        )
+        self.allow(
+            self.dispatch_payload(
+                "s1",
+                base + "template: **[P0] a** **[P1] b** **[P2] c** **[P3] d**\n",
+                tool_id="inline-four",
+            )
+        )
+        for tool_id, extra in (
+            ("inline-one", "模板如下：**[P1] x**\n"),
+            ("inline-quoted", "> 模板如下：**[P级] 简短标题**\n"),
+            ("inline-negated", "不要使用模板如下：**[P级] 简短标题**\n"),
+        ):
+            reason = self.deny(self.dispatch_payload("s1", base + extra, tool_id=tool_id))
+            self.assertIn("机器格式", reason)
 
     def test_developer_task_without_reviewer_template_is_allowed(self) -> None:
         self.activate()

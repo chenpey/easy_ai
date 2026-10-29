@@ -219,15 +219,17 @@ def select(
 ) -> Selection:
     """按优先级选第一个存在的完整文件；文件之间不合并。"""
     context = context or {}
-    explicit = context.get("models_file")
-    if isinstance(explicit, str) and explicit:
+    if "models_file" in context:
+        # 显式给出即强制校验：空/非字符串是确定违规，不能静默回退到低优先级来源。
+        explicit = context.get("models_file")
+        if not isinstance(explicit, str) or not explicit.strip():
+            return Selection(None, "对话指定文件", "对话指定的配置文件无效；不能静默回退到低优先级来源")
         if not os.path.isabs(os.path.expanduser(explicit)) and isinstance(context.get("repo_root"), str):
             explicit = os.path.join(context["repo_root"], explicit)
         selection = _read_config(explicit, "对话指定文件")
         if selection.config is None and selection.error is None:
             return Selection(None, "对话指定文件", "对话指定配置文件不存在；不能静默回退到低优先级来源")
-        result = _apply_overrides(selection, context)
-        return result
+        return _apply_overrides(selection, context)
     if project_root:
         project_path = os.path.join(project_root, ".easydev", "models.json")
         project = _read_config(project_path, "项目配置")

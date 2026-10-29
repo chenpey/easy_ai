@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from support import HookCase
+from test_r5_fixes import task_states
 
 
 class BaselineAutoSnapshotMixin(object):
@@ -93,6 +94,37 @@ class BaselineAutoSnapshotMixin(object):
             self.snapshots("docs/guide.md")[0].read_text(encoding="utf-8"), "user guide\n"
         )
 
+    def test_unified_patch_snapshots_dirty_real_path(self) -> None:
+        self.touch_dirty("src/app.py", "value = 2\n")
+        self.activate_auto()
+        patch = (
+            "--- a/src/app.py\n"
+            "+++ b/src/app.py\n"
+            "@@ -1 +1 @@\n"
+            "-value = 2\n"
+            "+value = 3\n"
+        )
+        payload = self.tool_payload("s1", "apply_patch", {"input": patch}, tool_id="u1")
+        self.allow(payload)
+        # 首次写保存真实路径的原字节快照，不产生 `a/src`/`b/src` 伪目标。
+        saved = self.snapshots("src/app.py")
+        self.assertEqual(len(saved), 1, saved)
+        self.assertEqual(saved[0].read_text(encoding="utf-8"), "value = 2\n")
+        self.assertEqual(stat.S_IMODE(saved[0].stat().st_mode), 0o600)
+        keys = self.registered_targets()
+        self.assertTrue([key for key in keys if key.endswith("::src/app.py")], keys)
+        self.assertFalse([key for key in keys if "::a/" in key or "::b/" in key], keys)
+        # 模拟补丁应用成功后再被外部修改：真实 origin 已绑定，仍拒绝。
+        (self.repo / "src" / "app.py").write_text("value = 3\n", encoding="utf-8")
+        self.allow(
+            self.tool_payload(
+                "s1", "apply_patch", {"input": patch}, tool_id="u1", event="post_tool", outcome="success"
+            )
+        )
+        (self.repo / "src" / "app.py").write_text("value = 4\n", encoding="utf-8")
+        reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="u2"))
+        self.assertIn("外部修改", reason)
+
     def test_manual_task_root_still_requires_baseline(self) -> None:
         self.touch_dirty("src/app.py", "value = 2\n")
         task_root = self.make_task_root("manual")
@@ -104,6 +136,64 @@ class BaselineAutoSnapshotMixin(object):
         self.save_baseline(task_root, "src/app.py", "value = 2\n")
         self.allow(self.write_tool("s1", "src/app.py", tool_id="m2"))
         self.assertFalse((self.state / "baselines").exists())
+
+    def test_substitution_redirect_target_is_incomplete_not_literal_path(self) -> None:
+        self.activate_auto()
+        _code, value, stderr = self.run_core(
+            self.shell("s1", "printf x >$(printf out)", tool_id="dyn-target")
+        )
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("命令内目录变化无法确定", stderr)
+        # 动态替换输出不当源码字面路径登记：没有 `$(` 或 `out` 名字的快照/目标。
+        keys = self.registered_targets()
+        self.assertFalse([key for key in keys if "$(" in key or key.endswith("::out")], keys)
+        baselines = self.state / "baselines"
+        names = [path.name for path in baselines.rglob("*")] if baselines.exists() else []
+        self.assertFalse([name for name in names if "$(" in name or name == "out"], names)
+
+    def test_until_condition_cd_never_registers_absent_root_target(self) -> None:
+        sub = self.repo / "sub"
+        sub.mkdir()
+        (sub / "app.py").write_text("USER-SUB\n", encoding="utf-8")
+        self.assertFalse((self.repo / "app.py").exists())
+        self.activate_auto()
+        _code, value, stderr = self.run_core(
+            self.shell("s1", "until cd sub; do true; done; printf x > app.py", tool_id="until-cd")
+        )
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("命令内目录变化无法确定", stderr)
+        # 不能把仓库根 app.py 登记成 absent origin/auto_baseline/成功目标/pending 目标。
+        keys = self.registered_targets()
+        self.assertFalse([key for key in keys if key.endswith("::app.py")], keys)
+        self.assertFalse(self.snapshots("app.py"))
+        # 真实目标独立写死为 sub/app.py，业务字节不变。
+        self.assertEqual((sub / "app.py").read_text(encoding="utf-8"), "USER-SUB\n")
+
+    def test_unknown_cwd_substitution_write_does_not_register_root_target(self) -> None:
+        sub = self.repo / "sub"
+        sub.mkdir()
+        (sub / "app.py").write_text("USER-SUB\n", encoding="utf-8")
+        self.activate_auto()
+        command = "until cd sub; do true; done; printf '%s' \"$(printf x > app.py)\""
+        _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="until-sub"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("命令内目录变化无法确定", stderr)
+        keys = self.registered_targets()
+        self.assertFalse([key for key in keys if key.endswith("::app.py")], keys)
+        self.assertFalse(self.snapshots("app.py"))
+        self.assertFalse((self.repo / "app.py").exists())
+        self.assertEqual((sub / "app.py").read_text(encoding="utf-8"), "USER-SUB\n")
+
+    def registered_targets(self) -> list:
+        """任务状态里登记过的 origin/成功/自动快照/pending 目标键。"""
+        keys = []
+        for task in task_states(self.state):
+            keys.extend((task.get("origins") or {}).keys())
+            keys.extend((task.get("last_success") or {}).keys())
+            keys.extend((task.get("auto_baseline") or {}).keys())
+            for entry in (task.get("pending_writes") or {}).values():
+                keys.extend(entry.get("targets") or [])
+        return keys
 
     def test_oversized_target_is_denied(self) -> None:
         big = self.repo / "src" / "big.py"
@@ -129,6 +219,68 @@ class BaselineAutoSnapshotMixin(object):
         self.activate_auto()
         reason = self.deny(self.write_tool("s1", "src/pipe.py", tool_id="f1"))
         self.assertIn("普通文件", reason)
+
+    def test_sort_output_snapshots_tracked_dirty_file(self) -> None:
+        """`sort -o <已跟踪且 dirty 的文件>`：tracked-dirty 分类下也按原字节首写快照。"""
+        target = self.repo / "src" / "app.py"
+        self.assertEqual(self.git("status", "--porcelain", "--", "src/app.py"), "")
+        target.write_text("value = 2\n", encoding="utf-8")
+        # `HookCase.git()` 会 strip 输出：未暂存的修改显示为 `M <path>`。
+        self.assertEqual(self.git("status", "--porcelain", "--", "src/app.py"), "M src/app.py")
+        self.activate_auto()
+        payload = self.shell("s1", "sort -o src/app.py src/app.py", tool_id="sort-tracked")
+        self.allow(payload)
+        saved = self.snapshots("src/app.py")
+        self.assertEqual(len(saved), 1, saved)
+        self.assertEqual(saved[0].read_bytes(), b"value = 2\n")
+        # 业务文件本身没被 Hook 改动（快照只是私有缓存）。
+        self.assertEqual(target.read_bytes(), b"value = 2\n")
+
+    def test_unicode_separator_patch_still_snapshots_original_bytes(self) -> None:
+        """hunk 正文含 U+2028 时目标仍可证明：首写必须快照原字节，不能按“不完整”跳过。"""
+        original = "a\u2028b\nUSER\n"
+        (self.repo / "src" / "app.py").write_text(original, encoding="utf-8")
+        self.activate_auto()
+        patch = (
+            "--- a/src/app.py\n"
+            "+++ b/src/app.py\n"
+            "@@ -1 +1 @@\n"
+            "-a\u2028b\n"
+            "+c\n"
+        )
+        payload = self.tool_payload("s1", "apply_patch", {"input": patch}, tool_id="uni-patch")
+        self.allow(payload)
+        saved = self.snapshots("src/app.py")
+        self.assertEqual(len(saved), 1, saved)
+        self.assertEqual(saved[0].read_bytes(), original.encode("utf-8"))
+
+    def test_compound_write_snapshots_real_target(self) -> None:
+        """复合命令（`cd` + 条件）里的真实写目标仍按原字节快照。"""
+        sub = self.repo / "sub"
+        sub.mkdir()
+        (sub / "app.py").write_text("value = 1\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "sub-app")
+        (sub / "app.py").write_text("USER SUB\n", encoding="utf-8")
+        self.activate_auto()
+        payload = self.shell("s1", "cd sub && printf x >> app.py", tool_id="compound-w")
+        self.allow(payload)
+        saved = self.snapshots("sub/app.py")
+        self.assertEqual(len(saved), 1, saved)
+        self.assertEqual(saved[0].read_text(encoding="utf-8"), "USER SUB\n")
+        self.assertEqual((sub / "app.py").read_text(encoding="utf-8"), "USER SUB\n")
+
+    def test_sort_output_snapshots_existing_file(self) -> None:
+        """`sort -o <dirty 文件>` 的写目标也按镜像快照规则保护。"""
+        target = self.repo / "sorted.txt"
+        target.write_text("USER SORTED\n", encoding="utf-8")
+        self.activate_auto()
+        payload = self.shell("s1", "sort -o sorted.txt src/app.py", tool_id="sort-w")
+        self.allow(payload)
+        saved = self.snapshots("sorted.txt")
+        self.assertEqual(len(saved), 1, saved)
+        self.assertEqual(saved[0].read_text(encoding="utf-8"), "USER SORTED\n")
+        self.assertEqual(target.read_text(encoding="utf-8"), "USER SORTED\n")
 
     def test_inactive_session_does_not_write_snapshots(self) -> None:
         self.auto_context()

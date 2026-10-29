@@ -373,6 +373,11 @@ class MissingSuccessPostTests(HookCase):
 
     host = "pi"
 
+    def setUp(self) -> None:
+        super().setUp()
+        # 三个用例都断言“没有可信成功 post 时缺手工基线必须 deny”：显式打开手工核对路径。
+        self.use_manual_baseline()
+
     def test_clean_pre_without_post_reclassifies(self) -> None:
         self.activate()
         self.allow(self.write_tool("s1", "src/app.py", tool_id="w1"))
@@ -419,6 +424,7 @@ class ShellCdWriteTargetTests(HookCase):
         self.sub_app = sub / "app.py"
 
     def test_relative_cd_target_is_checked(self) -> None:
+        self.use_manual_baseline()
         self.activate()
         # 仓库根的 app.py 干净：同一命令不切换目录时放行。
         self.allow(self.shell("s1", "printf x >> app.py", tool_id="cd-0"))

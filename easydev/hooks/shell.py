@@ -119,6 +119,7 @@ READ_COMMANDS = {
     "readlink",
     "stat",
     "wc",
+    "sort",
     "file",
     "md5sum",
     "sha256sum",
@@ -164,6 +165,31 @@ DISPATCH_TOOL_NAMES = {
     "invoke_subagent",
 }
 STATUS_SUBCOMMANDS = {"status", "wait", "cancel", "list", "poll", "result"}
+# 已建模的读取/搜索/写入与常见简单命令：其余命令名仍按读取未知披露。
+_KNOWN_COMMANDS = frozenset(
+    READ_COMMANDS
+    | SEARCH_COMMANDS
+    | WRITE_COMMANDS
+    | {
+        "git",
+        "echo",
+        "printf",
+        "true",
+        "false",
+        "pwd",
+        "cd",
+        "which",
+        "test",
+        "[",
+        "sed",
+        "perl",
+        "python",
+        "python3",
+        "node",
+        "curl",
+        "wget",
+    }
+)
 
 # 重定向按运算符分类：数字前缀只是被重定向的 fd，不是目标文件名。
 _REDIRECT_OPERATOR_RE = re.compile(r"^[0-9]*(&>>|&>|>>|>\||<<<|<<|<>|>|<)$")
@@ -188,6 +214,8 @@ class Analysis(object):
         self.write_unknown = False
         self.read_unknown = False
         self.recursive_follow = False
+        # 已识别为复合结构但无法安全配对/归属：reviewer 侧的窄拒绝类别。
+        self.compound_unresolved = False
 
     def merge(self, other: "Analysis") -> None:
         self.opaque = self.opaque or other.opaque
@@ -199,6 +227,7 @@ class Analysis(object):
         self.write_unknown = self.write_unknown or other.write_unknown
         self.read_unknown = self.read_unknown or other.read_unknown
         self.recursive_follow = self.recursive_follow or other.recursive_follow
+        self.compound_unresolved = self.compound_unresolved or other.compound_unresolved
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -210,6 +239,7 @@ class Analysis(object):
             "write_unknown": self.write_unknown,
             "read_unknown": self.read_unknown,
             "recursive_follow": self.recursive_follow,
+            "compound_unresolved": self.compound_unresolved,
         }
 
 
@@ -221,15 +251,28 @@ class Token(object):
     """一个命令行 token；保留引号语义，避免把字面数据当成执行行为。
 
     `operator` 只在裸（未引用）位置出现，`dynamic` 表示内容可能发生替换；单引号
-    与反斜杠转义的内容两者都为假。
+    与反斜杠转义的内容两者都为假。`raw_source` 是同一份词法结果上的原始片段
+    （含引号与反斜杠），替换扫描按它判定真实求值，禁止用去引用后的 `text` 反推。
+    `quoted` 是「裸写 vs 被引用/转义」的事实：`text` 已去引用，保留字与结构关键
+    字只认裸写，所以它必须由词法阶段记录，不能用 `dynamic` 反推。手工构造的
+    token 可以不提供来源（保持既有构造调用兼容），默认按裸写处理。
     """
 
-    __slots__ = ("text", "operator", "dynamic")
+    __slots__ = ("text", "operator", "dynamic", "raw_source", "quoted")
 
-    def __init__(self, text: str, operator: bool = False, dynamic: bool = False) -> None:
+    def __init__(
+        self,
+        text: str,
+        operator: bool = False,
+        dynamic: bool = False,
+        raw_source: Optional[str] = None,
+        quoted: bool = False,
+    ) -> None:
         self.text = text
         self.operator = operator
         self.dynamic = dynamic
+        self.raw_source = raw_source
+        self.quoted = quoted
 
 
 def _is_fd_word(word: str) -> bool:
@@ -241,265 +284,737 @@ def _is_fd_word(word: str) -> bool:
     return bool(_FD_WORD_RE.match(word))
 
 
-def _redirect_word(text: str, index: int) -> Tuple[str, bool, int, bool]:
-    """解析 `>&` 之后的完整 word：引号、转义与词边界按 Bash 语义。
+_SPACE_CHARS = " \t\n"
+_TOP_LEVEL_OPERATOR_CHARS = "|;&<>"
 
-    返回 (未引用值, 是否可能展开, 结束位置, 引号是否闭合)。只消费数字前缀会把
-    `>&1.txt` 拆成 `>&1` + `.txt`，把真实文件写入伪装成 fd 复制。
+
+def _is_standalone_group_char(text: str, index: int) -> bool:
+    """裸 `{`/`}` 只有独立成词才是分组符号：`foo{a,b}`、find 的 `{}` 仍是 word。"""
+    following = text[index + 1] if index + 1 < len(text) else ""
+    return not following or following in _SPACE_CHARS + "|;&<>()"
+
+
+def _scan_structure(text: str, index: int = 0):
+    """统一词法上下文：逐字符产出 `(位置, 种类, 嵌套层数, 框架类型)`。
+
+    引号/转义/注释/命令替换嵌套只在这里定义一次：续行预处理、词切分与替换配对都
+    消费同一份规则，避免各写一套“近似”状态机。每层保存 quote 与词首状态，双引号
+    内进入 `$()`/反引号时压入新的命令上下文，闭合后恢复外层引号。种类：
+
+    - `code`：当前层代码字符（嵌套层数 >0 表示位于命令替换内部）
+    - `op`/`space`/`grammar`：顶层运算符字符/空白/裸 `( ) { }`
+    - `quoted`/`literal`：双引号/单引号内的字面字符
+    - `quote_open`/`quote_close`：引号定界符本身
+    - `escape`：反斜杠转义对的首字符（被转义字符不再单独产出）
+    - `continuation`：反斜杠 + 真实换行（单引号外可删除）
+    - `comment`：注释字符（词首 `#` 起至物理行尾，反斜杠不续行）
+    - `open`/`close`：进入/离开 `$(...)` 或反引号（框架类型标识是哪一个）
     """
-    word: List[str] = []
-    dynamic = False
+    stack: List[List[object]] = []
     quote: Optional[str] = None
+    word_start = True
     i = index
     length = len(text)
     while i < length:
         char = text[i]
-        if quote is not None:
-            if char == "\\" and quote == '"' and i + 1 < length:
-                i += 1
-                word.append(text[i])
-                dynamic = True
-            elif char == quote:
+        depth = len(stack)
+        if quote == "'":
+            if char == "'":
                 quote = None
+                yield (i, "quote_close", depth, None)
             else:
-                word.append(char)
-                if quote == '"':
-                    dynamic = True
+                yield (i, "literal", depth, None)
+            i += 1
+            continue
+        if quote == '"':
+            if char == "\\" and i + 1 < length:
+                yield (i, "continuation" if text[i + 1] == "\n" else "escape", depth, None)
+                i += 2
+                continue
+            if char == '"':
+                quote = None
+                yield (i, "quote_close", depth, None)
+                i += 1
+                continue
+            if char == "$" and text.startswith("$(", i):
+                stack.append(["$(", 1, quote])
+                quote = None
+                word_start = True
+                yield (i, "open", depth, "$(")
+                i += 2
+                continue
+            if char == "`":
+                stack.append(["`", 0, quote])
+                quote = None
+                word_start = True
+                yield (i, "open", depth, "`")
+                i += 1
+                continue
+            yield (i, "quoted", depth, None)
+            i += 1
+            continue
+        if char == "\\" and i + 1 < length:
+            if text[i + 1] == "\n":
+                # 续行是纯删除：它不产生词，也不改变词首状态。若在这里把
+                # word_start 置假，`\`+换行 之后的物理行首 `#` 会被当成词内
+                # 字符而不是注释，注释末尾的反斜杠又会被当成续行删掉，
+                # 结果整行（含其后的真实命令）被吞进注释。
+                yield (i, "continuation", depth, None)
+            else:
+                yield (i, "escape", depth, None)
+                word_start = False
+            i += 2
+            continue
+        if stack and stack[-1][0] == "`":
+            # 反引号内容整体当一个子上下文：内层 `$(...)` 由递归分析重新发现。
+            if char == "`":
+                frame = stack.pop()
+                quote = frame[2]  # type: ignore[assignment]
+                word_start = False
+                yield (i, "close", len(stack), "`")
+            else:
+                yield (i, "code", depth, None)
             i += 1
             continue
         if char in "'\"":
             quote = char
+            word_start = False
+            yield (i, "quote_open", depth, None)
             i += 1
             continue
-        if char == "\\" and i + 1 < length:
-            i += 1
-            word.append(text[i])
-            dynamic = True
+        if char == "$" and text.startswith("$(", i):
+            stack.append(["$(", 1, None])
+            word_start = False
+            yield (i, "open", depth, "$(")
+            i += 2
+            continue
+        if char == "`":
+            stack.append(["`", 0, None])
+            word_start = False
+            yield (i, "open", depth, "`")
             i += 1
             continue
-        if char in " \t\n" or char in "|;&<>":
-            break
-        word.append(char)
-        if char in "$`":
-            dynamic = True
+        if stack:
+            frame = stack[-1]
+            if char == "#" and word_start:
+                # 内层注释与顶层一样止于物理行尾：注释末尾的反斜杠不续行。
+                while i < length and text[i] != "\n":
+                    yield (i, "comment", depth, None)
+                    i += 1
+                word_start = True
+                continue
+            if char in "()":
+                frame[1] = int(frame[1]) + (1 if char == "(" else -1)
+                if char == ")" and int(frame[1]) == 0:
+                    stack.pop()
+                    quote = frame[2]  # type: ignore[assignment]
+                    word_start = False
+                    yield (i, "close", len(stack), "$(")
+                else:
+                    yield (i, "code", depth, None)
+                    word_start = char == "("
+                i += 1
+                continue
+            yield (i, "code", depth, None)
+            word_start = char in _SPACE_CHARS + "|;&("
+            i += 1
+            continue
+        # 顶层、未引用
+        if char in _SPACE_CHARS:
+            word_start = True
+            yield (i, "space", 0, None)
+            i += 1
+            continue
+        if char == "#" and word_start:
+            while i < length and text[i] != "\n":
+                yield (i, "comment", 0, None)
+                i += 1
+            continue
+        if char in "()" or (
+            word_start and char in "{}" and _is_standalone_group_char(text, i)
+        ):
+            word_start = True
+            yield (i, "grammar", 0, None)
+            i += 1
+            continue
+        yield (i, "op" if char in _TOP_LEVEL_OPERATOR_CHARS else "code", 0, None)
+        word_start = char in _SPACE_CHARS + "|;&("
         i += 1
-    return "".join(word), dynamic, i, quote is None
+
+
+def _scan_word(text: str, index: int) -> Tuple[int, str, bool, bool]:
+    """消费一个词：返回 (结束位置, 去引用文本, 是否可能展开, 引号是否闭合)。
+
+    引号、转义与命令替换嵌套都交给 `_scan_structure`，因此 `>&1.txt`、`$(...)`
+    内部空白与重定向 word 边界共用同一份词法规则。词内替换整体保留在 `text` 里，
+    具体执行语义由 `raw_source` 上的替换扫描决定。
+    """
+    pieces: List[str] = []
+    dynamic = False
+    end = index
+    opened = 0
+    closed_count = 0
+    for position, kind, depth, frame in _scan_structure(text, index):
+        if kind in {"space", "op", "grammar"}:
+            break
+        if kind == "comment":
+            # 注释只在词首（含命令替换内部）开始；它属于该替换的源码，不结束词。
+            pieces.append(text[position])
+            end = position + 1
+            continue
+        if kind == "escape":
+            if position + 1 < len(text):
+                pieces.append(text[position + 1])
+                end = position + 2
+            else:
+                end = position
+            continue
+        if kind == "continuation":
+            end = position + 2
+            continue
+        if kind == "quote_open":
+            opened += 1
+            if text[position] == '"':
+                dynamic = True
+            end = position + 1
+            continue
+        if kind == "quote_close":
+            closed_count += 1
+            end = position + 1
+            continue
+        if kind in {"quoted", "literal"}:
+            pieces.append(text[position])
+            end = position + 1
+            continue
+        if kind == "open":
+            opened += 1
+            dynamic = True
+            pieces.append("$(" if frame == "$(" else "`")
+            end = position + (2 if frame == "$(" else 1)
+            continue
+        if kind == "close":
+            closed_count += 1
+            pieces.append(")" if frame == "$(" else "`")
+            end = position + 1
+            continue
+        pieces.append(text[position])
+        if depth == 0:
+            dynamic = True
+        end = position + 1
+    return end, "".join(pieces), dynamic, opened == closed_count
+
+
+def _substitution_spans(text: str) -> Tuple[List[str], bool]:
+    """单趟栈式配对：返回 (要递归分析的替换内容, 是否存在未闭合替换)。
+
+    完整跨度优先：未闭合的节点只丢自己，其中已完整的内层仍然提升为结果；选中
+    区间按源码顺序且互不重叠，扫描、选择与输出都是 O(n)。
+    """
+    spans: List[Dict[str, object]] = []
+    stack: List[int] = []
+    for position, kind, _depth, frame in _scan_structure(text):
+        if kind == "open":
+            parent = stack[-1] if stack else None
+            spans.append(
+                {
+                    "start": position + (2 if frame == "$(" else 1),
+                    "end": None,
+                    "parent": parent,
+                    "children": [],
+                }
+            )
+            if parent is not None:
+                children = spans[parent]["children"]
+                children.append(len(spans) - 1)  # type: ignore[union-attr]
+            stack.append(len(spans) - 1)
+        elif kind == "close" and stack:
+            spans[stack.pop()]["end"] = position
+    unclosed = any(span["end"] is None for span in spans)
+    selected: List[str] = []
+    pending = [index for index, span in enumerate(spans) if span["parent"] is None]
+    pending.reverse()
+    while pending:
+        span_index = pending.pop()
+        span = spans[span_index]
+        end = span["end"]
+        if end is not None:
+            selected.append(text[int(span["start"]) : int(end)])  # type: ignore[arg-type]
+            continue
+        children = list(span["children"])  # type: ignore[arg-type]
+        children.reverse()
+        pending.extend(children)
+    return selected, unclosed
+
+
+def _has_evaluation(raw: str) -> bool:
+    """该原始片段是否含真实命令替换（未闭合也算，不能用去引用文本反推）。"""
+    contents, unclosed = _substitution_spans(raw)
+    return bool(contents) or unclosed
 
 
 def _strip_line_continuations(text: str) -> str:
-    """删除单引号外的 `\\`+真实换行（Bash 行续接），单引号内保持字面。
+    """删除单引号外的 `\\`+真实换行（Bash 行续接），其余字节原样保留。
 
     必须在任何词法/运算符判定之前整体完成：`>` + 反斜杠 + 真实换行 + `>1.txt`
     在 Bash 里是 `>>1.txt`。若只在校验 word 时消除续接，运算符识别仍看原始相邻
     字符，会把第二个 `>` 当成文件名目标，真实文件写入绕过检查。双引号内的续接
     同样消失；其他反斜杠转义原样保留给词法阶段处理。
 
-    引号状态必须与注释和词边界共用一份词法状态：`#` 只在词首（行首、空白或
-    运算符之后）开始注释，注释里的引号没有语法作用。注释到**物理行尾**结束
-    （`\\`+换行在注释里不是续接）：让注释跨行会把下一行的真实命令当注释文本
-    静默放行，例如 `# note \\` + 换行 + `git reset --hard` 在 Bash 里确实执行。
+    引号/注释/嵌套命令替换共用 `_scan_structure` 的同一份词法状态：`#` 只在词首
+    开始注释且止于**物理行尾**（注释里的反斜杠不续行），内层单引号与内层注释按
+    各自语境判定，因此 `$(printf '%s' 'literal\\` + 换行 + `x')` 的字节不被删除。
     """
-    stripped: List[str] = []
-    quote: Optional[str] = None
-    comment = False
-    word_start = True
-    i = 0
-    length = len(text)
-    while i < length:
-        char = text[i]
-        if comment:
-            # 注释内的字符（引号、反斜杠）都没有语法作用，只找物理行尾。
-            if char == "\n":
-                comment = False
-                word_start = True
-            stripped.append(char)
-            i += 1
+    pieces: List[str] = []
+    cursor = 0
+    for position, kind, _depth, _frame in _scan_structure(text):
+        if kind != "continuation":
             continue
-        if quote == "'":
-            if char == "'":
-                quote = None
-            stripped.append(char)
-            i += 1
-            continue
-        if char == "\\" and i + 1 < length:
-            if text[i + 1] == "\n":
-                # 续接整体消失；词首与引号状态不变，下一字符仍按原语境解释。
-                i += 2
-                continue
-            # 转义保留原样：是否取消特殊含义由引号语境下的词法阶段决定。
-            stripped.append(char)
-            stripped.append(text[i + 1])
-            word_start = False
-            i += 2
-            continue
-        if quote == '"':
-            if char == '"':
-                quote = None
-            stripped.append(char)
-            i += 1
-            continue
-        if char in "'\"":
-            quote = char
-            word_start = False
-            stripped.append(char)
-            i += 1
-            continue
-        if char == "#" and word_start:
-            comment = True
-            stripped.append(char)
-            i += 1
-            continue
-        stripped.append(char)
-        # 与 tokenize 的空白/运算符集合一致：只有这些字符之后再出现 `#` 才是词首。
-        word_start = char in " \t\n|;&<>"
-        i += 1
-    return "".join(stripped)
+        pieces.append(text[cursor:position])
+        cursor = position + 2
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def tokenize(text: str) -> Tuple[List[Token], bool]:
-    """按引号/转义/注释状态切成 token；返回 (tokens, closed)。
+    """按引号/转义/注释/替换嵌套切成 token；返回 (tokens, closed)。
 
     入口先消除单引号外的行续接，argv、重定向运算符与目标、cwd 因此共用同一
-    份词法结果。
+    份词法结果。词内 `$(...)`/反引号整体保留在一个 token 里（内部空白与 `;` 不再
+    切词），裸 `( ) { }` 是语法 token，而 `foo{a,b}`、find 的 `{}` 仍是 word。
     """
     text = _strip_line_continuations(text)
     tokens: List[Token] = []
-    buffer: List[str] = []
-    started = False
-    dynamic = False
-    quote: Optional[str] = None
-    i = 0
-    length = len(text)
+    previous_end = -1
     closed = True
 
-    def flush() -> None:
-        nonlocal buffer, started, dynamic
-        if started:
-            tokens.append(Token("".join(buffer), False, dynamic))
-        buffer = []
-        started = False
-        dynamic = False
+    def emit(token: Token, end: int) -> None:
+        nonlocal previous_end
+        tokens.append(token)
+        previous_end = end
 
-    def emit_operator(value: str) -> None:
-        flush()
-        tokens.append(Token(value, True))
-
+    i = 0
+    length = len(text)
     while i < length:
         char = text[i]
-        if quote is not None:
-            if char == "\\" and quote == '"' and i + 1 < length:
-                i += 1
-                buffer.append(text[i])
-            elif char == quote:
-                quote = None
-            else:
-                buffer.append(char)
-            i += 1
-            continue
-        if char in "'\"":
-            quote = char
-            started = True
-            if char == '"':
-                dynamic = True
-            i += 1
-            continue
-        if char == "\\" and i + 1 < length:
-            i += 1
-            buffer.append(text[i])
-            started = True
-            i += 1
-            continue
         if char in " \t":
-            flush()
             i += 1
             continue
-        if char == "#" and not started:
+        if char == "#":
             while i < length and text[i] != "\n":
                 i += 1
             continue
-        if text.startswith("&&", i) or text.startswith("||", i):
-            emit_operator(text[i : i + 2])
+        if text.startswith("&&", i) or text.startswith("||", i) or text.startswith(";;", i):
+            emit(Token(text[i : i + 2], True, False, text[i : i + 2]), i + 2)
             i += 2
             continue
         if char in "|;&\n":
-            emit_operator(char)
+            emit(Token(char, True, False, char), i + 1)
             i += 1
             continue
         if char in "<>":
-            if started and "".join(buffer).isdigit():
-                prefix = "".join(buffer)
-                buffer = []
-                started = False
-                dynamic = False
-            else:
-                prefix = ""
-                flush()
+            prefix = ""
+            if (
+                tokens
+                and previous_end == i
+                and not tokens[-1].operator
+                and re.match(r"^[0-9]+$", tokens[-1].text)
+            ):
+                # 数字前缀只是被重定向的 fd；`> 1`、`2> 1` 仍是普通文件。
+                prefix = tokens.pop().text
             op = prefix + char
-            if i + 1 < length and text[i + 1] == char and char != "<":
-                op += char
-                i += 1
-            if i + 1 < length and char == ">" and text[i + 1] == "|":
-                op += "|"
-                i += 1
-            if i + 1 < length and char == "<" and text[i + 1] == ">":
-                op += ">"
-                i += 1
-            if i + 1 < length and text[i + 1] == "&" and op.endswith(">"):
-                # `&` 紧跟 `>` 才是 fd 复制：`>&1`/`2>&1`/`>&-`。`2> 1` 是写
-                # 普通文件 `1`；`>&file` 等价于 `&>file`，仍是写重定向。word 按
-                # 完整词边界判定，`>&1.txt` 的目标是文件 `1.txt`。
-                file_op = "&>" + (">" if op.endswith(">>") else "")
-                word, word_dynamic, end, word_closed = _redirect_word(text, i + 2)
+            i += 1
+            if char == "<":
+                if i < length and text[i] == "<":
+                    if i + 1 < length and text[i + 1] == "<":
+                        op += "<<"
+                        i += 2
+                    else:
+                        op += "<"
+                        i += 1
+                elif i < length and text[i] == ">":
+                    op += ">"
+                    i += 1
+            else:
+                if i < length and text[i] == ">":
+                    op += ">"
+                    i += 1
+                elif i < length and text[i] == "|":
+                    op += "|"
+                    i += 1
+            if i < length and text[i] == "&" and op.endswith((">", "<")):
+                # `&` 紧跟重定向才是 fd 复制/关闭或 `>&word`：`>&1`/`2>&1`/`>&-` 是
+                # fd 操作，`>&1.txt`/`>&$(...)` 的整段 word 是文件目标。
+                file_op = "<" if op.endswith("<") else "&>" + (">" if op.endswith(">>") else "")
+                word_start = i + 1
+                end, word, word_dynamic, word_closed = _scan_word(text, word_start)
                 closed = closed and word_closed
                 if not word:
                     # `>& 1` 与 `>&1` 同样是 fd 复制；`>& 1.txt` 的目标是下一个 token。
                     look = end
                     while look < length and text[look] in " \t":
                         look += 1
-                    spaced, _spaced_dynamic, spaced_end, spaced_closed = _redirect_word(
-                        text, look
-                    )
-                    if spaced and _is_fd_word(spaced):
+                    spaced_end, spaced, _spaced_dynamic, spaced_closed = _scan_word(text, look)
+                    if (
+                        spaced
+                        and _is_fd_word(spaced)
+                        and not _has_evaluation(text[look:spaced_end])
+                    ):
                         closed = closed and spaced_closed
-                        tokens.append(Token(op + "&" + spaced, True))
+                        emit(Token(op + "&" + spaced, True, False, op + "&" + spaced), spaced_end)
                         i = spaced_end
                         continue
-                    tokens.append(Token(file_op, True))
+                    emit(Token(file_op, True, False, file_op), end)
                     i = end
                     continue
-                if _is_fd_word(word):
-                    tokens.append(Token(op + "&" + word, True))
+                raw_word = text[word_start:end]
+                if _is_fd_word(word) and not _has_evaluation(raw_word):
+                    emit(Token(op + "&" + word, True, False, op + "&" + word), end)
                 else:
-                    tokens.append(Token(file_op, True))
-                    tokens.append(Token(word, False, word_dynamic))
+                    emit(Token(file_op, True, False, file_op), word_start)
+                    emit(
+                        Token(word, False, word_dynamic, raw_word, raw_word != word),
+                        end,
+                    )
                 i = end
                 continue
-            tokens.append(Token(op, True))
+            emit(Token(op, True, False, op), i)
+            continue
+        if char in "()" or (char in "{}" and _is_standalone_group_char(text, i)):
+            emit(Token(char, True, False, char), i + 1)
             i += 1
             continue
-        buffer.append(char)
-        started = True
-        dynamic = True
-        i += 1
-    if quote is not None:
-        closed = False
-    flush()
+        end, word, dynamic, word_closed = _scan_word(text, i)
+        closed = closed and word_closed
+        if end <= i:
+            end = i + 1
+            word = text[i]
+            dynamic = True
+        raw_word = text[i:end]
+        emit(Token(word, False, dynamic, raw_word, raw_word != word), end)
+        i = end
     return tokens, closed
 
 
-def _split_segments(tokens: Iterable[Token]) -> List[List[Token]]:
-    segments: List[List[Token]] = []
-    current: List[Token] = []
-    for token in tokens:
-        if token.operator and token.text in {"&&", "||", "|", ";", "&", "\n"}:
-            if current:
-                segments.append(current)
-            current = []
+_SEPARATOR_OPERATORS = frozenset({";", "&", "\n"})
+# 管道绑定比 `&&`/`||` 更紧：`cd x && a | b` 是 `cd x && (a | b)`。
+_ANDOR_OPERATORS = frozenset({"&&", "||"})
+_PIPE_OPERATORS = frozenset({"|"})
+_SIMPLE_STOP_OPERATORS = frozenset(
+    {";", "&", "\n", "&&", "||", "|", "(", ")", "{", "}", ";;"}
+)
+# 无归属时不得当普通 argv 静默放行的保留字。
+_UNOWNED_KEYWORDS = frozenset(
+    {"then", "elif", "else", "fi", "do", "done", "esac", "in"}
+)
+
+
+def _word_at(tokens: List[Token], index: int, value: str) -> bool:
+    """裸写的保留字：`'fi'`/`\\fi` 是普通词，不是结构关键字或结束符。"""
+    if index >= len(tokens):
+        return False
+    token = tokens[index]
+    return not token.operator and not token.quoted and token.text == value
+
+
+def _operator_at(tokens: List[Token], index: int, values: Iterable[str]) -> bool:
+    return index < len(tokens) and tokens[index].operator and tokens[index].text in values
+
+
+def _consume_redirects(tokens: List[Token], index: int) -> Tuple[List[Token], int]:
+    """收集分组后的重定向 token（`( list ) > out` 的目标在组入口 cwd 打开）。"""
+    collected: List[Token] = []
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.operator or token.text in _SIMPLE_STOP_OPERATORS:
+            break
+        collected.append(token)
+        index += 1
+        if _REDIRECT_DUP_RE.match(token.text):
+            # fd 复制/关闭自带目标，不消费下一个 token。
             continue
-        current.append(token)
-    if current:
-        segments.append(current)
-    return segments
+        if index < len(tokens) and not tokens[index].operator:
+            collected.append(tokens[index])
+            index += 1
+    return collected, index
+
+
+def _parse_sequence(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    """解析一层命令列表：返回 (节点或 None, 结束位置, 是否成功)。"""
+    if depth > MAX_UNWRAP_DEPTH:
+        return None, index, False
+    parts: List[Dict[str, object]] = []
+    while True:
+        # 空段/行首与连续的列表分隔符不构成命令（`# 注释` 行尾换行、`a;;` 之类）。
+        while _operator_at(tokens, index, _SEPARATOR_OPERATORS):
+            index += 1
+        node, index, ok = _parse_andor(tokens, index, terminators, depth)
+        if not ok:
+            return ({"kind": "sequence", "parts": parts} if parts else None), index, False
+        if node is None:
+            break
+        if _operator_at(tokens, index, {"&"}):
+            # `&` 让前面的列表在子 shell 里异步执行：副作用仍真实发生，但
+            # 其中的 `cd` 不外泄到父 shell。
+            node = {"kind": "async", "body": node}
+        parts.append(node)
+    if not parts:
+        return None, index, True
+    return {"kind": "sequence", "parts": parts}, index, True
+
+
+def _parse_pipeline(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    """解析一条管道（`cmd | cmd`）：管道比 `&&`/`||` 绑得更紧。"""
+    node, index, ok = _parse_command(tokens, index, terminators, depth)
+    if not ok or node is None:
+        return None, index, ok
+    while _operator_at(tokens, index, _PIPE_OPERATORS):
+        index += 1
+        # 与 `&&`/`||` 一致：管道符后的换行是续接。
+        while _operator_at(tokens, index, {"\n"}):
+            index += 1
+        right, index, ok = _parse_command(tokens, index, terminators, depth)
+        if not ok or right is None:
+            return None, index, False
+        node = {"kind": "chain", "connector": "|", "left": node, "right": right}
+    return node, index, True
+
+
+def _parse_andor(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    node, index, ok = _parse_pipeline(tokens, index, terminators, depth)
+    if not ok or node is None:
+        return None, index, ok
+    while _operator_at(tokens, index, _ANDOR_OPERATORS):
+        connector = tokens[index].text
+        index += 1
+        # bash 在 `&&`/`||`/`|` 后继续等待右侧命令：这里的换行是续接而不是空
+        # 命令。当成空段会让整条命令变成无法归属的复合结构，危险 Git 也从
+        # `analysis.git` 里消失（只能靠 opaque 兜底），因此按续接跳过。
+        while _operator_at(tokens, index, {"\n"}):
+            index += 1
+        right, index, ok = _parse_pipeline(tokens, index, terminators, depth)
+        if not ok or right is None:
+            return None, index, False
+        node = {"kind": "chain", "connector": connector, "left": node, "right": right}
+    return node, index, True
+
+
+def _parse_command(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    negated = False
+    while index < len(tokens) and not tokens[index].operator and tokens[index].text == "!":
+        negated = not negated
+        index += 1
+    if index >= len(tokens):
+        return None, index, not negated
+    token = tokens[index]
+    node: Dict[str, object]
+    if token.quoted:
+        # 被引用/转义的词是普通命令词：既不是结束符，也不是 if/for/case/函数等关键字。
+        node, index = _collect_simple(tokens, index)
+        if node is None:
+            return None, index, False
+    elif token.operator:
+        if token.text in terminators:
+            return None, index, True
+        if token.text in {"(", "{"}:
+            closer = ")" if token.text == "(" else "}"
+            body, index, ok = _parse_sequence(
+                tokens, index + 1, set(terminators) | {closer}, depth + 1
+            )
+            if not ok or not _operator_at(tokens, index, {closer}):
+                return None, index, False
+            redirects, index = _consume_redirects(tokens, index + 1)
+            node = {
+                "kind": "subshell" if closer == ")" else "brace",
+                "body": body,
+                "redirects": redirects,
+            }
+        elif token.text in _SIMPLE_STOP_OPERATORS:
+            return None, index, False
+        else:
+            # 不是分隔符/分组的运算符开头（如 `> app.py`、`2> app.py`）仍是简单段。
+            node, index = _collect_simple(tokens, index)
+            if node is None:
+                return None, index, False
+    elif token.text in terminators:
+        return None, index, True
+    elif token.text in _UNOWNED_KEYWORDS or token.text == "function":
+        # 无法归属的关键字不能当成普通 argv 静默放行（函数定义不在有限语法内）。
+        return None, index, False
+    elif token.text == "if":
+        node, index, ok = _parse_if(tokens, index, terminators, depth)
+        if not ok:
+            return None, index, False
+    elif token.text in {"while", "until"}:
+        node, index, ok = _parse_loop(tokens, index, terminators, depth)
+        if not ok:
+            return None, index, False
+    elif token.text == "for":
+        node, index, ok = _parse_for(tokens, index, terminators, depth)
+        if not ok:
+            return None, index, False
+    elif token.text == "case":
+        node, index, ok = _parse_case(tokens, index, terminators, depth)
+        if not ok:
+            return None, index, False
+    else:
+        node, index = _collect_simple(tokens, index)
+        if node is None:
+            return None, index, False
+    if negated:
+        node = {"kind": "negated", "body": node}
+    return node, index, True
+
+
+def _collect_simple(
+    tokens: List[Token], index: int
+) -> Tuple[Optional[Dict[str, object]], int]:
+    simple: List[Token] = []
+    while index < len(tokens):
+        candidate = tokens[index]
+        if candidate.operator and candidate.text in _SIMPLE_STOP_OPERATORS:
+            if candidate.text in {"{", "}"}:
+                # 花括号只在**命令位置**才是分组：已经进入 argv 时它是普通词
+                # （`printf '%s' {`、`echo }` 都合法）。
+                simple.append(Token(candidate.text, False, False, candidate.raw_source))
+                index += 1
+                continue
+            break
+        simple.append(candidate)
+        index += 1
+    if not simple:
+        return None, index
+    return {"kind": "simple", "tokens": simple}, index
+
+
+def _parse_if(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    clauses: List[Tuple[Optional[Dict[str, object]], Optional[Dict[str, object]]]] = []
+    index += 1
+    body_terms = set(terminators) | {"elif", "else", "fi"}
+    while True:
+        cond, index, ok = _parse_sequence(tokens, index, set(terminators) | {"then"}, depth + 1)
+        if not ok or not _word_at(tokens, index, "then"):
+            return None, index, False
+        body, index, ok = _parse_sequence(tokens, index + 1, body_terms, depth + 1)
+        if not ok:
+            return None, index, False
+        clauses.append((cond, body))
+        if not _word_at(tokens, index, "elif"):
+            break
+        index += 1
+    else_body: Optional[Dict[str, object]] = None
+    if _word_at(tokens, index, "else"):
+        else_body, index, ok = _parse_sequence(
+            tokens, index + 1, set(terminators) | {"fi"}, depth + 1
+        )
+        if not ok:
+            return None, index, False
+    if not _word_at(tokens, index, "fi"):
+        return None, index, False
+    return {"kind": "if", "clauses": clauses, "else_body": else_body}, index + 1, True
+
+
+def _parse_loop(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    keyword = tokens[index].text
+    cond, index, ok = _parse_sequence(tokens, index + 1, set(terminators) | {"do"}, depth + 1)
+    if not ok or not _word_at(tokens, index, "do"):
+        return None, index, False
+    body, index, ok = _parse_sequence(tokens, index + 1, set(terminators) | {"done"}, depth + 1)
+    if not ok or not _word_at(tokens, index, "done"):
+        return None, index, False
+    return {"kind": "loop", "keyword": keyword, "cond": cond, "body": body}, index + 1, True
+
+
+def _parse_for(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    index += 1
+    if index >= len(tokens) or tokens[index].operator:
+        return None, index, False
+    name = tokens[index].text
+    index += 1
+    words: List[Token] = []
+    if _word_at(tokens, index, "in"):
+        index += 1
+        while index < len(tokens) and not _operator_at(tokens, index, _SEPARATOR_OPERATORS):
+            if tokens[index].operator:
+                return None, index, False
+            words.append(tokens[index])
+            index += 1
+        if _operator_at(tokens, index, _SEPARATOR_OPERATORS):
+            index += 1
+    elif _operator_at(tokens, index, _SEPARATOR_OPERATORS):
+        index += 1
+    if not _word_at(tokens, index, "do"):
+        return None, index, False
+    body, index, ok = _parse_sequence(tokens, index + 1, set(terminators) | {"done"}, depth + 1)
+    if not ok or not _word_at(tokens, index, "done"):
+        return None, index, False
+    return {"kind": "for", "name": name, "words": words, "body": body}, index + 1, True
+
+
+def _parse_case(
+    tokens: List[Token], index: int, terminators: Iterable[str], depth: int
+) -> Tuple[Optional[Dict[str, object]], int, bool]:
+    index += 1
+    selector: List[Token] = []
+    while index < len(tokens) and not _word_at(tokens, index, "in"):
+        if tokens[index].operator:
+            return None, index, False
+        selector.append(tokens[index])
+        index += 1
+    if not _word_at(tokens, index, "in"):
+        return None, index, False
+    index += 1
+    items: List[Tuple[List[Token], Optional[Dict[str, object]]]] = []
+    while True:
+        if _word_at(tokens, index, "esac"):
+            index += 1
+            break
+        if index >= len(tokens):
+            return None, index, False
+        if _operator_at(tokens, index, {"("}):
+            index += 1
+        patterns: List[Token] = []
+        closed_pattern = False
+        while index < len(tokens):
+            token = tokens[index]
+            if token.operator and token.text == ")":
+                index += 1
+                closed_pattern = True
+                break
+            if token.operator and token.text != "|":
+                return None, index, False
+            patterns.append(token)
+            index += 1
+        if not closed_pattern:
+            return None, index, False
+        body, index, ok = _parse_sequence(
+            tokens, index, set(terminators) | {";;", "esac"}, depth + 1
+        )
+        if not ok:
+            return None, index, False
+        items.append((patterns, body))
+        if _operator_at(tokens, index, {";;"}):
+            index += 1
+            continue
+        if index >= len(tokens) or _word_at(tokens, index, "esac"):
+            continue
+        return None, index, False
+    return {"kind": "case", "selector": selector, "items": items}, index, True
 
 
 def _looks_like_option(token: str) -> bool:
@@ -514,7 +1029,15 @@ def _redirect_base(text: str) -> Optional[str]:
 
 def _strip_redirects(
     tokens: List[Token],
+    word_effects: Optional[Dict[int, Dict[str, bool]]] = None,
+    analysis: Optional[Analysis] = None,
 ) -> Tuple[List[str], List[Token], List[Tuple[str, str]], bool]:
+    """剥离重定向与前置赋值；返回 (argv, argv_tokens, redirects, opaque)。
+
+    `word_effects` 是按 token 位置索引的求值信息，用于把动态重定向目标分流成
+    “未知副作用”而不是源码字面路径；它不能改变 argv 或静态重定向的意义。
+    """
+    effects = word_effects or {}
     argv: List[str] = []
     argv_tokens: List[Token] = []
     redirects: List[Tuple[str, str]] = []
@@ -534,6 +1057,23 @@ def _strip_redirects(
                 index += 2
                 continue
             if index + 1 < len(tokens):
+                effect = effects.get(index + 1)
+                if (
+                    base != "<<<"
+                    and effect
+                    and (effect.get("dynamic") or effect.get("unclosed"))
+                ):
+                    # 含真实命令替换的文件目标不是源码名路径：按方向记未知副作用。
+                    if analysis is not None:
+                        if base in _WRITE_REDIRECTS:
+                            analysis.writes.append(
+                                {"kind": "redirect", "target": None, "complete": False}
+                            )
+                            analysis.write_unknown = True
+                        if base in _READ_REDIRECTS:
+                            analysis.read_unknown = True
+                    index += 2
+                    continue
                 redirects.append((base, tokens[index + 1].text))
                 index += 2
                 continue
@@ -567,34 +1107,6 @@ def _requote(token: Token) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def _expand_substitutions(text: str) -> List[str]:
-    """提取 `$(…)` 与反引号的字面内容，供递归分类；不执行求值。"""
-    found: List[str] = []
-    index = 0
-    while index < len(text):
-        if text.startswith("$(", index):
-            depth = 1
-            cursor = index + 2
-            while cursor < len(text) and depth:
-                if text[cursor] == "(":
-                    depth += 1
-                elif text[cursor] == ")":
-                    depth -= 1
-                cursor += 1
-            if depth == 0:
-                found.append(text[index + 2 : cursor - 1])
-                index = cursor
-                continue
-        if text[index] == "`":
-            end = text.find("`", index + 1)
-            if end > index:
-                found.append(text[index + 1 : end])
-                index = end + 1
-                continue
-        index += 1
-    return found
-
-
 ENV_NO_VALUE_OPTIONS = {
     "-i",
     "--ignore-environment",
@@ -617,19 +1129,20 @@ ENV_VALUE_OPTIONS = {
 SUDO_VALUE_OPTIONS = {"-u", "-g", "-h", "-p", "-C", "-T", "-r", "-t", "-U", "-D"}
 
 
-def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str]:
+def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str, str]:
     """识别 shell/eval/env/sudo/command/exec 包装。
 
-    返回 (内层命令文本或 None, 是否无法安全判定, 内层有效 cwd 或 "")。
-    - shell `-c`/`eval` 的参数本身就是命令字符串，按原文重新解析；
-    - env/sudo/command/exec 之后是 argv，逐项重新引用以保留参数边界；
+    返回 (内层命令文本或 None, 是否无法安全判定, 内层有效 cwd 或 "", 阶段)。
+    - shell `-c`/`eval` 的参数本身就是命令字符串，按原文重新解析（阶段 `script`）；
+    - env/sudo/command/exec 之后是 argv，逐项重新引用以保留参数边界（阶段
+      `argv`）：同一批外层 word 的执行证据已由外层扫描取得，递归时不得重复合并；
     - `env -C/--chdir`、`env -C<dir>` 是内层命令的有效 cwd，必须保留，
       否则内层相对读/写会被错误地按外层 cwd 定位。
     无参数选项、带值选项和等号选项分开处理；未知选项不吞掉后面的实际命令，
     而是标记 opaque。
     """
     if not tokens:
-        return None, False, ""
+        return None, False, "", ""
     argv = [token.text for token in tokens]
     name = os.path.basename(argv[0])
     rest = tokens[1:]
@@ -644,8 +1157,8 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str]:
     if name in SHELL_WRAPPERS:
         for index, text in enumerate(argv[1:]):
             if text in {"-c", "-lc", "-ic", "-cl", "-xc"} and index + 2 < len(argv):
-                return as_command(rest[index + 1 :]), False, ""
-        return None, False, ""
+                return as_command(rest[index + 1 :]), False, "", "script"
+        return None, False, "", ""
     if name == "env":
         index = 0
         inner_cwd = ""
@@ -656,7 +1169,7 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str]:
                 continue
             if text in ENV_VALUE_OPTIONS:
                 if index + 1 >= len(rest):
-                    return None, True, ""
+                    return None, True, "", ""
                 if text in {"-C", "--chdir"}:
                     inner_cwd = rest[index + 1].text
                 index += 2
@@ -682,8 +1195,8 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str]:
                 continue
             break
         if index >= len(rest):
-            return None, opaque, ""
-        return as_argv(rest[index:]), opaque, inner_cwd
+            return None, opaque, "", ""
+        return as_argv(rest[index:]), opaque, inner_cwd, "argv"
     if name == "sudo":
         index = 0
         while index < len(rest):
@@ -693,7 +1206,7 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str]:
                 break
             if text in SUDO_VALUE_OPTIONS:
                 if index + 1 >= len(rest):
-                    return None, True, ""
+                    return None, True, "", ""
                 index += 2
                 continue
             if text.startswith("-") and text != "-":
@@ -704,18 +1217,18 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str]:
                 continue
             break
         if index >= len(rest):
-            return None, opaque, ""
-        return as_argv(rest[index:]), opaque, ""
+            return None, opaque, "", ""
+        return as_argv(rest[index:]), opaque, "", "argv"
     if name in {"command", "exec"}:
         index = 0
         while index < len(rest) and _looks_like_option(rest[index].text):
             index += 1
         if index >= len(rest):
-            return None, opaque, ""
-        return as_argv(rest[index:]), opaque, ""
+            return None, opaque, "", ""
+        return as_argv(rest[index:]), opaque, "", "argv"
     if name == "eval":
-        return as_command(rest), opaque, ""
-    return None, opaque, ""
+        return as_command(rest), opaque, "", "script"
+    return None, opaque, "", ""
 
 
 def _wrapper_effective_cwd(
@@ -751,19 +1264,42 @@ def _track_cd(args: List[str], current: Optional[str]) -> Optional[str]:
     return os.path.normpath(os.path.join(current, target))
 
 
-def _git_actions(argv: List[str]) -> List[Dict[str, object]]:
+def _git_actions(
+    argv: List[str], cwd: Optional[str] = None, cwd_known: bool = True
+) -> List[Dict[str, object]]:
+    """提取 Git 子命令与有效 cwd。
+
+    连续 `-C dir` 按顺序叠加，相对值基于上一个**具体已知** cwd；绝对 `-C` 可
+    恢复已知性。无法证明的目录不借用进程/工具 cwd，而是 `cwd=None` 且
+    `cwd_known=False`。
+    """
     if not argv or os.path.basename(argv[0]) != "git":
         return []
     index = 1
     globals_seen: List[str] = []
+    tracked_cwd = cwd if cwd_known else None
+    tracked_known = cwd_known
     while index < len(argv):
         token = argv[index]
         if token in {"-C", "-c"} and index + 1 < len(argv):
             globals_seen.extend(argv[index : index + 2])
+            if token == "-C":
+                if _has_evaluation(argv[index + 1]):
+                    tracked_cwd, tracked_known = None, False
+                else:
+                    tracked_cwd, tracked_known = _wrapper_effective_cwd(
+                        argv[index + 1], tracked_cwd, tracked_known
+                    )
             index += 2
             continue
         if token.startswith("-C") and token != "-C" and len(token) > 2:
             globals_seen.append(token)
+            if _has_evaluation(token[2:]):
+                tracked_cwd, tracked_known = None, False
+            else:
+                tracked_cwd, tracked_known = _wrapper_effective_cwd(
+                    token[2:], tracked_cwd, tracked_known
+                )
             index += 1
             continue
         if token.startswith("-c") and token != "-c" and len(token) > 2:
@@ -794,7 +1330,15 @@ def _git_actions(argv: List[str]) -> List[Dict[str, object]]:
         break
     if index >= len(argv):
         return []
-    return [{"global": globals_seen, "sub": argv[index], "args": argv[index + 1 :]}]
+    return [
+        {
+            "global": globals_seen,
+            "sub": argv[index],
+            "args": argv[index + 1 :],
+            "cwd": tracked_cwd if tracked_known else None,
+            "cwd_known": tracked_known,
+        }
+    ]
 
 
 def _option_present(args: List[str], names: Iterable[str]) -> bool:
@@ -815,6 +1359,91 @@ def _short_flag_present(args: List[str], letters: str) -> bool:
     return False
 
 
+# `git checkout` 的已知无值开关：跳过即可，不影响位置参数归属。
+_CHECKOUT_FLAG_OPTIONS = {
+    "-q",
+    "--quiet",
+    "--progress",
+    "--no-progress",
+    "-m",
+    "--merge",
+    "--detach",
+    "--guess",
+    "--no-guess",
+    "-l",
+    "--ignore-other-worktrees",
+    "--ours",
+    "--theirs",
+    "-p",
+    "--patch",
+    "--overlay",
+    "--no-overlay",
+    "-2",
+    "--2way",
+    "-t",
+    "--track",
+    "--no-track",
+    "--recurse-submodules",
+    "--no-recurse-submodules",
+}
+# 已知带值选项：值是分支名或冲突风格，不是路径 operand。
+_CHECKOUT_VALUE_OPTIONS = {"-b", "-B", "--branch", "--orphan", "--conflict"}
+# 短选项集群里带值的字母（`-qb name`、`-bname`）。
+_CHECKOUT_VALUE_LETTERS = frozenset("bB")
+
+
+def _checkout_path_operands(
+    args: List[str], cwd: Optional[str], cwd_known: bool
+) -> Optional[str]:
+    """返回 checkout 位置参数中实际存在的路径（命中即会覆盖工作区文件）。
+
+    只按选项布局取位置参数：`-b/-B/--orphan/--branch`、`--conflict` 的值是分支名/
+    冲突风格，永远不作路径；未知选项布局不猜（不把“不确定”当成路径）。`.`/`..`
+    直接是路径还原；绝对路径独立可判定，其余相对目标只在有效 cwd 具体已知时才做
+    `lexists` 检查——缺少可信 cwd 时不用进程 cwd 猜。
+    """
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            # 显式路径分隔符由 git_violation 先行拒绝，这里不重复判定。
+            return None
+        if token.startswith("--"):
+            option, separator, _value = token.partition("=")
+            if option in _CHECKOUT_VALUE_OPTIONS:
+                index += 1 if separator else 2
+                continue
+            if option in _CHECKOUT_FLAG_OPTIONS:
+                index += 1
+                continue
+            return None
+        if token.startswith("-") and token != "-" and len(token) > 1:
+            letters = token[1:]
+            consume_next = False
+            known = True
+            for position, letter in enumerate(letters):
+                if letter in _CHECKOUT_VALUE_LETTERS:
+                    # 附着值时它自己就是分支名，否则吃掉下一个 token。
+                    consume_next = position == len(letters) - 1
+                    break
+                if ("-" + letter) not in _CHECKOUT_FLAG_OPTIONS:
+                    known = False
+                    break
+            if not known:
+                return None
+            index += 2 if consume_next else 1
+            continue
+        if token in {".", ".."}:
+            return token
+        if os.path.isabs(token):
+            if os.path.lexists(token):
+                return token
+        elif cwd_known and cwd and os.path.lexists(os.path.join(cwd, token)):
+            return token
+        index += 1
+    return None
+
+
 def git_violation(action: Dict[str, object]) -> Optional[str]:
     """返回 P1 破坏性 Git 的规则说明；只读/查询返回 None。"""
     sub = str(action.get("sub") or "")
@@ -828,6 +1457,13 @@ def git_violation(action: Dict[str, object]) -> Optional[str]:
     if sub == "checkout":
         if "--" in args or _short_flag_present(args, "f") or _option_present(args, {"--force"}):
             return "git checkout 的路径还原或强制切换会丢弃工作区改动"
+        operand = _checkout_path_operands(
+            args,
+            action.get("cwd") if isinstance(action.get("cwd"), str) else None,
+            bool(action.get("cwd_known", True)),
+        )
+        if operand:
+            return "git checkout %s 会还原工作区路径并丢弃改动" % operand
         return None
     if sub == "restore":
         staged_only = False
@@ -869,7 +1505,8 @@ def git_violation(action: Dict[str, object]) -> Optional[str]:
         if _short_flag_present(args, "f") or _option_present(args, {"--force", "--force-with-lease"}):
             return "强制推送会覆盖远端历史"
         for token in args:
-            if token.startswith("+") and ":" in token:
+            if token.startswith("+") and len(token) > 1:
+                # `+<refspec>` 一律是强制推送目标，不要求带 `:`（`+main` 同样强制）。
                 return "强制 refspec 会覆盖远端历史"
         return None
     return None
@@ -1141,6 +1778,7 @@ def _write_targets_for_command(
     redirects: List[Tuple[str, str]],
     analysis: Analysis,
     cwd: Optional[str] = None,
+    cwd_known: bool = True,
 ) -> None:
     for op, target in redirects:
         if op in _WRITE_REDIRECTS and target != "/dev/null":
@@ -1152,6 +1790,22 @@ def _write_targets_for_command(
     if name in {"cp", "mv", "install"}:
         for target, complete in _copy_like_targets(name, rest, cwd):
             analysis.writes.append({"kind": name, "target": target, "complete": complete})
+        return
+    if name == "find":
+        layout = _find_layout(rest)
+        # 删除/执行动作的具体目标不可枚举：只登记“有写副作用且不完整”。
+        for _action in range(int(layout["delete"]) + int(layout["exec"])):
+            analysis.writes.append({"kind": "find", "target": None, "complete": False})
+            analysis.write_unknown = True
+        return
+    if name == "sort":
+        layout = _sort_layout(rest)
+        output = layout["output"]
+        if isinstance(output, str) and output:
+            analysis.writes.append({"kind": "sort", "target": output, "complete": True})
+        if layout["output_incomplete"]:
+            analysis.writes.append({"kind": "sort", "target": None, "complete": False})
+            analysis.write_unknown = True
         return
     if name == "tee":
         targets = [token for token in rest if not _looks_like_option(token)]
@@ -1207,7 +1861,7 @@ def _write_targets_for_command(
         analysis.writes.append({"kind": name, "target": None, "complete": False})
         return
     if name == "git":
-        actions = _git_actions(argv)
+        actions = _git_actions(argv, cwd=cwd, cwd_known=cwd_known)
         for action in actions:
             sub = str(action.get("sub"))
             args = [str(token) for token in action.get("args") or []]
@@ -1332,8 +1986,49 @@ _FIND_VALUE_OPTIONS = {
     "-regex",
     "-regextype",
     "-printf",
-    "-exec",
-    "-execdir",
+}
+# `find` 的表达式动作：删除与执行。`-exec/-execdir/-ok` 的参数到裸 `;` 或 `+` 才结束。
+_FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok"}
+_FIND_DELETE_ACTIONS = {"-delete"}
+# `sort` 的显式输出选项：值是写目标，不是输入文件。
+_SORT_OUTPUT_OPTION = "--output"
+# `sort` 的已知带值长选项：key/分隔符/缓冲/临时目录等值不是输入文件。
+_SORT_VALUE_OPTIONS = {
+    "--key",
+    "--field-separator",
+    "--buffer-size",
+    "--temporary-directory",
+    "--batch-size",
+    "--parallel",
+    "--compress-program",
+    "--random-source",
+    "--files0-from",
+}
+# 值本身就是被读取的辅助文件；`files0-from` 的间接文件名永远无法证明。
+_SORT_AUX_READ_OPTIONS = {"--random-source", "--files0-from"}
+_SORT_VALUE_LETTERS = frozenset("ktSTo")
+_SORT_FLAG_LETTERS = frozenset("bdfghiMmnRrVcCsuzyq")
+# `sort` 的已知无值长选项。
+_SORT_FLAG_OPTIONS = {
+    "--check",
+    "--debug",
+    "--dictionary-order",
+    "--general-numeric-sort",
+    "--help",
+    "--human-numeric-sort",
+    "--ignore-case",
+    "--ignore-leading-blanks",
+    "--ignore-nonprinting",
+    "--merge",
+    "--month-sort",
+    "--numeric-sort",
+    "--random-sort",
+    "--reverse",
+    "--stable",
+    "--unique",
+    "--version",
+    "--version-sort",
+    "--zero-terminated",
 }
 # 搜索类的短选项：带值字母吃后续参数（f 的参数是真实读取目标），其余为开关。
 # 未知字母无法确定是否吃参数 → 读取目标不可证明，调用方保守处理。
@@ -1351,6 +2046,153 @@ SEARCH_FLAG_LETTERS = {
 }
 
 
+def _find_layout(rest: List[str]) -> Dict[str, object]:
+    """按 `find [起点…] [表达式…]` 布局分离搜索根与动作。
+
+    起点只到第一个表达式 token（`-` 开头）为止，缺省是 `.`；带值谓词先消费自己的
+    值，所以 `find . -name -delete` 里的 `-delete` 是被匹配的模式而不是动作。
+    `-exec/-execdir/-ok` 的参数到裸 `;` 或 `+` 才结束，绝不当作搜索根。读端与写端
+    共用这份布局，不各自重解一遍。
+    """
+    roots: List[str] = []
+    exec_actions = 0
+    delete_actions = 0
+    index = 0
+    expression_seen = False
+    while index < len(rest):
+        token = rest[index]
+        if not expression_seen and not token.startswith("-"):
+            roots.append(token)
+            index += 1
+            continue
+        expression_seen = True
+        if token in _FIND_VALUE_OPTIONS:
+            # 带值谓词吃掉自己的值；值缺在末尾时直接结束扫描。
+            index += 2
+            continue
+        if token in _FIND_DELETE_ACTIONS:
+            delete_actions += 1
+            index += 1
+            continue
+        if token in _FIND_EXEC_ACTIONS:
+            exec_actions += 1
+            index += 1
+            while index < len(rest) and rest[index] not in {";", "+"}:
+                index += 1
+            # 终止符缺失时这些参数同样不是搜索根，写目标继续保持不完整。
+            index += 1
+            continue
+        index += 1
+    return {
+        "roots": roots or ["."],
+        "exec": exec_actions,
+        "delete": delete_actions,
+    }
+
+
+def _sort_layout(rest: List[str]) -> Dict[str, object]:
+    """按 `sort [选项] [文件…]` 布局分离输入、显式输出与辅助读取。
+
+    `-o/--output` 的值是写目标，不是输入；缺值或空值记“输出不完整”而不是只读。
+    key/分隔符/缓冲/临时目录等已知带值选项的值不是文件；未知选项布局不猜后续
+    operand，按读取未知上报。无文件或 `-` 表示 stdin，不凭空读当前目录。
+    """
+    inputs: List[str] = []
+    output = ""
+    output_incomplete = False
+    auxiliary: List[str] = []
+    read_unknown = False
+    operands_unknown = False
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        if token == "--":
+            if not operands_unknown:
+                for item in rest[index + 1 :]:
+                    if item != "-":
+                        inputs.append(item)
+            break
+        if token.startswith("--"):
+            option, separator, attached = token.partition("=")
+            takes_value = option == _SORT_OUTPUT_OPTION or option in _SORT_VALUE_OPTIONS
+            if takes_value:
+                if separator:
+                    value = attached
+                    index += 1
+                elif index + 1 < len(rest):
+                    value = rest[index + 1]
+                    index += 2
+                else:
+                    value = ""
+                    index += 1
+                if option == _SORT_OUTPUT_OPTION:
+                    if value:
+                        output = value
+                    else:
+                        output_incomplete = True
+                    continue
+                if option in _SORT_AUX_READ_OPTIONS:
+                    if value:
+                        auxiliary.append(value)
+                    # `--files0-from` 列出的文件名无法证明，辅助读取始终按未知上报。
+                    if option == "--files0-from" or not value:
+                        read_unknown = True
+                    continue
+                if not value:
+                    read_unknown = True
+                continue
+            if option in _SORT_FLAG_OPTIONS:
+                index += 1
+                continue
+            # 未知长选项：带等号时它自己吞掉值，否则无法确定是否吃下一个 operand。
+            if not separator:
+                read_unknown = True
+                operands_unknown = True
+            index += 1
+            continue
+        if token.startswith("-") and token != "-" and len(token) > 1:
+            letters = token[1:]
+            consume_next = False
+            for position, letter in enumerate(letters):
+                if letter in _SORT_VALUE_LETTERS:
+                    attached_value = letters[position + 1 :]
+                    if letter == "o":
+                        if attached_value:
+                            output = attached_value
+                        elif index + 1 < len(rest):
+                            output = rest[index + 1]
+                            consume_next = True
+                        else:
+                            output_incomplete = True
+                    elif not attached_value:
+                        if index + 1 < len(rest):
+                            # `sort -t -o in`：`-o` 是 `-t` 的值，不是输出开关。
+                            consume_next = True
+                        else:
+                            read_unknown = True
+                    break
+                if letter not in _SORT_FLAG_LETTERS:
+                    # 未知短选项字母：不猜哪个字母吃到了参数。
+                    read_unknown = True
+                    operands_unknown = True
+                    break
+            index += 2 if consume_next else 1
+            continue
+        if token == "-":
+            index += 1
+            continue
+        if not operands_unknown:
+            inputs.append(token)
+        index += 1
+    return {
+        "inputs": inputs,
+        "output": output,
+        "output_incomplete": output_incomplete,
+        "auxiliary": auxiliary,
+        "read_unknown": read_unknown,
+    }
+
+
 def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
     follow = False
     if name == "rg":
@@ -1362,6 +2204,16 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
         follow = any(token.startswith("-") and "L" in token for token in rest)
     if follow:
         analysis.recursive_follow = True
+    if name == "find":
+        layout = _find_layout(rest)
+        if layout["exec"]:
+            # 不解释被执行程序就无法证明读取边界（回放守卫在此 fail-closed）。
+            analysis.read_unknown = True
+        for root in layout["roots"]:  # type: ignore[union-attr]
+            analysis.reads.append(
+                {"kind": "find", "path": root, "recursive": True, "follow": follow}
+            )
+        return
     roots: List[str] = []
     pattern_files: List[str] = []
     has_explicit_pattern = False
@@ -1372,16 +2224,6 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
     supports_pattern_file = name in {"rg", "grep", "ag", "ack"}
     while index < len(rest):
         token = rest[index]
-        if name == "find":
-            if token in _FIND_VALUE_OPTIONS:
-                index += 2
-                continue
-            if token.startswith("-"):
-                index += 1
-                continue
-            positional.append(token)
-            index += 1
-            continue
         if token in _READ_VALUE_OPTIONS:
             if token in {"-e", "--regexp"}:
                 has_explicit_pattern = True
@@ -1446,9 +2288,7 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
             continue
         positional.append(token)
         index += 1
-    if name == "find":
-        roots = positional or ["."]
-    elif name in {"rg", "grep", "ag", "ack"}:
+    if name in {"rg", "grep", "ag", "ack"}:
         if has_explicit_pattern or patternless:
             roots = positional
         else:
@@ -1476,6 +2316,20 @@ def _collect_reads(argv: List[str], redirects: List[Tuple[str, str]], analysis: 
         return
     name = os.path.basename(argv[0])
     rest = argv[1:]
+    if name == "sort":
+        # 文件 operand 才是读取目标；`-o/--output` 的值只进写集合。
+        layout = _sort_layout(rest)
+        for target in layout["inputs"]:  # type: ignore[union-attr]
+            analysis.reads.append(
+                {"kind": "sort", "path": target, "recursive": False, "follow": False}
+            )
+        for target in layout["auxiliary"]:  # type: ignore[union-attr]
+            analysis.reads.append(
+                {"kind": "sort-aux", "path": target, "recursive": False, "follow": False}
+            )
+        if layout["read_unknown"]:
+            analysis.read_unknown = True
+        return
     if name in READ_COMMANDS:
         targets = [token for token in rest if not _looks_like_option(token)] or ["."]
         for target in targets:
@@ -1517,11 +2371,14 @@ def analyze(
     depth: int = 0,
     budget: Optional[int] = None,
     cwd: Optional[str] = None,
+    cwd_known: bool = True,
 ) -> Analysis:
     """分析一条命令；返回可观察的读/写/ Git 动作，opaque 表示无法完整判定。
 
     `cwd` 是该次工具调用的可信 cwd，用于解析命令内的相对 `cd`；不提供时
-    相对 cd 视为不可确定（调用方披露缺口）。
+    相对 cd 视为不可确定（调用方披露缺口）。`cwd_known=False` 表示命令内已
+    发生无法证明的目录变化：此时丢弃残留 cwd 字符串，相对读写不再借工具/请求
+    cwd 定位。禁止用 `bool(cwd)` 代替该参数。
     """
     analysis = Analysis()
     if not isinstance(command, str) or not command.strip():
@@ -1535,7 +2392,532 @@ def analyze(
     if not closed:
         analysis.opaque = True
         return analysis
-    return _analyze_tokens(tokens, analysis, depth, limit, cwd=cwd or None)
+    try:
+        return _analyze_tokens(
+            tokens, analysis, depth, limit, cwd=cwd if cwd_known else None, cwd_known=cwd_known
+        )
+    except RecursionError:
+        # 极深结构不该把异常抛到调用方（那会被编码成 fail-open 放行）：保留
+        # 已取得的读/写/Git 证据，并显式标记“结构无法完整判定”。
+        analysis.opaque = True
+        analysis.compound_unresolved = True
+        return analysis
+
+
+def _scan_evaluated_words(
+    tokens: List[Token],
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool = True,
+) -> Dict[int, Dict[str, bool]]:
+    """在过滤重定向/前置赋值之前扫描整段所有实际求值的 word。
+
+    输入是未过滤的 token 列表（argv 不是完整输入），逐个按 `raw_source` 提取真实
+    替换并递归分析；返回按 token 位置索引的求值元信息，供动态重定向目标分流。
+    `owns_evaluation=False` 用于 argv 包装的递归解包：这些 word 的执行证据已由外层
+    扫描取得，这里只重新计算元信息，不重复合并副作用。
+    """
+    effects: Dict[int, Dict[str, bool]] = {}
+    skip_delimiter = False
+    for index, token in enumerate(tokens):
+        if token.operator:
+            if _redirect_base(token.text) == "<<":
+                # here-doc 的 delimiter 只做引用去除，不是求值 word。
+                skip_delimiter = True
+            continue
+        if skip_delimiter:
+            skip_delimiter = False
+            continue
+        raw = token.raw_source if token.raw_source is not None else token.text
+        if not raw:
+            continue
+        contents, unclosed = _substitution_spans(raw)
+        if contents or unclosed:
+            effects[index] = {"dynamic": True, "unclosed": unclosed}
+        if not owns_evaluation:
+            continue
+        for substring in contents:
+            # 替换是独立子上下文：进入目录/已知性精确传递，子 cd 不污染父命令。
+            analysis.merge(analyze(substring, depth + 1, limit, cwd, cwd_known))
+    return effects
+
+
+def _apply_cwd_rules(
+    entries: List[Dict[str, object]],
+    start: int,
+    analysis: Analysis,
+    cwd: Optional[str],
+    cwd_known: bool,
+    read: bool,
+) -> None:
+    """逐条目应用 cwd：已知时标注位置，未知且目标相对时才置未知标志。"""
+    for entry in entries[start:]:
+        path = entry.get("path") if read else entry.get("target")
+        if cwd:
+            entry["cwd"] = cwd
+            continue
+        if not cwd_known and isinstance(path, str) and path and not os.path.isabs(path):
+            if read:
+                analysis.read_unknown = True
+            else:
+                analysis.write_unknown = True
+                entry["complete"] = False
+
+
+def _analyze_simple_segment(
+    tokens: List[Token],
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool = True,
+) -> Tuple[Tuple[Optional[str], bool], ...]:
+    """分析一段简单命令；返回 (成功出口, 失败出口, 合并出口, 是否可能改 cwd)。
+
+    顺序固定：先扫描（过滤前）全部实际求值的 word，再剥离重定向/前置赋值并做
+    既有 argv 与读写分类；已识别的执行证据不能因 argv 为空或包装剥离而丢失。
+    """
+    entry: Tuple[Optional[str], bool] = (cwd, cwd_known)
+    word_effects = _scan_evaluated_words(
+        tokens, analysis, depth, limit, cwd, cwd_known, owns_evaluation
+    )
+    argv, argv_tokens, redirects, redirect_opaque = _strip_redirects(
+        tokens, word_effects, analysis
+    )
+    analysis.opaque = analysis.opaque or redirect_opaque
+    # 没有命令名的重定向（`> app.py`、`cd src; > app.py`）仍是真实读写副作用；
+    # `cd . > file` 的重定向在 cd 之前打开，因此按进入本段的 cwd 解析。
+    before = len(analysis.reads)
+    _collect_reads(argv, redirects, analysis)
+    _apply_cwd_rules(analysis.reads, before, analysis, cwd, cwd_known, True)
+    before_writes = len(analysis.writes)
+    _write_targets_for_command(argv, redirects, analysis, cwd, cwd_known)
+    _apply_cwd_rules(analysis.writes, before_writes, analysis, cwd, cwd_known, False)
+    if not argv:
+        return entry, entry, entry, False
+    if os.path.basename(argv[0]) == "cd":
+        target = _track_cd(argv[1:], cwd if cwd_known else None)
+        if target is None:
+            return (None, False), entry, (None, False), True
+        return (target, True), entry, (target, True), True
+    analysis.commands.append(argv)
+    analysis.git.extend(_git_actions(argv, cwd=cwd, cwd_known=cwd_known))
+    inner, wrapper_opaque, wrapper_cwd, wrapper_stage = _wrapper_inner(argv_tokens)
+    if wrapper_opaque:
+        analysis.opaque = True
+    if inner is not None:
+        inner_tokens, inner_closed = tokenize(inner)
+        if not inner_closed or depth + 1 > MAX_UNWRAP_DEPTH:
+            analysis.opaque = True
+        else:
+            inherited, inherited_known = _wrapper_effective_cwd(wrapper_cwd, cwd, cwd_known)
+            # argv 解包不重复合并同一批外层 word；shell -c/eval 是新的求值阶段。
+            nested = _analyze_tokens(
+                inner_tokens,
+                Analysis(),
+                depth + 1,
+                limit,
+                inherited,
+                inherited_known,
+                wrapper_stage == "script",
+            )
+            analysis.merge(nested)
+    elif os.path.basename(argv[0]) not in _KNOWN_COMMANDS and not any(
+        os.path.basename(argv[0]) in executables for executables, _ in PACKAGE_WRITE_PATTERNS
+    ):
+        analysis.read_unknown = True
+    return entry, entry, entry, False
+
+
+def _merge_cwd(
+    first: Tuple[Optional[str], bool], second: Tuple[Optional[str], bool]
+) -> Tuple[Optional[str], bool]:
+    """两条出口合流：只有完全相同的已知位置才能保留，否则 `(None, False)`。"""
+    return first if first == second else (None, False)
+
+
+def _merge_states(
+    states: List[Tuple[Optional[str], bool]],
+) -> Tuple[Optional[str], bool]:
+    merged = states[0]
+    for state in states[1:]:
+        merged = _merge_cwd(merged, state)
+    return merged
+
+
+def _segment_has_cd(tokens: List[Token]) -> bool:
+    """简单段的命令名是否为 `cd`（重定向目标与前置赋值不是命令名）。"""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.operator:
+            index += 2 if _redirect_base(token.text) else 1
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token.text):
+            index += 1
+            continue
+        return os.path.basename(token.text) == "cd"
+    return False
+
+
+def _node_has_cd(node: Dict[str, object]) -> bool:
+    """结构上是否可能在**当前 shell** 里执行 `cd`（subshell/管道/替换不算）。"""
+    kind = node["kind"]
+    if kind == "simple":
+        return _segment_has_cd(node["tokens"])  # type: ignore[arg-type]
+    if kind == "negated":
+        return _node_has_cd(node["body"])  # type: ignore[arg-type]
+    if kind in {"subshell", "async"}:
+        # 子 shell 与 `&` 异步列表里的 cd 不影响当前 shell。
+        return False
+    if kind == "brace":
+        body = node.get("body")
+        return body is not None and _node_has_cd(body)  # type: ignore[arg-type]
+    if kind == "chain":
+        if node["connector"] == "|":
+            return False
+        # 左深链按迭代展开，避免长 `&&` 链在结构判定阶段也递归爆栈。
+        current: object = node
+        while isinstance(current, dict) and current.get("kind") == "chain":
+            if current["connector"] == "|":
+                return False
+            if _node_has_cd(current["right"]):  # type: ignore[arg-type]
+                return True
+            current = current.get("left")
+        return _node_has_cd(current)  # type: ignore[arg-type]
+    if kind == "sequence":
+        return any(_node_has_cd(part) for part in node["parts"])  # type: ignore[union-attr]
+    if kind == "if":
+        for cond, body in node["clauses"]:  # type: ignore[union-attr]
+            if (cond is not None and _node_has_cd(cond)) or (
+                body is not None and _node_has_cd(body)
+            ):
+                return True
+        else_body = node.get("else_body")
+        return else_body is not None and _node_has_cd(else_body)  # type: ignore[arg-type]
+    if kind == "loop":
+        cond = node.get("cond")
+        body = node.get("body")
+        return (cond is not None and _node_has_cd(cond)) or (  # type: ignore[arg-type]
+            body is not None and _node_has_cd(body)  # type: ignore[arg-type]
+        )
+    if kind == "for":
+        body = node.get("body")
+        return body is not None and _node_has_cd(body)  # type: ignore[arg-type]
+    if kind == "case":
+        for _patterns, body in node["items"]:  # type: ignore[union-attr]
+            if body is not None and _node_has_cd(body):
+                return True
+        return False
+    return True
+
+
+def _analyze_node(
+    node: Optional[Dict[str, object]],
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool = True,
+) -> Tuple[Tuple[Optional[str], bool], ...]:
+    """分析一个结构节点；返回 (成功出口, 失败出口, 合并出口, 是否可能改 cwd)。
+
+    `&&` 右侧从左侧成功边进入、`||` 右侧从失败边进入；顺序列表用合并出口。
+    subshell/管道的 cd 不外泄，brace/条件/循环按设计保守合流。
+    `owns_evaluation=False` 只用于 argv 包装解包：外层已取过这些 word 的执行证据。
+    """
+    entry: Tuple[Optional[str], bool] = (cwd, cwd_known)
+    if node is None:
+        return entry, entry, entry, False
+    kind = node["kind"]
+    if kind == "simple":
+        return _analyze_simple_segment(
+            node["tokens"],  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            cwd,
+            cwd_known,
+            owns_evaluation,
+        )
+    if kind == "negated":
+        result = _analyze_node(
+            node["body"], analysis, depth, limit, cwd, cwd_known, owns_evaluation  # type: ignore[arg-type]
+        )
+        # `!` 只取反退出状态：成功/失败出口互换，目录副作用摘要照旧。
+        return result[1], result[0], result[2], result[3]
+    if kind == "async":
+        body = node.get("body")
+        if body is None:
+            return entry, entry, entry, False
+        # `&` 在子 shell 里执行：副作用保留，最终 cwd 不回传给父 shell。
+        nested = Analysis()
+        _analyze_node(
+            body,  # type: ignore[arg-type]
+            nested,
+            depth,
+            limit,
+            cwd,
+            cwd_known,
+            owns_evaluation,
+        )
+        analysis.merge(nested)
+        return entry, entry, entry, False
+    if kind in {"subshell", "brace"}:
+        redirects = node.get("redirects") or []
+        if redirects:
+            # 组后重定向按组入口 cwd 先记录，然后才分析组内 cd。
+            _analyze_simple_segment(
+                redirects,  # type: ignore[arg-type]
+                analysis,
+                depth,
+                limit,
+                cwd,
+                cwd_known,
+                owns_evaluation,
+            )
+        body = node.get("body")
+        if body is None:
+            return entry, entry, entry, False
+        if kind == "subshell":
+            nested = Analysis()
+            _analyze_node(
+                body,  # type: ignore[arg-type]
+                nested,
+                depth,
+                limit,
+                cwd,
+                cwd_known,
+                owns_evaluation,
+            )
+            analysis.merge(nested)
+            return entry, entry, entry, False
+        return _analyze_node(
+            body, analysis, depth, limit, cwd, cwd_known, owns_evaluation  # type: ignore[arg-type]
+        )
+    if kind == "chain":
+        if node.get("connector") == "|":
+            return _analyze_pipeline_node(
+                node, analysis, depth, limit, cwd, cwd_known, owns_evaluation
+            )
+        return _analyze_chain(node, analysis, depth, limit, cwd, cwd_known, owns_evaluation)
+    if kind == "sequence":
+        state = entry
+        success: Tuple[Optional[str], bool] = entry
+        failure: Tuple[Optional[str], bool] = entry
+        may_change = False
+        for part in node["parts"]:  # type: ignore[union-attr]
+            result = _analyze_node(
+                part, analysis, depth, limit, state[0], state[1], owns_evaluation
+            )
+            may_change = may_change or bool(result[3])
+            state = result[2]
+            success, failure = result[0], result[1]
+        may_change = may_change or state != entry
+        return success, failure, state, may_change
+    if kind == "if":
+        exits: List[Tuple[Optional[str], bool]] = []
+        state = entry
+        may_change = False
+        for cond, body in node["clauses"]:  # type: ignore[union-attr]
+            cond_result = _analyze_node(
+                cond, analysis, depth, limit, state[0], state[1], owns_evaluation
+            )
+            may_change = may_change or bool(cond_result[3])
+            # 不执行/常量折叠条件：then 从条件之后的状态进入，可能改 cwd 即未知。
+            enter = _merge_cwd(cond_result[0], cond_result[1])
+            body_result = _analyze_node(
+                body, analysis, depth, limit, enter[0], enter[1], owns_evaluation
+            )
+            may_change = may_change or bool(body_result[3])
+            exits.append(body_result[2])
+            state = cond_result[1]
+        else_body = node.get("else_body")
+        if else_body is None:
+            exits.append(state)
+        else:
+            else_result = _analyze_node(
+                else_body,  # type: ignore[arg-type]
+                analysis,
+                depth,
+                limit,
+                state[0],
+                state[1],
+                owns_evaluation,
+            )
+            may_change = may_change or bool(else_result[3])
+            exits.append(else_result[2])
+        merged = _merge_states(exits)
+        return merged, merged, merged, may_change or merged != entry
+    if kind == "loop":
+        # 条件与体任一可能改变当前 shell 的 cwd：循环内可重复进入的位置与循环后
+        # 都按未知目录分析（零次执行体也必须计入已执行的条件）。
+        may_change = _node_has_cd(node)  # type: ignore[arg-type]
+        enter = (None, False) if may_change else entry
+        _analyze_node(
+            node.get("cond"),  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            enter[0],
+            enter[1],
+            owns_evaluation,
+        )
+        _analyze_node(
+            node.get("body"),  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            enter[0],
+            enter[1],
+            owns_evaluation,
+        )
+        return enter, enter, enter, may_change
+    if kind == "for":
+        words = node.get("words") or []
+        _scan_evaluated_words(
+            words,  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            cwd,
+            cwd_known,
+            owns_evaluation,
+        )
+        may_change = _node_has_cd(node["body"]) if node.get("body") else False  # type: ignore[arg-type]
+        enter = (None, False) if may_change else entry
+        _analyze_node(
+            node.get("body"),  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            enter[0],
+            enter[1],
+            owns_evaluation,
+        )
+        return enter, enter, enter, may_change
+    if kind == "case":
+        _scan_evaluated_words(
+            node["selector"],  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            cwd,
+            cwd_known,
+            owns_evaluation,
+        )
+        exits = [entry]
+        may_change = False
+        for patterns, body in node["items"]:  # type: ignore[union-attr]
+            _scan_evaluated_words(
+                patterns, analysis, depth, limit, cwd, cwd_known, owns_evaluation
+            )
+            if body is None:
+                continue
+            result = _analyze_node(
+                body, analysis, depth, limit, cwd, cwd_known, owns_evaluation
+            )
+            exits.append(result[2])
+            may_change = may_change or bool(result[3])
+        merged = _merge_states(exits)
+        return merged, merged, merged, may_change or merged != entry
+    # 未识别的节点类型：不静默忽略结构。
+    analysis.compound_unresolved = True
+    analysis.opaque = True
+    return entry, entry, entry, False
+
+
+def _chain_spine(
+    node: Dict[str, object], connectors: Iterable[str]
+) -> Tuple[List[Dict[str, object]], object]:
+    """把同优先级连接符的左深链摊平成 (链节点列表, 最左操作数)。
+
+    `a && b && c` 是 `((a && b) && c)`：递归遍历在长链上会 RecursionError，
+    而异常会被上层编码成 fail-open 放行；这里改用显式迭代。`&&`/`||` 同级，
+    `|` 是另一级，所以传入的是本层允许的连接符集合。
+    """
+    allowed = frozenset(connectors)
+    spine: List[Dict[str, object]] = []
+    current = node
+    while True:
+        spine.append(current)
+        left = current.get("left")
+        if (
+            isinstance(left, dict)
+            and left.get("kind") == "chain"
+            and left.get("connector") in allowed
+        ):
+            current = left
+            continue
+        return spine, left
+
+
+def _analyze_chain(
+    node: Dict[str, object],
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool = True,
+) -> Tuple[Tuple[Optional[str], bool], ...]:
+    entry: Tuple[Optional[str], bool] = (cwd, cwd_known)
+    spine, leftmost = _chain_spine(node, _ANDOR_OPERATORS)
+    result = _analyze_node(
+        leftmost, analysis, depth, limit, cwd, cwd_known, owns_evaluation  # type: ignore[arg-type]
+    )
+    # 从左到右依次应用每一级 `&&`/`||` 的状态传播规则。
+    for chain in reversed(spine):
+        connector = chain["connector"]
+        enter = result[0] if connector == "&&" else result[1]
+        right = _analyze_node(
+            chain["right"],  # type: ignore[arg-type]
+            analysis,
+            depth,
+            limit,
+            enter[0],
+            enter[1],
+            owns_evaluation,
+        )
+        may_change = bool(result[3]) or bool(right[3])
+        if connector == "&&":
+            success = right[0]
+            failure = _merge_cwd(result[1], right[1])
+        else:
+            success = _merge_cwd(result[0], right[0])
+            failure = right[1]
+        result = (success, failure, _merge_cwd(success, failure), may_change)
+    return result
+
+
+def _analyze_pipeline_node(
+    node: Dict[str, object],
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool = True,
+) -> Tuple[Tuple[Optional[str], bool], ...]:
+    """管道元素各自在子 shell 中运行：cd 不外泄，副作用仍逐个分析。"""
+    entry: Tuple[Optional[str], bool] = (cwd, cwd_known)
+    spine, leftmost = _chain_spine(node, _PIPE_OPERATORS)
+    elements: List[object] = [leftmost]
+    # spine 是「外层→内层」（右操作数依次是 c、b），必须反向才能还原源码顺序 a,b,c。
+    for chain in reversed(spine):
+        elements.append(chain["right"])
+    may_change = False
+    for element in elements:
+        result = _analyze_node(
+            element, analysis, depth, limit, cwd, cwd_known, owns_evaluation  # type: ignore[arg-type]
+        )
+        may_change = may_change or bool(result[3])
+    return entry, entry, entry, may_change
 
 
 def _analyze_tokens(
@@ -1545,85 +2927,20 @@ def _analyze_tokens(
     limit: int,
     cwd: Optional[str] = None,
     cwd_known: bool = True,
+    owns_evaluation: bool = True,
 ) -> Analysis:
     # `cwd` 是进入本段命令时的有效目录（包装内层命令可能带 `env -C`）；
     # `cwd_known=False` 表示调用方无法静态确定该段目录。
-    tracked_cwd: Optional[str] = cwd
-    for segment in _split_segments(tokens):
-        argv, argv_tokens, redirects, redirect_opaque = _strip_redirects(segment)
-        analysis.opaque = analysis.opaque or redirect_opaque
-        # 只有可能真正求值的 token 才做替换抽样；单引号内容是数据。
-        dynamic_text = " ".join(token.text for token in argv_tokens if token.dynamic)
-        if dynamic_text:
-            for substitution in _expand_substitutions(dynamic_text):
-                nested = analyze(substitution, depth + 1, limit)
-                analysis.merge(nested)
-        is_cd = bool(argv) and os.path.basename(argv[0]) == "cd"
-        # 没有命令名的重定向（`> app.py`、`cd src; > app.py`）仍是真实读写
-        # 副作用：不能因 argv 为空就跳过该段的 redirect 与有效 cwd。
-        # `cd . > file` 的重定向由 shell 在执行 cd 之前打开，因此按进入本段
-        # 时的有效 cwd 解析；cwd 在本段重定向处理完后再更新。
-        before = len(analysis.reads)
-        _collect_reads(argv, redirects, analysis)
-        if tracked_cwd:
-            for entry in analysis.reads[before:]:
-                entry["cwd"] = tracked_cwd
-        elif not cwd_known:
-            analysis.read_unknown = True
-        before_writes = len(analysis.writes)
-        _write_targets_for_command(argv, redirects, analysis, tracked_cwd)
-        if len(analysis.writes) > before_writes:
-            if tracked_cwd:
-                # 该段有效 cwd 决定相对写目标的真实位置：`cd sub; >> app.py`
-                # 检查的是 sub/app.py，不是工具 cwd 下的同名文件。
-                for entry in analysis.writes[before_writes:]:
-                    entry["cwd"] = tracked_cwd
-            elif not cwd_known:
-                analysis.write_unknown = True
-        if is_cd:
-            tracked_cwd = _track_cd(argv[1:], tracked_cwd)
-            if tracked_cwd is None:
-                cwd_known = False
-            continue
-        if not argv:
-            continue
-        name = os.path.basename(argv[0])
-        actions = _git_actions(argv)
-        if actions:
-            analysis.git.extend(actions)
-        analysis.commands.append(argv)
-        inner, wrapper_opaque, wrapper_cwd = _wrapper_inner(argv_tokens)
-        if wrapper_opaque:
-            analysis.opaque = True
-        if inner is not None:
-            inner_tokens, inner_closed = tokenize(inner)
-            if not inner_closed or depth + 1 > MAX_UNWRAP_DEPTH:
-                analysis.opaque = True
-            else:
-                inherited, inherited_known = _wrapper_effective_cwd(
-                    wrapper_cwd, tracked_cwd, cwd_known
-                )
-                nested = _analyze_tokens(
-                    inner_tokens,
-                    Analysis(),
-                    depth + 1,
-                    limit,
-                    cwd=inherited,
-                    cwd_known=inherited_known,
-                )
-                if not inherited_known and not inherited:
-                    if nested.reads:
-                        nested.read_unknown = True
-                    if nested.writes:
-                        nested.write_unknown = True
-                analysis.merge(nested)
-        else:
-            if name not in READ_COMMANDS | SEARCH_COMMANDS | WRITE_COMMANDS | {
-                "git", "echo", "printf", "true", "false", "pwd", "cd", "which", "test",
-                "[", "grep", "rg", "find", "ls", "cat", "sed", "perl", "python", "python3",
-                "node", "curl", "wget", "tee", "dd", "patch", "unzip", "tar", "install",
-            } and not any(name in executables for executables, _ in PACKAGE_WRITE_PATTERNS):
-                analysis.read_unknown = True
+    if not cwd_known:
+        cwd = None
+    node, index, ok = _parse_sequence(tokens, 0, (), 0)
+    if not ok or index < len(tokens):
+        # 已识别为复合结构却无法安全配对/归属：置窄标志，保留已成功解析的段。
+        analysis.compound_unresolved = True
+        analysis.opaque = True
+        _analyze_node(node, analysis, depth, limit, cwd, cwd_known, owns_evaluation)
+        return analysis
+    _analyze_node(node, analysis, depth, limit, cwd, cwd_known, owns_evaluation)
     return analysis
 
 
@@ -1653,9 +2970,16 @@ def is_read_only_command(command: str) -> Tuple[bool, bool]:
     return not analysis.writes, analysis.read_unknown
 
 
-def reviewer_violation(command: str) -> Optional[Dict[str, object]]:
-    """reviewer 只读：已知写场景拒绝；未知命令放行但标记未覆盖。"""
-    analysis = analyze(command)
+def reviewer_violation(
+    command: str, cwd: Optional[str] = None, cwd_known: bool = True
+) -> Optional[Dict[str, object]]:
+    """reviewer 只读：先判明确危险 Git/写入，再区分窄的“复合结构无法核对”。
+
+    `compound_unresolved` 是独立类别（`unknown=False`）：已识别为复合结构但无法
+    安全配对/归属时拒绝，并提示改用简单命令重跑。其余未知结构仍 `unknown=True`
+    告警放行，不统一收紧。
+    """
+    analysis = analyze(command, cwd=cwd, cwd_known=cwd_known)
     for action in analysis.git:
         violation = git_violation(action)
         if violation:
@@ -1668,6 +2992,12 @@ def reviewer_violation(command: str) -> Optional[Dict[str, object]]:
             "unknown": False,
             "targets": [write.get("target") for write in writes],
         }
+    if analysis.compound_unresolved:
+        return {
+            "kind": "compound_unresolved",
+            "detail": "复合结构无法核对，请改用简单命令重跑",
+            "unknown": False,
+        }
     if analysis.opaque or analysis.write_unknown:
         return {"kind": "unknown", "detail": "命令结构无法完整判定", "unknown": True}
     return None
@@ -1678,13 +3008,14 @@ def parse_shell(command: str) -> Dict[str, object]:
 
 
 def read_command_paths(
-    command: str, cwd: Optional[str] = None
+    command: str, cwd: Optional[str] = None, cwd_known: bool = True
 ) -> Tuple[List[Dict[str, object]], bool]:
     """回放读取守卫/transcript 用：返回 (读取目标候选, 是否存在无法判定的隐式读取)。
 
     `cwd` 是该条记录的有效 cwd：相对 `cd` 只有在给出基准时才可静态确定。
+    `cwd_known=False` 时丢弃 cwd，命令内得出的相对读取按未知上报，不回落请求 cwd。
     """
-    analysis = analyze(command, cwd=cwd)
+    analysis = analyze(command, cwd=cwd, cwd_known=cwd_known)
     return analysis.reads, analysis.opaque or analysis.read_unknown
 
 

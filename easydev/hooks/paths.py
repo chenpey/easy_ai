@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import hashlib
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -495,7 +496,7 @@ def verify_private_root(task_root: str) -> Tuple[bool, str]:
 def _patch_begin_targets(text: str) -> Tuple[List[str], bool]:
     targets: List[str] = []
     complete = True
-    for line in text.splitlines():
+    for line in _diff_lines(text):
         if line.startswith("*** Add File: "):
             targets.append(line[len("*** Add File: ") :].strip())
         elif line.startswith("*** Update File: "):
@@ -509,21 +510,111 @@ def _patch_begin_targets(text: str) -> Tuple[List[str], bool]:
     return targets, complete
 
 
+def _unified_header_path(line: str) -> Tuple[Optional[str], bool]:
+    """取 `---`/`+++` 文件头里的路径；非文件头返回 (None, True)。
+
+    返回 (路径, 是否可证明)。空头与 Git 的引号路径无法证明真实文件名，
+    按不完整处理而不是制造可用伪路径。
+    """
+    for prefix in ("--- ", "+++ "):
+        if not line.startswith(prefix):
+            continue
+        value = line[len(prefix) :].split("\t")[0].strip()
+        if not value or value.startswith('"'):
+            return None, False
+        return value, True
+    return None, True
+
+
+def _strip_diff_prefix(path: str) -> str:
+    """按 `-p1` 语义只剥离一层 `a/` 或 `b/` 前缀。"""
+    for prefix in ("a/", "b/"):
+        if path.startswith(prefix):
+            return path[len(prefix) :]
+    return path
+
+
+# `@@ -n,m +x,y @@`：只按计数消费 hunk 正文，正文里的 `--- …`/`+++ …` 是数据。
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _diff_lines(text: str) -> List[str]:
+    """只按补丁自身的 LF 分行（行尾 `\r` 去掉），末行无 LF 时保留。
+
+    `str.splitlines()` 会把 U+2028、垂直制表符、U+0085 等也当换行：hunk 正文
+    里出现这些字符就会被当成“多出来的行”，把计数打断成“目标不完整”，进而
+    让 dirty 目标的首次快照被跳过。补丁的边界只有 LF（可带 CRLF）。
+    """
+    lines: List[str] = []
+    start = 0
+    length = len(text)
+    while start < length:
+        index = text.find("\n", start)
+        if index == -1:
+            lines.append(text[start:])
+            break
+        line = text[start:index]
+        if line.endswith("\r"):
+            line = line[:-1]
+        lines.append(line)
+        start = index + 1
+    return lines
+
+
 def _unified_targets(text: str) -> Tuple[List[str], bool]:
     targets: List[str] = []
+    seen: set = set()
     complete = True
-    for line in text.splitlines():
-        for prefix in ("--- ", "+++ "):
-            if line.startswith(prefix):
-                path = line[len(prefix) :].split("\t")[0].strip()
-                if path and path != "/dev/null":
-                    targets.append(path)
-        if line.startswith("rename from "):
-            targets.append(line[len("rename from ") :].strip())
-        if line.startswith("rename to "):
-            targets.append(line[len("rename to ") :].strip())
+    old_left = 0
+    new_left = 0
+    for line in _diff_lines(text):
+        marker = line[:1]
+        if old_left > 0 or new_left > 0:
+            if marker == "\\":
+                # `\ No newline at end of file` 不是正文行，不消耗计数。
+                continue
+            if marker in {"-", "+", " "} or line == "":
+                # 空行是工具省略行尾空格的上下文行，按上下文消费。
+                consumed = " " if line == "" else marker
+                if consumed in {"-", " "}:
+                    old_left -= 1
+                if consumed in {"+", " "}:
+                    new_left -= 1
+                continue
+            # 计数未耗尽却出现别的行：hunk 不可证明，按不完整披露。
+            complete = False
+            old_left = 0
+            new_left = 0
+        match = _HUNK_RE.match(line)
+        if match:
+            old_left = int(match.group(2)) if match.group(2) is not None else 1
+            new_left = int(match.group(4)) if match.group(4) is not None else 1
+            continue
+        candidates: List[str] = []
+        header, proven = _unified_header_path(line)
+        if not proven:
+            complete = False
+        if header is not None and header != "/dev/null":
+            # 添加/删除的另一端是 /dev/null：先排除再剥离前缀。
+            candidates.append(_strip_diff_prefix(header))
+        for marker in ("rename from ", "rename to "):
+            if not line.startswith(marker):
+                continue
+            # rename 路径本来就是未加前缀的真实路径，不能再剥一层 a/b。
+            value = line[len(marker) :].strip()
+            if value:
+                candidates.append(value)
+            else:
+                complete = False
+        for path in candidates:
+            if path not in seen:
+                seen.add(path)
+                targets.append(path)
         if line.startswith("Binary files ") and " differ" in line:
             complete = False
+    if old_left > 0 or new_left > 0:
+        # hunk 计数声称的行数没出现：补丁本身不完整，目标不可证明。
+        complete = False
     return targets, complete
 
 

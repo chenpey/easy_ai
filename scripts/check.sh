@@ -380,15 +380,23 @@ if developer_provider is None or reviewer_provider is None:
     fail("内联示例的基础角色应为具体供应商，不能用 inherit 演示跨供应商")
 if developer_provider == reviewer_provider:
     fail("内联示例的基础开发与审查角色应分属不同供应商")
-first = upgrades[0]
-first_developer = provider_of(first["developer"]["model"])
-first_reviewer = provider_of(first["reviewer"]["model"])
-if first_developer is None or first_reviewer is None:
-    fail("内联示例 upgrades[1] 应为具体供应商，不能用 inherit 演示")
-if first_developer == first_reviewer:
-    fail("内联示例 upgrades[1] 的开发与审查应分属不同供应商")
-if first_developer == developer_provider and first_reviewer == reviewer_provider:
-    fail("内联示例 upgrades[1] 未更换任何一个角色的供应商，无法演示跨供应商升级")
+# 逐级与**紧邻上一级**比较：基础级之后每一级都要各自保持跨供应商并真的换供应商，
+# 这样多级示例不会只检查第一级而放过后面的退化。
+previous_developer = developer_provider
+previous_reviewer = reviewer_provider
+for index, stage in enumerate(upgrades, 1):
+    stage_developer = provider_of(stage["developer"]["model"])
+    stage_reviewer = provider_of(stage["reviewer"]["model"])
+    # 文案同时给出零基下标（与数组一致）与从 1 起的级次，避免指错元素。
+    label = f"upgrades[{index - 1}]（第 {index} 级）"
+    if stage_developer is None or stage_reviewer is None:
+        fail(f"内联示例 {label} 应为具体供应商，不能用 inherit 演示")
+    if stage_developer == stage_reviewer:
+        fail(f"内联示例 {label} 的开发与审查应分属不同供应商")
+    if stage_developer == previous_developer and stage_reviewer == previous_reviewer:
+        fail(f"内联示例 {label} 未更换任何一个角色的供应商，无法演示跨供应商升级")
+    previous_developer = stage_developer
+    previous_reviewer = stage_reviewer
 
 print("OK: easydev/README.md 内联示例符合共享模型 schema 与跨供应商升级示例")
 PY

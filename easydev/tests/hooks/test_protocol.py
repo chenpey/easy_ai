@@ -5,14 +5,58 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from unittest import mock
 
-from support import HookCase
+from support import HookCase, core_module
+
+
+class ExplicitInvocationPatternTests(unittest.TestCase):
+    """显式调用边界按 ASCII 标识符判定：中文紧邻仍算调用，ASCII 连写不算。"""
+
+    def test_chinese_adjacent_invocations(self) -> None:
+        for prompt in (
+            "请使用 easydev 进行审查",
+            "帮我用$easydev",
+            "开始使用easydev",
+        ):
+            self.assertTrue(core_module.explicit_invocation(prompt), prompt)
+
+    def test_ascii_identifier_and_filtered_contexts_do_not_activate(self) -> None:
+        for prompt in (
+            "myeasydev2",
+            "use easydev_helpers 完成这个改动",
+            "使用 easydevment",
+            "```\n请使用 easydev 进行审查\n```",
+            "> 帮我用$easydev",
+        ):
+            self.assertFalse(core_module.explicit_invocation(prompt), prompt)
+
+    def test_skill_colon_and_english_invocations_still_activate(self) -> None:
+        for prompt in ("/skill:easydev", "use easydev", "使用 easydev"):
+            self.assertTrue(core_module.explicit_invocation(prompt), prompt)
 
 
 class ProtocolMixin(object):
     def test_explicit_invocation_activates_git_guard(self) -> None:
         self.activate("s1")
         self.deny(self.shell("s1", "git reset --hard"))
+
+    def test_chinese_adjacent_invocations_activate_git_guard(self) -> None:
+        """中文紧邻的调用词必须激活：`\w` 在 Unicode 下把汉字算成标识符。"""
+        for index, prompt in enumerate(
+            ("请使用 easydev 进行审查", "帮我用$easydev", "开始使用easydev")
+        ):
+            session = "zh-%d" % index
+            self.activate(session, prompt)
+            self.deny(self.shell(session, "git reset --hard", tool_id="zh-git-%d" % index))
+
+    def test_ascii_identifier_invocations_do_not_activate(self) -> None:
+        for index, prompt in enumerate(
+            ("use easydev_helpers 完成", "使用 easydevment 生成", "myeasydev2 是什么")
+        ):
+            session = "ascii-%d" % index
+            self.activate(session, prompt)
+            self.allow(self.shell(session, "git reset --hard", tool_id="ascii-git-%d" % index))
 
     def test_unactivated_session_is_allowed(self) -> None:
         self.allow(self.shell("other", "git reset --hard"))
@@ -45,14 +89,67 @@ class ProtocolMixin(object):
         else:
             self.assertEqual(value, {})
 
+    def fail_open_shape(self, event: str) -> dict:
+        """fail-open 的宿主放行形状：与正常 allow 编码同一张表。"""
+        if self.host == "antigravity":
+            return {"decision": "allow"} if event in {"pre_tool", "unknown"} else {}
+        if self.host == "dsh":
+            return {"permissionDecision": "allow"} if event in {"pre_tool", "unknown"} else {}
+        if self.host == "pi":
+            return {"action": "continue"} if event == "input" else {}
+        return {}
+
     def test_malformed_input_fails_open_with_warning(self) -> None:
+        expected = self.fail_open_shape("unknown")
         code, value, stderr = self.run_core(None, raw_stdin="{not-json")
         self.assertEqual(code, 0)
-        self.assertEqual(value, {})
+        self.assertEqual(value, expected)
         self.assertIn("warning", stderr)
         code, value, _stderr = self.run_core(None, raw_stdin="[]")
         self.assertEqual(code, 0)
-        self.assertEqual(value, {})
+        self.assertEqual(value, expected)
+
+    def test_fail_open_preserves_host_allow_shape(self) -> None:
+        """输入不可读、协议故障与内部异常三个出口都经宿主编码输出单个 JSON。"""
+        oversized = "x" * (core_module.MAX_INPUT_BYTES + 2)
+        for raw_stdin in ("{not-json", "[]", oversized):
+            code, value, stderr = self.run_core(None, raw_stdin=raw_stdin)
+            self.assertEqual(code, 0)
+            self.assertEqual(value, self.fail_open_shape("unknown"), raw_stdin[:16])
+            self.assertIn("warning", stderr)
+        # 明确传入事件时按该事件编码，而不是一律退到未知。
+        _code, value, _stderr = self.run_core(None, raw_stdin="{not-json", event="PreToolUse")
+        self.assertEqual(value, self.fail_open_shape("pre_tool"))
+        _code, value, _stderr = self.run_core(None, raw_stdin="{not-json", event="input")
+        self.assertEqual(value, self.fail_open_shape("input"))
+        payload = self.input_payload("fault", "使用 easydev")
+        if self.host == "antigravity":
+            payload["status"] = []
+        elif self.host in {"codex", "dsh"}:
+            payload["stop_hook_active"] = "false"
+        else:
+            payload["child"] = "false"
+        # 载荷自带的合法事件名优先于 --event：协议故障仍按 input 编码。
+        _code, value, stderr = self.run_core(payload, event="PreToolUse")
+        self.assertEqual(value, self.fail_open_shape("input"))
+        self.assertIn("协议", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_internal_error_preserves_normalized_event_allow_shape(self) -> None:
+        """内部异常只在 Engine.handle 边界注入：已归一化的事件仍决定放行形状。"""
+        self.activate("boom")
+        cases = (
+            (self.shell("boom", "git status", tool_id="boom-pre"), "pre_tool"),
+            (self.settle_payload("boom"), "settle"),
+        )
+        for payload, normalized in cases:
+            with mock.patch.object(
+                core_module.Engine, "handle", side_effect=RuntimeError("boom")
+            ):
+                _code, value, stderr = self.run_core(payload)
+            self.assertEqual(value, self.fail_open_shape(normalized), normalized)
+            self.assertIn("内部异常", stderr)
+            self.assertNotIn("Traceback", stderr)
 
     def test_unknown_event_and_missing_session_are_allowed(self) -> None:
         _code, value, _stderr = self.run_core(
