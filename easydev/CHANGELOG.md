@@ -2,6 +2,19 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.5 更新说明（2026-10-29）
+
+修 1.4.4 发布后暴露的两类问题：①Hook 把 `rsync` 的选项值和源目录记成写目标，导致文档化的同步命令被误拒；②GitHub Actions 的「仓库门禁」失败（`tests/hooks/test_protocol.py` 的 docstring 含非法转义 `\w`，Python 3.12 起是 `SyntaxWarning`，而本机 `python3` 是 3.9、看不到该类告警）。规则正文未变，总量仍为 131715 字节。
+
+- **rsync 读写布局重写（P2 误拒）**：此前 `_write_targets_for_command` 对 rsync 只做 `positional[1:]`，且不识别带值选项，于是 `rsync -a --exclude 'install-context.json' src/ dest/` 会把 `install-context.json` 与源目录 `src/` 都当成写目标，命中真实目录即 deny。现按冻结决策表判定：`-t` 是 `--times`（无值）；rsync 无 `--target-directory`（出现即未知布局）；单普通文件源 + 已存在目录目的复用 `_destination_targets` 得 `dest/<basename>` 完整候选；目录源/多源只记目的不完整；`--files-from`、`--read-batch` 置读取未知（read-batch 另忽略显式源、置写入未知、不解析批次）；`--remove-source-files`/`--remove-sent-files` 追加已知源为写目标；`--log-file` 追加明确写；`--backup-dir`/`--temp-dir`/`--partial-dir` 取值目录记不完整。短选项拆成 `_RSYNC_NO_VALUE_LETTERS` 与 `_RSYNC_VALUE_LETTERS = set("efBT")`（交集为空），白名单外字母（`Q`/`j`/`M` 等）一律走未知布局、不猜。
+- **能力边界（如实披露，不宣称安全覆盖）**：目录目标、多源、`--files-from`、`--read-batch` 都是「披露后放行」，与 `cp -R` 同口径；整段写候选不完整时 `_prepare_write` 早退，因此多源 `--remove-source-files` 的源删除不被快照保护；不完整命令不推进成功写序列，也不触发审后提醒。
+- **CI 修复（非法转义）**：`tests/hooks/test_protocol.py` 的中文触发词 docstring 加 raw 前缀，运行时文本不变。
+- **门禁版本无关化（P2）**：`scripts/check.sh` §6b 的非法转义检查改为在默认解释器下也生效（原生 `ast.parse` + `compile` 双告警过滤，捕获 `SyntaxWarning`/`SyntaxError` 并逐文件汇总），不再依赖 3.12；新增 `tests/hooks/test_repo_gate.py`，从 §6b heredoc 提取生产扫描前缀（截断于唯一完整行 `for path in sorted(glob.glob("easydev/hooks/templates/*.json")) + ["easydev/hooks/manifest.json"]:`），在隔离临时目录用**默认 python3 与 `~/.local/bin/python3.12`** 各跑同一 fixture，要求都报文件名+行号并非零，并覆盖 raw／`rb`／bytes／隐式拼接／三引号／双花括号／真实续行／`\N{NAME}`／`\x41`／`\101`／`\u1234`／`\U00012345`／`\\` 合法对照（3.12 专有 f-string 表达式语法单列、不作为扫描器证明）。
+
+验证（本机 macOS、无 PyYAML，基线 `139b36c` / 1.4.4）：`bash scripts/check.sh` rc=0（§3 版本一致 1.4.5、§10 总量 131715）；`tests/hooks` **1030 项 0 failures（1 skip）**、`tests/experiments/agent_runner` 86 项 0 failures；`~/.local/bin/python3.12 -W error::SyntaxWarning` 全仓 `*.py` 编译 0 issues（修复前 `test_protocol.py:45` 报非法转义）。决策表逐行用解析器探针核对，含原误拒场景 `rsync -a --exclude 'install-context.json' src/ dest/` → 写候选只有 `dest/`、`--read-batch` 两种输入都不产生完整 `dest/f`、`--remove-source-files` 单源得 `dest/f` 与源双完整候选。
+
+未验证：未在真实 rsync/openrsync 传输上验证（判定基于本机 `man 1 openrsync` 语义与静态解析）；四宿主真实 Hook 信任与输出消费仍需各自 probe；Windows ACL/PowerShell 未验证；本版 CI 结果待推送后确认。
+
 ## 1.4.4 更新说明（2026-10-29）
 
 按独立深度审查（`review-2026-10-29-v1.md`，针对 1.4.1 的 20 条确定发现：P1×2、P2×11、P3×7）逐一复核并修复；在 1.4.3 之后发布。规则正文（`SKILL.md` / `references/`）未增删一字，总量仍为 131715 字节。

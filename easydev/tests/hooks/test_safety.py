@@ -10,6 +10,7 @@ import subprocess
 import unittest
 
 from support import HookCase
+from test_r5_fixes import task_states
 
 
 GIT_ALLOWED = (
@@ -438,6 +439,146 @@ class SafetyMixin(object):
     def test_unactivated_write_is_allowed(self) -> None:
         self.allow(self.write_tool("plain", "src/app.py"))
         self.allow(self.shell("plain", "git reset --hard"))
+
+    # ---- rsync 的基线口径与已披露能力边界 --------------------------
+    def snapshots(self, relative: str) -> list:
+        """自动快照落点：`<state_root>/baselines/<task>/<repo>/<相对路径>`。"""
+        return sorted((self.state / "baselines").glob("*/*/" + relative))
+
+    def registered_targets(self) -> list:
+        """任务状态里登记过的 origin/成功/自动快照/pending 目标键。"""
+        keys = []
+        for task in task_states(self.state):
+            keys.extend((task.get("origins") or {}).keys())
+            keys.extend((task.get("last_success") or {}).keys())
+            keys.extend((task.get("auto_baseline") or {}).keys())
+            for entry in (task.get("pending_writes") or {}).values():
+                keys.extend(entry.get("targets") or [])
+        return keys
+
+    def test_rsync_directory_sync_warns_without_source_snapshot(self) -> None:
+        self.touch_dirty("src/app.py")
+        self.activate()
+        command = "rsync -a --exclude 'install-context.json' src/ dist/"
+        _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="rsync-dir"))
+        # 目录目的内容不可枚举：披露后放行（与 `cp -R` 一致），不用目录级快照冒充保护。
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("warning", stderr)
+        self.assertFalse(self.snapshots("src/app.py"))
+        keys = self.registered_targets()
+        self.assertFalse([key for key in keys if key.endswith("::src/app.py")], keys)
+        self.assertFalse([key for key in keys if key.endswith("::install-context.json")], keys)
+
+    def test_rsync_single_file_snapshots_only_destination(self) -> None:
+        self.touch_dirty("src/app.py", "value = 2\n")
+        (self.repo / "docs" / "guide.md").write_text("user guide\n", encoding="utf-8")
+        self.activate()
+        self.allow(self.shell("s1", "rsync src/app.py docs/guide.md", tool_id="rsync-file"))
+        saved = self.snapshots("docs/guide.md")
+        self.assertEqual(len(saved), 1, saved)
+        self.assertEqual(saved[0].read_text(encoding="utf-8"), "user guide\n")
+        self.assertEqual(stat.S_IMODE(saved[0].stat().st_mode), 0o600)
+        # 源只是读取：不为它建快照。
+        self.assertFalse(self.snapshots("src/app.py"))
+        # 手工任务根：目标缺合规基线必须拒绝，补齐后才放行。
+        task_root = self.use_manual_baseline()
+        reason = self.deny(self.shell("s1", "rsync src/app.py docs/guide.md", tool_id="rsync-manual"))
+        self.assertIn("缺少合规首次基线", reason)
+        self.save_baseline(task_root, "docs/guide.md", "user guide\n")
+        self.allow(
+            self.shell("s1", "rsync src/app.py docs/guide.md", tool_id="rsync-manual-2")
+        )
+
+    def test_rsync_remove_single_file_snapshots_source_and_destination(self) -> None:
+        self.touch_dirty("src/app.py", "value = 2\n")
+        (self.repo / "dest").mkdir()
+        (self.repo / "dest" / "app.py").write_text("old dest\n", encoding="utf-8")
+        self.activate()
+        for index, flag in enumerate(("--remove-source-files", "--remove-sent-files")):
+            command = "rsync %s src/app.py dest/" % flag
+            tool_id = "rsync-remove-%d" % index
+            self.allow(self.shell("s1", command, tool_id=tool_id))
+            self.allow(
+                self.shell("s1", command, tool_id=tool_id, event="post_tool", outcome="success")
+            )
+        source = self.snapshots("src/app.py")
+        self.assertEqual(len(source), 1, source)
+        self.assertEqual(source[0].read_text(encoding="utf-8"), "value = 2\n")
+        self.assertEqual(stat.S_IMODE(source[0].stat().st_mode), 0o600)
+        destination = self.snapshots("dest/app.py")
+        self.assertEqual(len(destination), 1, destination)
+        self.assertEqual(destination[0].read_text(encoding="utf-8"), "old dest\n")
+        # reviewer 对同一条删除源命令明确拒绝。
+        self.activate("rev", self.reviewer_handoff())
+        self.deny(self.shell("rev", "rsync --remove-source-files src/app.py dest/"))
+
+    def test_rsync_multi_source_remove_discloses_snapshot_gap(self) -> None:
+        self.touch_dirty("src/app.py", "value = 2\n")
+        (self.repo / "docs" / "guide.md").write_text("user guide\n", encoding="utf-8")
+        (self.repo / "dest").mkdir()
+        self.activate()
+        _code, value, stderr = self.run_core(
+            self.shell(
+                "s1",
+                "rsync --remove-source-files src/app.py docs/guide.md dest/",
+                tool_id="rsync-multi-remove",
+            )
+        )
+        # 整段不完整 → 连已知的源删除候选也不快照：当前能力边界，不称已保护。
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("warning", stderr)
+        self.assertFalse(self.snapshots("src/app.py"))
+        self.assertFalse(self.snapshots("docs/guide.md"))
+
+    def test_rsync_fifo_target_is_denied_without_blocking(self) -> None:
+        os.mkfifo(self.repo / "pipe.out")
+        self.activate()
+        reason = self.deny(self.shell("s1", "rsync src/app.py pipe.out", tool_id="rsync-fifo"))
+        self.assertIn("不是普通文件", reason)
+        self.assertFalse(self.snapshots("pipe.out"))
+
+    def test_reviewer_rsync_is_denied(self) -> None:
+        self.activate("rev", self.reviewer_handoff())
+        for index, command in enumerate(
+            (
+                "rsync -a src/ dest/",
+                "rsync src/app.py newfile",
+                "rsync -Q src/ dest/",
+                "rsync --files-from=list dest/",
+                "rsync --read-batch=batch.bin dest/",
+                "rsync -n src/ dest/",
+                "rsync --remove-source-files src/app.py dest/",
+            )
+        ):
+            reason = self.deny(self.shell("rev", command, tool_id="rsync-rev-%d" % index))
+            self.assertIn("只读", reason)
+        # 纯读对照：rsync 之外的读取命令仍放行。
+        self.allow(self.shell("rev", "cat src/app.py", tool_id="rsync-rev-read"))
+
+    def test_rsync_read_batch_discloses_unenumerated_writes(self) -> None:
+        self.touch_dirty("src/app.py", "value = 2\n")
+        (self.repo / "dest").mkdir()
+        (self.repo / "dest" / "app.py").write_text("dest value\n", encoding="utf-8")
+        (self.repo / "batch.bin").write_bytes(b"")
+        self.activate()
+        for index, command in enumerate(
+            (
+                "rsync --read-batch=batch.bin src/app.py dest/",
+                "rsync --read-batch=batch.bin dest/",
+            )
+        ):
+            _code, value, stderr = self.run_core(
+                self.shell("s1", command, tool_id="rsync-batch-%d" % index)
+            )
+            self.assertFalse(self.is_denied(value), value)
+            self.assertIn("warning", stderr)
+        # 不为伪落点 dest/app.py 宣称完整保护，也不动源快照。
+        self.assertFalse(self.snapshots("dest/app.py"))
+        self.assertFalse(self.snapshots("src/app.py"))
+        keys = self.registered_targets()
+        self.assertFalse([key for key in keys if key.endswith("::dest/app.py")], keys)
+        self.activate("rev", self.reviewer_handoff())
+        self.deny(self.shell("rev", "rsync --read-batch=batch.bin src/app.py dest/"))
 
 
 class PiSafetyTests(SafetyMixin, HookCase):

@@ -42,7 +42,7 @@ class ProtocolMixin(object):
         self.deny(self.shell("s1", "git reset --hard"))
 
     def test_chinese_adjacent_invocations_activate_git_guard(self) -> None:
-        """中文紧邻的调用词必须激活：`\w` 在 Unicode 下把汉字算成标识符。"""
+        r"""中文紧邻的调用词必须激活：`\w` 在 Unicode 下把汉字算成标识符。"""
         for index, prompt in enumerate(
             ("请使用 easydev 进行审查", "帮我用$easydev", "开始使用easydev")
         ):

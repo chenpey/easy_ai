@@ -1773,12 +1773,490 @@ def _destination_targets(
     return targets
 
 
+# rsync 短选项按真实语义分两组：无值字母逐字母列出（白名单唯一来源），带值字母
+# 单独一组，两者不相交。白名单之外的字母（如 `Q`/`j`/`M`）没有已核实的语义，
+# 一律按“布局不可证明”处理，不猜它是否吃值。
+_RSYNC_NO_VALUE_LETTERS = frozenset(
+    {
+        "0", "4", "6", "8",
+        "a", "b", "c", "d",
+        "g", "h", "i", "k",
+        "l", "m", "n", "o",
+        "p", "q", "r", "t",
+        "u", "v", "x", "y", "z",
+        "C", "D", "E", "F",
+        "H", "I", "L", "O",
+        "P", "R", "S", "V", "W",
+    }
+)
+_RSYNC_VALUE_LETTERS = frozenset("efBT")
+
+_RSYNC_SHORT_VALUE_OPTIONS = {
+    "e": "--rsh",
+    "f": "--filter",
+    "B": "--block-size",
+    "T": "--temp-dir",
+}
+# 只有影响读写判定的字母映射到长选项名；其余无值字母只记 `-<字母>` 开关标记，
+# 不假造未核实的长选项名。
+_RSYNC_SHORT_FLAG_OPTIONS = {
+    "a": "--archive",
+    "b": "--backup",
+    "r": "--recursive",
+    "t": "--times",
+    "H": "--hard-links",
+    "R": "--relative",
+    "L": "--copy-links",
+    "k": "--copy-dirlinks",
+    "F": "--filter-files",
+}
+
+_RSYNC_VALUE_OPTIONS = frozenset(
+    {
+        "--exclude",
+        "--exclude-from",
+        "--include",
+        "--include-from",
+        "--filter",
+        "--files-from",
+        "--rsh",
+        "--rsync-path",
+        "--temp-dir",
+        "--partial-dir",
+        "--backup-dir",
+        "--suffix",
+        "--compare-dest",
+        "--copy-dest",
+        "--link-dest",
+        "--chmod",
+        "--timeout",
+        "--contimeout",
+        "--block-size",
+        "--bwlimit",
+        "--log-file",
+        "--log-format",
+        "--log-file-format",
+        "--password-file",
+        "--port",
+        "--out-format",
+        "--usermap",
+        "--groupmap",
+        "--chown",
+        "--max-size",
+        "--min-size",
+        "--max-delete",
+        "--sockopts",
+        "--address",
+        "--protocol",
+        "--iconv",
+        "--compress-level",
+        "--skip-compress",
+        "--remote-option",
+        "--modify-window",
+        "--checksum-seed",
+        "--stop-after",
+        "--stop-at",
+        "--checksum-choice",
+        "--compress-choice",
+        "--max-alloc",
+        "--read-batch",
+        "--write-batch",
+        "--only-write-batch",
+    }
+)
+_RSYNC_FLAG_OPTIONS = frozenset(
+    {
+        "--archive",
+        "--recursive",
+        "--checksum",
+        "--times",
+        "--perms",
+        "--owner",
+        "--group",
+        "--links",
+        "--hard-links",
+        "--copy-links",
+        "--copy-dirlinks",
+        "--keep-dirlinks",
+        "--relative",
+        "--no-relative",
+        "--no-implied-dirs",
+        "--verbose",
+        "--quiet",
+        "--human-readable",
+        "--progress",
+        "--stats",
+        "--itemize-changes",
+        "--dry-run",
+        "--list-only",
+        "--help",
+        "--version",
+        "--compress",
+        "--backup",
+        "--update",
+        "--ignore-existing",
+        "--existing",
+        "--ignore-non-existing",
+        "--size-only",
+        "--ignore-times",
+        "--whole-file",
+        "--sparse",
+        "--inplace",
+        "--append",
+        "--append-verify",
+        "--partial",
+        "--delay-updates",
+        "--delete",
+        "--del",
+        "--delete-before",
+        "--delete-after",
+        "--delete-during",
+        "--delete-delay",
+        "--delete-excluded",
+        "--delete-missing-args",
+        "--force",
+        "--ignore-errors",
+        "--ignore-missing-args",
+        "--prune-empty-dirs",
+        "--remove-source-files",
+        "--remove-sent-files",
+        "--numeric-ids",
+        "--dirs",
+        "--no-dirs",
+        "--devices",
+        "--specials",
+        "--executability",
+        "--acls",
+        "--xattrs",
+        "--super",
+        "--fake-super",
+        "--safe-links",
+        "--copy-unsafe-links",
+        "--blocking-io",
+        "--no-blocking-io",
+        "--8-bit-output",
+        "--from0",
+        "--no-motd",
+        "--protect-args",
+        "--secluded-args",
+    }
+)
+_RSYNC_AUX_READ_FILES = frozenset(
+    {"--exclude-from", "--include-from", "--files-from", "--password-file", "--read-batch"}
+)
+_RSYNC_AUX_READ_DIRS = frozenset({"--compare-dest", "--copy-dest", "--link-dest"})
+_RSYNC_AUX_WRITE_DIRS = frozenset({"--backup-dir", "--temp-dir", "--partial-dir"})
+_RSYNC_REMOVE_SOURCE_FLAGS = frozenset({"--remove-source-files", "--remove-sent-files"})
+_RSYNC_FOLLOW_LINK_FLAGS = frozenset({"--copy-links", "--copy-dirlinks"})
+_RSYNC_BATCH_WRITE_OPTIONS = frozenset({"--write-batch", "--only-write-batch"})
+_RSYNC_REMOTE_SIDE_OPTIONS = frozenset({"--rsync-path", "--remote-option"})
+# rsync 只在冒号出现在第一个 `/` 之前时把词当远程：`./a:b` 与 `/x/a:b` 是本地路径。
+_RSYNC_REMOTE_WORD_RE = re.compile(r"^(?:rsync://|[^/]*:)")
+_RSYNC_GLOB_CHARS = "*?[{"
+
+
+def _rsync_remote_word(word: Optional[str]) -> bool:
+    return bool(word) and bool(_RSYNC_REMOTE_WORD_RE.match(str(word)))
+
+
+def _rsync_word_unresolved(token: Optional[Token]) -> bool:
+    r"""该词是否因替换/通配/tilde 展开而无法静态确定路径。
+
+    `Token.dynamic` 不够用：普通双引号也会标 dynamic，而单引号 `'$DEST'`、转义
+    `\$DEST` 都是静态。这里按同一份词法结果判定真实求值：命令替换、未转义 `$`、
+    未引用通配与词首 `~` 才算不可解析。
+    """
+    if token is None:
+        return False
+    raw = token.raw_source if token.raw_source is not None else token.text
+    for position, kind, depth, _frame in _scan_structure(raw):
+        if kind == "open":
+            return True
+        if depth != 0 or kind not in {"code", "quoted"}:
+            continue
+        char = raw[position]
+        if char == "$":
+            return True
+        if kind == "code" and char in _RSYNC_GLOB_CHARS:
+            return True
+        if kind == "code" and char == "~" and position == 0:
+            return True
+    return False
+
+
+def _rsync_layout(
+    rest: List[str], tokens: Optional[List[Token]] = None
+) -> Dict[str, object]:
+    """rsync 的参数布局：选项值、源/目的、特殊形式与未知标志。
+
+    rsync 不是 cp：`-t` 是 `--times`（无值）、`-T` 吃临时目录，也没有
+    `--target-directory`。白名单之外的选项可能带值，所以整段布局按“不可证明”
+    处理，不把后续 token 猜成源或目的。`tokens` 是与 `rest` 对齐的词法元信息
+    （生产调用必须传），为 None 表示静态参数列表。
+
+    返回 `sources`/`destination`/`values`/`flags`/`incomplete`/`read_unknown`/
+    `write_unknown`，并用内部字段 `mode` 区分 `unknown`/`read-batch`/
+    `files-from`/`missing-operands`/`normal`。`values` 里的 None 表示该选项值不
+    可静态定位。
+    """
+    words = tokens if tokens is not None and len(tokens) == len(rest) else None
+    values: Dict[str, List[Optional[str]]] = {}
+    flags: set = set()
+    positional: List[int] = []
+    unknown_option = False
+    incomplete = False
+    read_unknown = False
+    write_unknown = False
+
+    def static_at(index: int) -> bool:
+        token = words[index] if words is not None and 0 <= index < len(words) else None
+        return not _rsync_word_unresolved(token)
+
+    def take_value(option: str, index: int, attached: Optional[str]) -> int:
+        """消费一个带值选项，返回值消费后的下一个索引。"""
+        nonlocal incomplete, read_unknown
+        if attached is not None:
+            value: Optional[str] = attached if static_at(index) else None
+            next_index = index + 1
+        elif index + 1 < len(rest):
+            # 已知带值选项无条件消费下一个词，即使它以 `-` 起头。
+            value = rest[index + 1] if static_at(index + 1) else None
+            next_index = index + 2
+        else:
+            # 缺值：布局不完整，不把其他 token 退回源。
+            incomplete = True
+            return index + 1
+        if not value:
+            incomplete = True
+        values.setdefault(option, []).append(value)
+        if option == "--filter":
+            # `--filter` 的 merge 规则可能间接读取文件：不把整段规则字符串当路径。
+            read_unknown = True
+        return next_index
+
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        if word == "--":
+            positional.extend(range(index + 1, len(rest)))
+            break
+        if word.startswith("--"):
+            option, separator, value = word.partition("=")
+            if option in _RSYNC_VALUE_OPTIONS:
+                index = take_value(option, index, value if separator else None)
+                continue
+            if option in _RSYNC_FLAG_OPTIONS and not separator:
+                flags.add(option)
+                index += 1
+                continue
+            # 未知长选项、伪造的 `--flag=value` 与 `--target-directory` 都不可猜。
+            unknown_option = True
+            index += 1
+            continue
+        if word.startswith("-") and word != "-":
+            letters = word[1:]
+            cluster_done = False
+            for offset, letter in enumerate(letters):
+                if letter in _RSYNC_VALUE_LETTERS:
+                    attached = letters[offset + 1 :]
+                    index = take_value(
+                        _RSYNC_SHORT_VALUE_OPTIONS[letter], index, attached or None
+                    )
+                    cluster_done = True
+                    break
+                if letter in _RSYNC_NO_VALUE_LETTERS:
+                    flags.add(_RSYNC_SHORT_FLAG_OPTIONS.get(letter, "-" + letter))
+                    continue
+                unknown_option = True
+                break
+            if cluster_done:
+                continue
+            index += 1
+            continue
+        positional.append(index)
+        index += 1
+
+    if any(not static_at(item) for item in positional):
+        incomplete = True
+    if unknown_option:
+        # 表 1：布局不可证明，先于任何源/目的推断。
+        mode = "unknown"
+    elif values.get("--read-batch"):
+        mode = "read-batch"
+    elif values.get("--files-from"):
+        mode = "files-from"
+    elif len(positional) < 2:
+        mode = "missing-operands"
+    else:
+        mode = "normal"
+
+    sources: List[str] = []
+    destination: Optional[str] = None
+    if mode in {"read-batch", "files-from", "normal"} and positional:
+        last = positional[-1]
+        destination = rest[last] if static_at(last) else None
+    if mode in {"files-from", "normal"}:
+        sources = [rest[item] for item in positional[:-1] if static_at(item)]
+    if mode in {"read-batch", "files-from"}:
+        # files-from/read-batch 的文件集无法静态枚举，目的只记不完整项。
+        read_unknown = True
+        write_unknown = True
+        incomplete = True
+    if mode == "missing-operands":
+        # 缺源/缺目的：记未知写，不能退成只读。
+        write_unknown = True
+        incomplete = True
+    if mode == "unknown":
+        # 未知选项后的 token 既不是可证明的源，也不是可证明的目的。
+        read_unknown = True
+        write_unknown = True
+        incomplete = True
+        sources = []
+    if _RSYNC_REMOTE_SIDE_OPTIONS & set(values):
+        # 远端命令或额外远端选项会改变实际副作用，无法证明。
+        read_unknown = True
+        write_unknown = True
+        incomplete = True
+    if _RSYNC_SHORT_FLAG_OPTIONS["F"] in flags:
+        read_unknown = True
+    if any(_rsync_remote_word(source) for source in sources):
+        # 远程源不是本地路径：不交给本地 stat，也不当作读取。
+        sources = [source for source in sources if not _rsync_remote_word(source)]
+        read_unknown = True
+        incomplete = True
+    if _rsync_remote_word(destination):
+        destination = None
+        write_unknown = True
+        incomplete = True
+    return {
+        "sources": sources,
+        "destination": destination,
+        "values": values,
+        "flags": flags,
+        "incomplete": incomplete,
+        "read_unknown": read_unknown,
+        "write_unknown": write_unknown,
+        "mode": mode,
+    }
+
+
+def _rsync_main_targets(
+    layout: Dict[str, object], cwd: Optional[str]
+) -> List[Tuple[Optional[str], bool]]:
+    """决策表 1–7 行：主传输的写入目标与完整性。"""
+    mode = str(layout["mode"])
+    destination = layout["destination"]
+    flags = layout["flags"]  # type: ignore[assignment]
+    values = layout["values"]  # type: ignore[assignment]
+    if mode in {"unknown", "missing-operands"} or not isinstance(destination, str):
+        return [(None, False)]
+    if mode in {"read-batch", "files-from"}:
+        return [(destination, False)]
+    if flags & {"--relative", "--hard-links", "--keep-dirlinks"} or values.get("--link-dest"):
+        # 相对路径、硬链接与链接目的目录都不展开 basename，也不声称链接身份可快照。
+        return [(destination, False)]
+    if "--backup" in flags or values.get("--suffix"):
+        # 备份文件布局不枚举：目的本身不是唯一的被改文件。
+        return [(destination, False)]
+    if layout["incomplete"]:
+        return [(destination, False)]
+    sources: List[str] = list(layout["sources"])  # type: ignore[arg-type]
+    if len(sources) != 1:
+        # 多源或源形态不可枚举：只记目的目录本身且不完整。
+        return [(destination, False)]
+    source = sources[0]
+    if _stat_directory(source, cwd) is not False:
+        # 目录源与无法定位的源都不能冒充单文件完整落点。
+        return [(destination, False)]
+    is_directory = _stat_directory(destination, cwd)
+    if is_directory is None:
+        return [(destination, False)]
+    if is_directory:
+        # 唯一可展开情形：单普通文件源 + 已存在目录目的。
+        return _destination_targets(destination, sources, cwd)
+    if destination.endswith("/"):
+        # 目录意图但没有可枚举的文件落点，不伪造 basename。
+        return [(destination, False)]
+    return [(destination, True)]
+
+
+def _rsync_targets(
+    layout: Dict[str, object], cwd: Optional[str]
+) -> Tuple[List[Tuple[Optional[str], bool]], bool]:
+    """按决策表把 rsync 布局折算成写目标；返回 (目标列表, 是否写入未知)。"""
+    targets = _rsync_main_targets(layout, cwd)
+    write_unknown = bool(layout["write_unknown"])
+    flags = layout["flags"]  # type: ignore[assignment]
+    values = layout["values"]  # type: ignore[assignment]
+    if layout["mode"] != "read-batch" and flags & _RSYNC_REMOVE_SOURCE_FLAGS:
+        # 删除源是明确写副作用；被 read-batch 忽略的显式源不算已知删除源。
+        for source in layout["sources"]:  # type: ignore[union-attr]
+            targets.append((str(source), _stat_directory(str(source), cwd) is False))
+    for value in values.get("--log-file", []):
+        targets.append((value, True) if value else (None, False))
+    for option in _RSYNC_BATCH_WRITE_OPTIONS:
+        for value in values.get(option, []):
+            # 批处理文件会写 FILE 与 FILE.sh，内容不可枚举。
+            if value:
+                targets.append((value, False))
+                targets.append((value + ".sh", False))
+            else:
+                targets.append((None, False))
+            write_unknown = True
+    for option in sorted(_RSYNC_AUX_WRITE_DIRS):
+        for value in values.get(option, []):
+            # 空值（`--temp-dir=`）已记布局不完整，不追加空路径候选。
+            if value != "":
+                targets.append((value, False))
+            write_unknown = True
+    return targets, write_unknown
+
+
+def _rsync_reads(layout: Dict[str, object]) -> Tuple[List[Dict[str, object]], bool]:
+    """布局的读取侧：实际源、辅助读取文件/目录与无法枚举的读取。"""
+    entries: List[Dict[str, object]] = []
+    read_unknown = bool(layout["read_unknown"])
+    flags = layout["flags"]  # type: ignore[assignment]
+    values = layout["values"]  # type: ignore[assignment]
+    follow = bool(flags & _RSYNC_FOLLOW_LINK_FLAGS)
+    if layout["mode"] != "read-batch":
+        # read-batch 的显式源被 rsync 忽略：既不是本地读取，也不是删除源。
+        for source in layout["sources"]:  # type: ignore[union-attr]
+            entries.append(
+                {"kind": "rsync-source", "path": str(source), "recursive": True, "follow": follow}
+            )
+    for option in sorted(_RSYNC_AUX_READ_FILES):
+        for value in values.get(option, []):
+            if not value or value == "-":
+                # `--files-from=-` 读 stdin，不能记名为 `-` 的文件。
+                read_unknown = True
+                continue
+            entries.append(
+                {"kind": "rsync-file", "path": value, "recursive": False, "follow": False}
+            )
+    for option in sorted(_RSYNC_AUX_READ_DIRS):
+        for value in values.get(option, []):
+            if not value:
+                read_unknown = True
+                continue
+            entries.append(
+                {"kind": "rsync-reference", "path": value, "recursive": True, "follow": False}
+            )
+    return entries, read_unknown
+
+
+def _argv_rest_tokens(tokens: Optional[List[Token]]) -> Optional[List[Token]]:
+    """argv 词法元信息去掉命令名后的部分；无元信息时返回 None。"""
+    return tokens[1:] if tokens else None
+
+
 def _write_targets_for_command(
     argv: List[str],
     redirects: List[Tuple[str, str]],
     analysis: Analysis,
     cwd: Optional[str] = None,
     cwd_known: bool = True,
+    argv_tokens: Optional[List[Token]] = None,
 ) -> None:
     for op, target in redirects:
         if op in _WRITE_REDIRECTS and target != "/dev/null":
@@ -1790,6 +2268,14 @@ def _write_targets_for_command(
     if name in {"cp", "mv", "install"}:
         for target, complete in _copy_like_targets(name, rest, cwd):
             analysis.writes.append({"kind": name, "target": target, "complete": complete})
+        return
+    if name == "rsync":
+        layout = _rsync_layout(rest, _argv_rest_tokens(argv_tokens))
+        targets, write_unknown = _rsync_targets(layout, cwd)
+        # 目标是否完整都至少有一个写条目：reviewer 不能因未知布局退成告警放行。
+        for target, complete in targets:
+            analysis.writes.append({"kind": "rsync", "target": target, "complete": complete})
+        analysis.write_unknown = analysis.write_unknown or write_unknown
         return
     if name == "find":
         layout = _find_layout(rest)
@@ -1842,8 +2328,8 @@ def _write_targets_for_command(
         return
     if name in WRITE_COMMANDS:
         positional = [token for token in rest if not _looks_like_option(token)]
-        if name in {"mkdir", "touch", "rm", "rmdir", "chmod", "chown", "truncate", "ln", "rsync"}:
-            targets = positional[1:] if name in {"chmod", "chown", "rsync"} else positional
+        if name in {"mkdir", "touch", "rm", "rmdir", "chmod", "chown", "truncate", "ln"}:
+            targets = positional[1:] if name in {"chmod", "chown"} else positional
             if name == "chmod" and not targets:
                 targets = []
             for target in targets:
@@ -2308,7 +2794,12 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
         )
 
 
-def _collect_reads(argv: List[str], redirects: List[Tuple[str, str]], analysis: Analysis) -> None:
+def _collect_reads(
+    argv: List[str],
+    redirects: List[Tuple[str, str]],
+    analysis: Analysis,
+    argv_tokens: Optional[List[Token]] = None,
+) -> None:
     for op, target in redirects:
         if op in _READ_REDIRECTS and target not in {"/dev/null"}:
             analysis.reads.append({"kind": "redirect", "path": target, "recursive": False, "follow": False})
@@ -2337,6 +2828,12 @@ def _collect_reads(argv: List[str], redirects: List[Tuple[str, str]], analysis: 
         return
     if name in SEARCH_COMMANDS:
         _search_targets(name, rest, analysis)
+        return
+    if name == "rsync":
+        layout = _rsync_layout(rest, _argv_rest_tokens(argv_tokens))
+        entries, read_unknown = _rsync_reads(layout)
+        analysis.reads.extend(entries)
+        analysis.read_unknown = analysis.read_unknown or read_unknown
         return
     if name in {"cp", "mv", "install"}:
         # 共用 operand 布局：`-t/--target-directory` 下所有位置参数都是源，
@@ -2492,10 +2989,10 @@ def _analyze_simple_segment(
     # 没有命令名的重定向（`> app.py`、`cd src; > app.py`）仍是真实读写副作用；
     # `cd . > file` 的重定向在 cd 之前打开，因此按进入本段的 cwd 解析。
     before = len(analysis.reads)
-    _collect_reads(argv, redirects, analysis)
+    _collect_reads(argv, redirects, analysis, argv_tokens)
     _apply_cwd_rules(analysis.reads, before, analysis, cwd, cwd_known, True)
     before_writes = len(analysis.writes)
-    _write_targets_for_command(argv, redirects, analysis, cwd, cwd_known)
+    _write_targets_for_command(argv, redirects, analysis, cwd, cwd_known, argv_tokens)
     _apply_cwd_rules(analysis.writes, before_writes, analysis, cwd, cwd_known, False)
     if not argv:
         return entry, entry, entry, False

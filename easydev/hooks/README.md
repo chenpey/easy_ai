@@ -57,7 +57,7 @@ python3 ~/.local/share/easydev-hooks/install.py generate \
 
 升级分两步：用新版本替换插件根的文件，再用同一 `--output-root` 重新生成。命令路径不变时 `apply` 报告 `changed=false`，无需重跑；只有 `--mode`、解释器或插件根变了才需要重新 `apply`。
 
-若仍按版本号目录保存插件副本（如 `~/.local/share/easydev-hooks/1.4.4/`），或历史上用过 `<root>/<X.Y.Z>/` 布局，旧目录可显式清理：
+若仍按版本号目录保存插件副本（如 `~/.local/share/easydev-hooks/1.4.5/`），或历史上用过 `<root>/<X.Y.Z>/` 布局，旧目录可显式清理：
 
 ```bash
 # 默认 dry-run，只列出可清理项；加 --apply 才删除
@@ -118,11 +118,11 @@ Hook 默认对所有会话生效，因此每个入口先做可信激活判定，
 规则顺序：解析 → 可信激活/角色 → 破坏性 Git → reviewer 只读 → 结构化目标基线 → 分派配置/交接/嵌套 → 状态事件 → 编码。
 
 - **P1 Git**：`reset --hard`、`checkout --`/`-f`、操作数确指已存在路径的 `checkout`（`git checkout src/app.py` 会还原工作区文件）、会写工作区的 `restore`、`clean -f`、`stash` 写操作、强推与带 `+` 的强制 refspec（`+main:main`，也含无冒号的 `+main`）一律 `deny`；包装（`bash -lc`、`sudo`、`env`）、`-C` 与多段命令会逐段检查。`checkout` 的路径操作数只按已知选项布局判定（`.`/`..`、绝对路径、可信 cwd 下确实存在的相对路径），未知选项布局不猜。Git alias、脚本或动态拼接不展开，文档不宣称无绕过。
-- **P1 基线**：目标已有 dirty/untracked/不可重建内容时，Hook 在 `PreToolUse`（task 锁外）把**首次**当前内容自动快照到 `<state_root>/baselines/<task_key>/<repo_id>/<仓库相对路径>`：目录 `0700`、文件 `0600`、非软链、逐层 `dir_fd + O_NOFOLLOW`、`os.link` 发布不覆盖，第二次写不覆盖首次快照。快照成功即登记并放行；源文件非普通文件（FIFO/设备/目录）、软链、不可读或超过 8 MiB 则 `deny` 并给出可操作原因；`clean_tracked`/`absent` 不要求快照；成功 post 后再被外部修改仍 `deny external_modification`。显式 `EASYDEV_TASK_ROOT`（或安装上下文/机器上下文 `task_root`）仍优先旧的手工核对路径：只读核对 `baseline/<仓库相对路径>` 存在、非软链、`0600`、无硬链，缺失或不合规即 `deny`，已知旧任务根不能给需要内容基线的新任务复用。任务根、`baseline/` 与备份父链都从祖先链起逐层 `dir_fd + O_NOFOLLOW` 打开核对；业务文件或其仓库内父链是软链时 `deny`（不 realpath 后当普通路径），也不写软链目标。自动快照是私有缓存，不是业务备份：Hook 不写业务文件。
+- **P1 基线**：目标已有 dirty/untracked/不可重建内容时，Hook 在 `PreToolUse`（task 锁外）把**首次**当前内容自动快照到 `<state_root>/baselines/<task_key>/<repo_id>/<仓库相对路径>`：目录 `0700`、文件 `0600`、非软链、逐层 `dir_fd + O_NOFOLLOW`、`os.link` 发布不覆盖，第二次写不覆盖首次快照。快照成功即登记并放行；源文件非普通文件（FIFO/设备/目录）、软链、不可读或超过 8 MiB 则 `deny` 并给出可操作原因；`clean_tracked`/`absent` 不要求快照；成功 post 后再被外部修改仍 `deny external_modification`。显式 `EASYDEV_TASK_ROOT`（或安装上下文/机器上下文 `task_root`）仍优先旧的手工核对路径：只读核对 `baseline/<仓库相对路径>` 存在、非软链、`0600`、无硬链，缺失或不合规即 `deny`，已知旧任务根不能给需要内容基线的新任务复用。任务根、`baseline/` 与备份父链都从祖先链起逐层 `dir_fd + O_NOFOLLOW` 打开核对；业务文件或其仓库内父链是软链时 `deny`（不 realpath 后当普通路径），也不写软链目标。自动快照是私有缓存，不是业务备份：Hook 不写业务文件。`rsync` 按真实语义单独解析（`-t` 是无值的 `--times`，没有 `--target-directory`，白名单外的选项一律按布局不可证明处理）：只有“单普通文件源 + 已有目录目的”展开为 `目的/basename` 做文件级检查；目录目的、目录源、多源、`--files-from`、`--read-batch` 都只记**不完整目的**，披露后放行，与 `cp -R` 的现有口径一致，**不宣称**目录级或批次级快照覆盖。`--remove-source-files` 把已知源追加为写目标，但多源时整段不完整、连已知源也不快照；`--read-batch` 的显式源被 rsync 忽略，批次内容与实际影响不枚举，只记不完整目的，不能宣称已保护。
 - **P1 reviewer 只读**：写工具/补丁和明确写命令 `deny`，含 `find -delete`/`find -exec`、`sort -o <文件>` 这类显式写副作用的命令；纯读、测试、构建放行。**窄拒绝**：已识别出复合结构但拆解失败（无法安全配对/归属）时 `deny`，并提示把命令拆成简单命令重跑；其他无法完整解析的命令仍告警放行并披露缺口。
 - **P2 模型配置**：只读第一个存在的完整文件（对话指定 → 项目 `.easydev/models.json` → 用户配置 → 内置 inherit），不跨文件合并；选中文件无效即 `deny`，不静默回退。`role_overrides` 先按字段校验，再合成后走同一 validator。
 - **P2 交接/嵌套**：reviewer 交接必须有精确角色路径与 `**[P级] 简短标题**`/`**[P级别] …**`/逐个 P0–P3 模板；缺项 `deny` 并提示补齐，不改写 prompt。已证明的 child 不能再次分派；状态查询/等待放行。
-- **P3 收口**：只有根 actor 正常 settle 时判定；可信 child 的成功写直接进入共享写序列，完成时 `checkpoint=max(checkpoint,start_write_seq)`；审后又写代码则每回合最多提醒一次。`.md` 不按扩展名排除；只排除显式 `doc_paths` 与任务根内明确报告路径（`reports/`、`baseline/`、`report*`/`review*` 命名），运行规则/构建清单/测试/未知配置一律计入，task_root 与 repo 重叠时不据此排除整个 repo。完成事件只认结构化成功终态 + 结构化报告，显式 `failed`/`cancelled`/`timeout`/`running` 优先排除；Codex 用 `SubagentStop` 的 `agent_id` 关联分派、`last_assistant_message` 作为结构化报告，不解析报告正文或最终散文。写入配对键为 actor + task epoch + 调用 ID 并核对目标集合，父子同名工具 ID 互不覆盖。
+- **P3 收口**：只有根 actor 正常 settle 时判定；可信 child 的成功写直接进入共享写序列，完成时 `checkpoint=max(checkpoint,start_write_seq)`；审后又写代码则每回合最多提醒一次。`.md` 不按扩展名排除；只排除显式 `doc_paths` 与任务根内明确报告路径（`reports/`、`baseline/`、`report*`/`review*` 命名），运行规则/构建清单/测试/未知配置一律计入，task_root 与 repo 重叠时不据此排除整个 repo。完成事件只认结构化成功终态 + 结构化报告，显式 `failed`/`cancelled`/`timeout`/`running` 优先排除；Codex 用 `SubagentStop` 的 `agent_id` 关联分派、`last_assistant_message` 作为结构化报告，不解析报告正文或最终散文。写入配对键为 actor + task epoch + 调用 ID 并核对目标集合，父子同名工具 ID 互不覆盖。不完整的写（如目录源 `rsync`、`--files-from`/`--read-batch`）在成功 post 时也不推进代码写序列：即使实际改了代码，也可能不触发审后复审提醒。这是当前能力边界，不声称 P3 覆盖。
 
 | 宿主 | P3 完成事件 | 说明 |
 | --- | --- | --- |

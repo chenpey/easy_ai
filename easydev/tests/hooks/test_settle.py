@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from support import HOOKS_ROOT, HookCase, clean_env
+from test_r5_fixes import task_states
 
 INSTALL = HOOKS_ROOT / "hooks" / "install.py"
 
@@ -53,6 +54,12 @@ class CodexSettleTests(HookCase):
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
         return self.is_continued(value)
 
+    def task_state(self) -> dict:
+        """当前只有一条任务状态时的持久化快照。"""
+        states = task_states(self.state)
+        self.assertEqual(len(states), 1, states)
+        return states[0]
+
     def test_generated_config_registers_subagent_stop(self) -> None:
         output = self.root / "generated"
         completed = subprocess.run(
@@ -94,6 +101,36 @@ class CodexSettleTests(HookCase):
         self.activate("P")
         self.write_code("w1", "value = 2\n")
         self.run_review()
+        self.assertFalse(self.settle())
+
+    def test_incomplete_rsync_after_review_does_not_advance_write_sequence(self) -> None:
+        self.activate("P")
+        # 先做一次完整代码写，再让审查取样把 checkpoint 推到当前写序列。
+        self.write_code("w1", "value = 2\n")
+        self.run_review()
+        self.complete_review()
+        before = self.task_state()
+        # 目录源 rsync：目的明确但文件集不可枚举 → 披露后放行，不建完整写序列。
+        command = "rsync -a docs/ src/"
+        _code, value, stderr = self.run_core(self.shell("P", command, tool_id="rsync-dir"))
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("warning", stderr)
+        # 夹具直接改目的下已有代码文件，模拟工具真实生效后发成功 post。
+        target = self.repo / "src" / "app.py"
+        target.write_text("value = 3\n", encoding="utf-8")
+        _code, value, stderr = self.run_core(
+            self.shell("P", command, tool_id="rsync-dir", event="post_tool", outcome="success")
+        )
+        self.assertFalse(self.is_denied(value), value)
+        self.assertIn("写序列记覆盖缺口", stderr)
+        after = self.task_state()
+        self.assertEqual(target.read_text(encoding="utf-8"), "value = 3\n")
+        # 代码字节真的变了，但写序列与 checkpoint 都不推进，也不建立成功豁免。
+        self.assertEqual(after["write_seq"], before["write_seq"])
+        self.assertEqual(after["last_code_write_seq"], before["last_code_write_seq"])
+        self.assertEqual(after["review_checkpoint"], before["review_checkpoint"])
+        self.assertEqual(after.get("last_success") or {}, before.get("last_success") or {})
+        # 已完成的审后实际改代码却不提醒：目标不完整时 P3 覆盖缺口，按能力边界披露。
         self.assertFalse(self.settle())
 
     def test_no_write_after_review_is_allowed(self) -> None:

@@ -962,5 +962,369 @@ class CompoundFlagTests(unittest.TestCase):
         self.assertIsNone(manual.raw_source)
 
 
+class RsyncLayoutTests(unittest.TestCase):
+    """rsync 独立布局：选项值不是源，目的/源按 9 行决策表分派。
+
+    rsync 不是 cp：`-t` 是无值的 `--times`、`-T` 吃临时目录，且没有
+    `--target-directory`。这些用例只投递字符串驱动分析器，绝不执行 rsync。
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.cwd = str(self.root)
+        (self.root / "src").mkdir()
+        (self.root / "dest").mkdir()
+        (self.root / "src" / "f").write_text("src\n", encoding="utf-8")
+        (self.root / "f").write_text("file\n", encoding="utf-8")
+        (self.root / "a").write_text("a\n", encoding="utf-8")
+        (self.root / "b").write_text("b\n", encoding="utf-8")
+        (self.root / "existingfile").write_text("old\n", encoding="utf-8")
+        (self.root / "dest" / "app.py").write_text("old\n", encoding="utf-8")
+
+    def analyze(self, command: str) -> shell.Analysis:
+        return shell.analyze(command, cwd=self.cwd)
+
+    def test_exclude_value_and_directory_source_are_not_writes(self) -> None:
+        # 原安装场景：`--exclude` 的值与目录源都曾被记成写目标 → 命中真实目录即误拒。
+        analysis = self.analyze("rsync -a --exclude 'install-context.json' src/ dest/")
+        self.assertEqual(write_targets(analysis), [("dest/", False)])
+        self.assertEqual(read_paths(analysis), ["src/"])
+        self.assertEqual([item["kind"] for item in analysis.writes], ["rsync"])
+        self.assertFalse(analysis.write_unknown)
+        self.assertFalse(analysis.read_unknown)
+
+    def test_value_options_are_consumed(self) -> None:
+        for option in (
+            "--exclude",
+            "--include",
+            "--chmod",
+            "--timeout",
+            "--bwlimit",
+            "--block-size",
+            "--log-format",
+        ):
+            separated = self.analyze("rsync %s VALUE f out" % option)
+            self.assertEqual(write_targets(separated), [("out", True)], option)
+            self.assertEqual(read_paths(separated), ["f"], option)
+            attached = self.analyze("rsync %s=VALUE f out" % option)
+            self.assertEqual(write_targets(attached), [("out", True)], option)
+            self.assertEqual(read_paths(attached), ["f"], option)
+        for option in ("--exclude-from", "--include-from", "--password-file"):
+            analysis = self.analyze("rsync %s=patterns f out" % option)
+            self.assertEqual(write_targets(analysis), [("out", True)], option)
+            self.assertEqual(read_paths(analysis), ["f", "patterns"], option)
+        # `--filter` 的 merge 规则可能间接读文件：值不当路径，但仍记读取未知。
+        filtered = self.analyze("rsync --filter='- *.tmp' f out")
+        self.assertEqual(write_targets(filtered), [("out", True)])
+        self.assertEqual(read_paths(filtered), ["f"])
+        self.assertTrue(filtered.read_unknown)
+        # 已知带值选项无条件消费下一个词，即使它以 `-` 起头。
+        self.assertEqual(
+            write_targets(self.analyze("rsync --exclude --relative f out")), [("out", True)]
+        )
+        # 缺值：布局不完整，不把其他 token 退回源。
+        missing = self.analyze("rsync --exclude")
+        self.assertEqual(write_targets(missing), [(None, False)])
+        self.assertTrue(missing.write_unknown)
+        # 动态值不是路径候选。
+        dynamic = self.analyze("rsync --exclude=$(echo pat) f out")
+        self.assertEqual(write_targets(dynamic), [("out", False)])
+        self.assertEqual(read_paths(dynamic), ["f"])
+        # 选项写在位置参数之后，目的仍是最后一个位置参数。
+        self.assertEqual(
+            write_targets(self.analyze("rsync f out --exclude=pattern")), [("out", True)]
+        )
+        # 参照目录是额外递归读取；只有 --link-dest 影响主目的完整性。
+        for option in ("--compare-dest", "--copy-dest"):
+            analysis = self.analyze("rsync %s=ref f out" % option)
+            self.assertIn("ref", read_paths(analysis), option)
+            self.assertIn("rsync-reference", [item["kind"] for item in analysis.reads], option)
+            self.assertEqual(write_targets(analysis), [("out", True)], option)
+        link_dest = self.analyze("rsync --link-dest=ref f out")
+        self.assertIn("ref", read_paths(link_dest))
+        self.assertEqual(write_targets(link_dest), [("out", False)])
+
+    def test_short_option_sets_and_independent_routing(self) -> None:
+        no_value = {
+            "0",
+            "4",
+            "6",
+            "8",
+            "a",
+            "b",
+            "c",
+            "d",
+            "g",
+            "h",
+            "i",
+            "k",
+            "l",
+            "m",
+            "n",
+            "o",
+            "p",
+            "q",
+            "r",
+            "t",
+            "u",
+            "v",
+            "x",
+            "y",
+            "z",
+            "C",
+            "D",
+            "E",
+            "F",
+            "H",
+            "I",
+            "L",
+            "O",
+            "P",
+            "R",
+            "S",
+            "V",
+            "W",
+        }
+        self.assertEqual(set(shell._RSYNC_NO_VALUE_LETTERS), no_value)
+        self.assertEqual(set(shell._RSYNC_VALUE_LETTERS), {"e", "f", "B", "T"})
+        self.assertFalse(shell._RSYNC_NO_VALUE_LETTERS & shell._RSYNC_VALUE_LETTERS)
+        # 逐字母分类：默认只是开关，不改变落点与读取；例外独立写死。
+        effects = {
+            "R": {"complete": False},
+            "H": {"complete": False},
+            "b": {"complete": False},
+            "F": {"read_unknown": True},
+            "L": {"follow": True},
+            "k": {"follow": True},
+        }
+        for letter in sorted(no_value):
+            expected = effects.get(letter, {})
+            analysis = self.analyze("rsync -%s f out" % letter)
+            self.assertEqual(
+                write_targets(analysis), [("out", expected.get("complete", True))], letter
+            )
+            sources = [item for item in analysis.reads if item["kind"] == "rsync-source"]
+            self.assertEqual(len(sources), 1, letter)
+            self.assertEqual(sources[0]["follow"], expected.get("follow", False), letter)
+            self.assertEqual(analysis.read_unknown, expected.get("read_unknown", False), letter)
+            self.assertFalse(analysis.write_unknown, letter)
+        # 带值字母各自映射到独立长选项，分离与附值两种写法都吃值、不吃源。
+        mappings = (
+            ("e", "--rsh", "ssh -p 2222"),
+            ("f", "--filter", "- *.tmp"),
+            ("B", "--block-size", "4096"),
+            ("T", "--temp-dir", "scratch"),
+        )
+        for letter, option, value in mappings:
+            separated = shell._rsync_layout(["-" + letter, value, "f", "out"])
+            self.assertEqual(separated["values"], {option: [value]}, letter)
+            self.assertEqual(separated["sources"], ["f"], letter)
+            self.assertEqual(separated["destination"], "out", letter)
+            attached = shell._rsync_layout(["-" + letter + value, "f", "out"])
+            self.assertEqual(attached["values"], {option: [value]}, letter)
+            self.assertEqual(attached["sources"], ["f"], letter)
+            self.assertEqual(attached["destination"], "out", letter)
+        # `-avze` 集群：后面的词是 --rsh 的值，源与目的不被吃掉。
+        cluster = self.analyze("rsync -avze 'ssh -p 2222' f out")
+        self.assertEqual(write_targets(cluster), [("out", True)])
+        self.assertEqual(read_paths(cluster), ["f"])
+        self.assertEqual(
+            shell._rsync_layout(["-avze", "ssh -p 2222", "f", "out"])["values"],
+            {"--rsh": ["ssh -p 2222"]},
+        )
+        # 白名单之外的字母没有已核实语义：一律未知布局，不猜是否带值。
+        for letter in ("Q", "j", "M"):
+            unknown = self.analyze("rsync -%s f out" % letter)
+            self.assertEqual(write_targets(unknown), [(None, False)], letter)
+            self.assertTrue(unknown.write_unknown, letter)
+            self.assertTrue(unknown.read_unknown, letter)
+
+    def test_times_is_flag_and_target_directory_is_unknown(self) -> None:
+        # `-t` 是 --times：不吃值，源与目的照常分离（目录源目的不完整）。
+        times = self.analyze("rsync -t src dest")
+        self.assertEqual(write_targets(times), [("dest", False)])
+        self.assertEqual(read_paths(times), ["src"])
+        # rsync 没有 --target-directory：任何形式都不能套用 cp 的规则。
+        for command in (
+            "rsync --target-directory dest src",
+            "rsync --target-directory=dest -t src",
+            "rsync -t --target-directory dest src",
+        ):
+            analysis = self.analyze(command)
+            self.assertEqual(write_targets(analysis), [(None, False)], command)
+            self.assertTrue(analysis.write_unknown, command)
+            self.assertTrue(analysis.read_unknown, command)
+            violation = shell.reviewer_violation(command, cwd=self.cwd)
+            self.assertEqual(violation["kind"], "write", command)
+
+    def test_multi_source_writes_only_destination(self) -> None:
+        analysis = self.analyze("rsync a b dest/")
+        self.assertEqual(write_targets(analysis), [("dest/", False)])
+        self.assertEqual(read_paths(analysis), ["a", "b"])
+        # 已知目的但文件集不完整，与“目标不可证明”区别开。
+        self.assertFalse(analysis.write_unknown)
+
+    def test_files_from_keeps_single_positional_destination(self) -> None:
+        single = self.analyze("rsync --files-from=list dest/")
+        self.assertEqual(write_targets(single), [("dest/", False)])
+        self.assertEqual(read_paths(single), ["list"])
+        self.assertTrue(single.read_unknown)
+        self.assertTrue(single.write_unknown)
+        both = self.analyze("rsync --files-from=list src/ dest/")
+        self.assertEqual(write_targets(both), [("dest/", False)])
+        self.assertEqual(read_paths(both), ["src/", "list"])
+        self.assertTrue(both.read_unknown)
+        # 没有目的时仍是未知写，不退成只读。
+        missing = self.analyze("rsync --files-from=list")
+        self.assertEqual(write_targets(missing), [(None, False)])
+        self.assertTrue(missing.write_unknown)
+        # `--files-from=-` 读 stdin：不记名为 `-` 的文件，但仍记读取未知。
+        from_stdin = self.analyze("rsync --files-from=- dest/")
+        self.assertEqual(read_paths(from_stdin), [])
+        self.assertTrue(from_stdin.read_unknown)
+
+    def test_read_batch_ignores_explicit_sources_and_keeps_destination(self) -> None:
+        (self.root / "batch.bin").write_bytes(b"")
+        for command in (
+            "rsync --read-batch=batch.bin f dest/",
+            "rsync --read-batch=batch.bin dest/",
+            "rsync --read-batch batch.bin f dest/",
+        ):
+            analysis = self.analyze(command)
+            self.assertEqual(write_targets(analysis), [("dest/", False)], command)
+            self.assertEqual(read_paths(analysis), ["batch.bin"], command)
+            self.assertTrue(analysis.read_unknown, command)
+            self.assertTrue(analysis.write_unknown, command)
+            # 显式源被 rsync 忽略：既不当读取，也不产生完整的伪落点 dest/f。
+            self.assertNotIn("f", read_paths(analysis), command)
+            self.assertNotIn(("dest/f", True), write_targets(analysis), command)
+            violation = shell.reviewer_violation(command, cwd=self.cwd)
+            self.assertEqual(violation["kind"], "write", command)
+            self.assertFalse(violation["unknown"], command)
+        # 被忽略的源也不能当 --remove-source-files 的已知删除源。
+        batch_remove = self.analyze("rsync --read-batch=batch.bin --remove-source-files f dest/")
+        self.assertEqual(write_targets(batch_remove), [("dest/", False)])
+        # 没有目的才是未知写。
+        no_destination = self.analyze("rsync --read-batch=batch.bin")
+        self.assertEqual(write_targets(no_destination), [(None, False)])
+        self.assertTrue(no_destination.write_unknown)
+
+    def test_single_file_destination_forms(self) -> None:
+        # 表 3/4：不存在且无尾斜杠、已存在普通文件都是完整文件目的。
+        self.assertEqual(write_targets(self.analyze("rsync f newfile")), [("newfile", True)])
+        self.assertEqual(
+            write_targets(self.analyze("rsync f existingfile")), [("existingfile", True)]
+        )
+        # 表 5：已存在目录只展开这一种 basename。
+        self.assertEqual(write_targets(self.analyze("rsync f dest/")), [("dest/f", True)])
+        # 表 6：不存在但带尾斜杠 = 目录意图，不伪造 basename。
+        self.assertEqual(write_targets(self.analyze("rsync f notexist/")), [("notexist/", False)])
+        # 目的实际是 FIFO 时仍记完整文件目标：交给原指纹检查拒绝，不改成未知绕过。
+        os.mkfifo(self.root / "pipe")
+        self.assertEqual(write_targets(self.analyze("rsync f pipe")), [("pipe", True)])
+
+    def test_relative_and_unknown_layouts_do_not_expand_basename(self) -> None:
+        relative = self.analyze("rsync -R src/f dest/")
+        self.assertEqual(write_targets(relative), [("dest/", False)])
+        self.assertEqual(read_paths(relative), ["src/f"])
+        self.assertEqual(
+            write_targets(self.analyze("rsync --relative src/f dest/"))[0], ("dest/", False)
+        )
+        unknown_short = self.analyze("rsync -Q src/f dest/")
+        self.assertEqual(write_targets(unknown_short), [(None, False)])
+        unknown_long = self.analyze("rsync --exclude-bin src/f dest/")
+        self.assertEqual(write_targets(unknown_long), [(None, False)])
+        self.assertTrue(unknown_long.write_unknown)
+        remote = self.analyze("rsync src/f host:dest")
+        self.assertEqual(write_targets(remote), [(None, False)])
+        self.assertTrue(remote.write_unknown)
+        # 本地带冒号文件不是远程：必须是显式 ./ 前缀。
+        self.assertEqual(read_paths(self.analyze("rsync ./a:b dest/")), ["./a:b"])
+        # `--` 之后全是位置参数：`-Q` 是文件名，不是未知选项。
+        self.assertEqual(read_paths(self.analyze("rsync -- -Q out")), ["-Q"])
+
+    def test_remove_sources_and_auxiliary_writes(self) -> None:
+        self.assertEqual(
+            write_targets(self.analyze("rsync --remove-source-files f dest/")),
+            [("dest/f", True), ("f", True)],
+        )
+        self.assertEqual(
+            write_targets(self.analyze("rsync --remove-sent-files f dest/")),
+            [("dest/f", True), ("f", True)],
+        )
+        # 多源：目的不完整，已知源仍作为删除候选（整段不完整 → 见 safety 边界用例）。
+        self.assertEqual(
+            write_targets(self.analyze("rsync --remove-source-files a b dest/")),
+            [("dest/", False), ("a", True), ("b", True)],
+        )
+        self.assertEqual(
+            write_targets(self.analyze("rsync --log-file=log f out")),
+            [("out", True), ("log", True)],
+        )
+        for option, value in (
+            ("--backup-dir", "backup"),
+            ("--temp-dir", "scratch"),
+            ("--partial-dir", "partial"),
+        ):
+            analysis = self.analyze("rsync %s=%s f out" % (option, value))
+            self.assertIn((value, False), write_targets(analysis), option)
+            self.assertTrue(analysis.write_unknown, option)
+        # `-T` 是 --temp-dir 的短别名，值不冒充源或目的。
+        short_temp = self.analyze("rsync -T scratch f out")
+        self.assertEqual(write_targets(short_temp), [("out", True), ("scratch", False)])
+        self.assertTrue(short_temp.write_unknown)
+
+    def test_cwd_and_dynamic_targets(self) -> None:
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "f").write_text("sub\n", encoding="utf-8")
+        (self.root / "sub" / "out").write_text("old\n", encoding="utf-8")
+        tracked = self.analyze("rsync f out")
+        self.assertEqual([item["cwd"] for item in tracked.writes], [self.cwd])
+        inside = self.analyze("cd sub; rsync f out")
+        self.assertEqual(write_targets(inside), [("out", True)])
+        self.assertEqual([item["cwd"] for item in inside.writes], [str(self.root / "sub")])
+        unknown = self.analyze("until cd sub; do true; done; rsync f out")
+        self.assertEqual(write_targets(unknown), [("out", False)])
+        self.assertTrue(unknown.write_unknown)
+        # 动态目的不记表达式源码；静态目的保留为不完整。
+        dynamic = self.analyze('rsync f "$DEST"')
+        self.assertEqual(write_targets(dynamic), [(None, False)])
+        self.assertNotIn("$DEST", [item["target"] for item in dynamic.writes])
+        self.assertEqual(write_targets(self.analyze("rsync f '$DEST'")), [("$DEST", True)])
+        self.assertEqual(write_targets(self.analyze("rsync f \\$DEST")), [("$DEST", True)])
+        self.assertEqual(write_targets(self.analyze('rsync f "target"')), [("target", True)])
+        self.assertEqual(write_targets(self.analyze("rsync f dest*")), [(None, False)])
+        absolute = self.analyze("rsync %s %s" % (self.root / "f", self.root / "newfile"))
+        self.assertEqual(write_targets(absolute), [(str(self.root / "newfile"), True)])
+        # 替换内的危险 Git 证据不能因 rsync 布局未知而丢失。
+        danger = self.analyze("rsync $(git reset --hard) dest/")
+        self.assertEqual(git_actions(danger), [("reset", ["--hard"])])
+
+    def test_reviewer_and_read_only_classification(self) -> None:
+        for command in (
+            "rsync f out",
+            "rsync -a src/ dest/",
+            "rsync --files-from=list dest/",
+            "rsync -Q src/ dest/",
+            "rsync -n src/ dest/",
+        ):
+            violation = shell.reviewer_violation(command, cwd=self.cwd)
+            self.assertIsNotNone(violation, command)
+            self.assertEqual(violation["kind"], "write", command)
+            self.assertFalse(violation["unknown"], command)
+        self.assertIsNone(shell.reviewer_violation("cat f", cwd=self.cwd))
+        # is_read_only_command 不接受 cwd：完整文件用例用绝对路径写死期望。
+        complete = shell.is_read_only_command(
+            "rsync %s %s" % (self.root / "f", self.root / "newfile")
+        )
+        self.assertEqual(complete, (False, False))
+        incomplete = shell.is_read_only_command(
+            "rsync %s/ %s/" % (self.root / "src", self.root / "dest")
+        )
+        self.assertEqual(incomplete, (False, True))
+
+
 if __name__ == "__main__":
     unittest.main()

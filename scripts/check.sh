@@ -415,23 +415,32 @@ import warnings
 errors = []
 
 python_files = sorted(glob.glob("**/*.py", recursive=True))
+
+
+def position(exc):
+    """诊断里的行号：优先用异常自身的 lineno。"""
+    lineno = getattr(exc, "lineno", None)
+    return f" (line {lineno})" if lineno else ""
+
+
 for path in python_files:
     source = open(path, encoding="utf-8").read()
-    try:
-        ast.parse(source, filename=path)
-    except SyntaxError as exc:
-        errors.append(f"{path} 语法错误: {exc}")
-        continue
-    # 非法转义等编译期问题在 3.12 起是 SyntaxWarning（未来版本会变硬错误），
-    # ast.parse 不报，必须真编译一次并按错误处理；3.12 之前这里的编译不会告警。
+    # 非法转义在 3.9–3.11 报 DeprecationWarning、3.12 起报 SyntaxWarning：两个类别都按
+    # 错误处理，且 ast.parse 与 compile 放进同一个 warnings 上下文，门禁才对同一份源码
+    # 在不同解释器上给出同样结论（不按 sys.version_info 分支）。其他 SyntaxWarning 保持
+    # 既有严格程度；只有非法转义这一个 DeprecationWarning 被升级。
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", SyntaxWarning)
-            compile(source, path, "exec")
-    except SyntaxWarning as exc:
-        errors.append(f"{path} 编译期告警（如非法转义序列）: {exc}")
+            warnings.filterwarnings(
+                "error", message=r"invalid escape sequence.*", category=DeprecationWarning
+            )
+            ast.parse(source, filename=path)
+            compile(source, path, "exec", flags=0, dont_inherit=True)
+    except (SyntaxWarning, DeprecationWarning) as exc:
+        errors.append(f"{path} 编译期告警（如非法转义序列）{position(exc)}: {exc}")
     except SyntaxError as exc:
-        errors.append(f"{path} 语法错误: {exc}")
+        errors.append(f"{path} 语法错误{position(exc)}: {exc}")
 
 for path in sorted(glob.glob("easydev/hooks/templates/*.json")) + ["easydev/hooks/manifest.json"]:
     try:
