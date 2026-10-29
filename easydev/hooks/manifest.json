@@ -1,6 +1,6 @@
 {
   "name": "easydev-hooks",
-  "release": "1.4.5",
+  "release": "1.4.6",
   "protocol": 1,
   "description": "EasyDev 可选 Hook Plugin：四个宿主共用的 Python 共享核心与薄适配器。",
   "distribution": {

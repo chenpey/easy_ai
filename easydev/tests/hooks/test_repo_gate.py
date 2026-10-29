@@ -4,16 +4,21 @@
 JSON 循环行），在隔离临时目录写 fixture 后用子进程执行：不复制生产过滤器，也不
 靠源码里出现过哪些字符串来断言效果。临时 fixture 不在仓库内，不会被全仓编译
 门禁当成正式 Python 文件。
+
+缺少指定 3.12 解释器时，默认解释器的 fixture 仍全部执行；`test_python312_gate_branch`
+以标准 unittest skip 披露“只证明了默认解释器分支”，不把单解释器运行当成双解释器证据。
 """
 
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from support import EASYDEV_ROOT
 
@@ -69,7 +74,11 @@ def gate_prefix(text: str) -> str:
 
 
 def interpreters() -> list:
-    """同一份源码要在默认解释器与 3.12 各判定一次；缺 3.12 时只跑当前解释器。"""
+    """本次实际能跑的解释器列表：默认加存在的指定 3.12。
+
+    缺 3.12 时只返回默认解释器；“缺哪个分支”由 `test_python312_gate_branch` 的显式
+    skip 报告，不由本函数静默报成双解释器已验。
+    """
     found = [sys.executable]
     if PYTHON_312.is_file() and str(PYTHON_312) != sys.executable:
         found.append(str(PYTHON_312))
@@ -180,6 +189,28 @@ class RepoPythonGateTests(unittest.TestCase):
         )
         self.assertEqual(code, 0, output)
 
+    def test_python312_gate_branch(self) -> None:
+        """指定 3.12 路径的扫描分支；缺路径时用显式 skip 披露实际证明范围。"""
+        if not PYTHON_312.is_file():
+            version = "%d.%d.%d" % tuple(sys.version_info[:3])
+            if sys.version_info < (3, 12):
+                self.skipTest(
+                    "缺少指定解释器 %s；本次只证明默认解释器分支（%s，Python %s），"
+                    "未验证 Python 3.12 分支。" % (PYTHON_312, sys.executable, version)
+                )
+            self.skipTest(
+                "缺少指定解释器 %s；已覆盖默认解释器分支（%s，Python %s），"
+                "未验证指定路径的解释器；不声称两个解释器均已验证。"
+                % (PYTHON_312, sys.executable, version)
+            )
+        code, output = self.run_gate({"bad.py": INVALID_ESCAPE}, str(PYTHON_312))
+        self.assertEqual(code, 1, output)
+        self.assertIn("bad.py", output)
+        self.assertIn("line 1", output)
+        self.assertIn("invalid escape sequence", output)
+        code, output = self.run_gate({"raw_regex.py": 'pattern = r"\\w"\n'}, str(PYTHON_312))
+        self.assertEqual(code, 0, output)
+
     # ---- 其他编译错误不能被新过滤吞掉 ------------------------------
     def test_other_syntax_errors_and_syntaxwarnings_are_rejected(self) -> None:
         cases = {
@@ -220,6 +251,81 @@ class RepoPythonGateTests(unittest.TestCase):
         self.assertIn(anchor, self.script_text)
         mutated = self.script_text.replace(anchor, anchor + BOUNDARY + "\n")
         self.assertEqual(gate_prefix(mutated), self.prefix)
+
+
+class RepoPythonGateReportingTests(unittest.TestCase):
+    """缺指定解释器时的降级必须由标准 runner 输出可观察，不靠源码字样断言。"""
+
+    def setUp(self) -> None:
+        self.module = sys.modules[__name__]
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.missing = Path(self.tmp.name) / "missing-python3.12"
+        self.assertFalse(self.missing.exists())
+
+    def run_inner(self, version_info=None, only=None):
+        """在 mock 掉 PYTHON_312 的条件下用标准 runner 跑内层 RepoPythonGateTests。"""
+        suite = unittest.TestLoader().loadTestsFromTestCase(RepoPythonGateTests)
+        if only is not None:
+            suite = unittest.TestSuite(
+                test for test in suite if test.id().endswith(only)
+            )
+        stream = io.StringIO()
+        runner = unittest.TextTestRunner(stream=stream, verbosity=2)
+        with mock.patch.object(self.module, "PYTHON_312", self.missing):
+            if version_info is None:
+                result = runner.run(suite)
+            else:
+                with mock.patch.object(sys, "version_info", version_info):
+                    result = runner.run(suite)
+        return result, stream.getvalue()
+
+    def skip_reason(self, result):
+        reasons = [reason for _test, reason in result.skipped if str(self.missing) in reason]
+        self.assertEqual(len(reasons), 1, result.skipped)
+        return reasons[0]
+
+    def test_missing_python312_reports_skip_and_scope(self) -> None:
+        result, output = self.run_inner()
+        self.assertEqual(result.failures, [])
+        self.assertEqual(result.errors, [])
+        reason = self.skip_reason(result)
+        # 默认解释器的 fixture 仍全部执行，不能退成整类 skip。
+        self.assertEqual(
+            result.testsRun,
+            unittest.TestLoader().loadTestsFromTestCase(RepoPythonGateTests).countTestCases(),
+        )
+        self.assertIn("test_invalid_escape_is_rejected", output)
+        self.assertIn("test_raw_escaped_and_valid_literals_are_accepted", output)
+        self.assertIn(sys.executable, reason)
+        self.assertIn("%d.%d.%d" % tuple(sys.version_info[:3]), reason)
+        self.assertIn("缺少指定解释器", reason)
+        if sys.version_info < (3, 12):
+            self.assertIn("本次只证明默认解释器分支", reason)
+            self.assertIn("未验证 Python 3.12 分支", reason)
+        else:
+            self.assertIn("未验证指定路径的解释器", reason)
+            self.assertIn("不声称两个解释器均已验证", reason)
+        self.assertIn("skipped", output)
+        self.assertIn(reason, output)
+
+    def test_missing_python312_reason_matches_default_version(self) -> None:
+        for version_info, expected, forbidden in (
+            ((3, 9, 6), "本次只证明默认解释器分支", "不声称两个解释器均已验证"),
+            ((3, 12, 4), "不声称两个解释器均已验证", "本次只证明默认解释器分支"),
+        ):
+            result, _output = self.run_inner(
+                version_info=version_info, only="test_python312_gate_branch"
+            )
+            self.assertEqual(result.testsRun, 1, version_info)
+            self.assertEqual(result.failures, [], version_info)
+            self.assertEqual(result.errors, [], version_info)
+            self.assertEqual(len(result.skipped), 1, version_info)
+            reason = result.skipped[0][1]
+            self.assertIn(str(self.missing), reason, version_info)
+            self.assertIn(expected, reason, version_info)
+            self.assertNotIn(forbidden, reason, version_info)
+            self.assertIn("%d.%d.%d" % version_info, reason, version_info)
 
 
 if __name__ == "__main__":

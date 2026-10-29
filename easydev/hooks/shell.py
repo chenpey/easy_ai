@@ -1242,6 +1242,9 @@ def _wrapper_effective_cwd(
     """
     if not value:
         return base, base_known
+    if value.startswith("~"):
+        # 宿主 HOME 与 `~user` 的 passwd 解析都无法在本进程证明，不猜成相对目录。
+        return None, False
     if os.path.isabs(value):
         return os.path.normpath(value), True
     if not base:
@@ -1255,7 +1258,8 @@ def _track_cd(args: List[str], current: Optional[str]) -> Optional[str]:
     if len(positional) != 1:
         return None
     target = positional[0]
-    if target in {"~", "-"} or re.search(r"[$`*?\[\]{}]", target):
+    if target.startswith("~") or target == "-" or re.search(r"[$`*?\[\]{}]", target):
+        # 去引用后仍以 `~` 开头即不可静态定位：不展开 HOME/passwd，也不拼相对目录。
         return None
     if os.path.isabs(target):
         return os.path.normpath(target)
@@ -2043,6 +2047,11 @@ def _rsync_layout(
         if word.startswith("--"):
             option, separator, value = word.partition("=")
             if option in _RSYNC_VALUE_OPTIONS:
+                if option in _RSYNC_BATCH_WRITE_OPTIONS:
+                    # 批次写的主目的与 FILE/FILE.sh 都无法静态枚举：识别名称时即置，
+                    # 缺值/空值/动态值也不会漏成可证明的写。
+                    incomplete = True
+                    write_unknown = True
                 index = take_value(option, index, value if separator else None)
                 continue
             if option in _RSYNC_FLAG_OPTIONS and not separator:

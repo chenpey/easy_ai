@@ -580,6 +580,35 @@ class SafetyMixin(object):
         self.activate("rev", self.reviewer_handoff())
         self.deny(self.shell("rev", "rsync --read-batch=batch.bin src/app.py dest/"))
 
+    def test_rsync_batch_write_keeps_snapshot_gap(self) -> None:
+        self.touch_dirty("src/app.py", "value = 2\n")
+        (self.repo / "dest").mkdir()
+        (self.repo / "dest" / "app.py").write_text("dest value\n", encoding="utf-8")
+        (self.repo / "batch.bin").write_bytes(b"")
+        self.activate()
+        for index, command in enumerate(
+            (
+                "rsync --write-batch=batch.bin src/app.py dest/",
+                "rsync --only-write-batch=batch.bin src/app.py dest/",
+            )
+        ):
+            tool_id = "rsync-batch-write-%d" % index
+            _code, value, stderr = self.run_core(self.shell("s1", command, tool_id=tool_id))
+            # 整段不完整：披露后放行，不为目的/批次/源伪称文件级快照。
+            self.assertFalse(self.is_denied(value), value)
+            self.assertIn("warning", stderr)
+            for relative in ("dest/app.py", "src/app.py", "batch.bin", "batch.bin.sh"):
+                self.assertFalse(self.snapshots(relative), relative)
+            keys = self.registered_targets()
+            self.assertFalse([key for key in keys if "::dest/app.py" in key], keys)
+            # 成功 post 仍披露不完整写缺口，不推进写序列。
+            _code, value, stderr = self.run_core(
+                self.shell("s1", command, tool_id=tool_id, event="post_tool", outcome="success")
+            )
+            self.assertFalse(self.is_denied(value), value)
+            self.assertIn("写序列记覆盖缺口", stderr)
+            self.assertFalse(self.snapshots("dest/app.py"))
+
 
 class PiSafetyTests(SafetyMixin, HookCase):
     host = "pi"

@@ -2,6 +2,22 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.6 更新说明（2026-10-29）
+
+收尾 1.4.5 遗留的三项已知问题（规则正文未变，总量仍为 131715 字节）。
+
+- **`~` 目标不再被拼成假目录（P2）**：此前 `cd ~/x; printf y > a` 会把有效 cwd 记成 `<当前目录>/~/x` 并把写入标为「完整」，基线检查因此去看一个不存在的路径、放行且不做首次快照；`env -C ~` 走 `_wrapper_effective_cwd` 也有同一个漏洞（拼成 `<当前目录>/~`）。现两个接缝都改为「去引用后以 `~` 开头的目标一律未知」（`~`、`~/x`、`~user/x`、`'~/x'`、`env -C ~`、`sh -c 'cd ~/x; …'`）。**不做 HOME 展开**：Hook 不读 passwd、HOME 可能被宿主改写，标未知比猜错目录安全。`cd /abs`、`cd sub`、`cd ..` 的已知定位与完整候选不变，未知入口后用绝对 `cd` 仍可恢复。
+- **`--write-batch`/`--only-write-batch` 候选全部不完整（P2）**：此前主传输候选仍是 `complete=True`，只有 `FILE`/`FILE.sh` 批次项不完整，与冻结设计的「全部标不完整」不符——虽然整段因 `write_unknown` 早退、行为等价，但表示法一旦随早退规则变化就会变成「有快照保证」的假象。现识别到选项名即置主目的与批次文件都不完整并保留 `write_unknown`；等号/分离/缺值/空值/动态值五种输入都覆盖，`--read-batch` 优先且行为不变。
+- **门禁降级可见（P3）**：`tests/hooks/test_repo_gate.py` 在缺少 `~/.local/bin/python3.12` 时给出可见 skip 原因并声明「本次只证明默认解释器分支」；默认解释器 fixture 仍真实执行（CI 上 `python3` 即 3.12），不会变成「永远 skip」。
+
+验证（本机 macOS、无 PyYAML，基线 `787f13d` / 1.4.5）：`bash scripts/check.sh` rc=0（§3 版本一致 1.4.6、§10 总量 131715）；`tests/hooks` **1047 项 0 failures（1 skip）**、`tests/experiments/agent_runner` 86 项 0 failures；`~/.local/bin/python3.12 -W error::SyntaxWarning` 全仓 `*.py` 编译 0 issues。解析器探针逐条核对：9 条 `~` 形态（含 `'~/x'`、`~root/x`、`env -C ~`、`env -C ~/x`）全部变为「未知 + write_unknown」且不再出现 `<cwd>/~/…`；`cd /tmp`/`cd sub` 仍完整带正确 cwd；`cd ~/x || cat in` 的失败边仍按 `/tmp/base` 定位；`cd ~/x; cd /tmp; printf y > a` 能恢复 `/tmp`；`--write-batch` 三种形式的主候选与批次候选全部 `complete=False`。
+
+仍已知未修（缺证据，未在本次处理）：
+- **Antigravity transcript 的 `GENERIC` 结果行错位**：需要真实「2 个调用只有 1 行结果」的日志夹具才能确认成立条件；盲改会动摇 1.4.1 实测过的真实日志解析（8/13 会话取得 references），先留档待真实样本。
+- **`GIT_TIMEOUT_SECONDS=0.3` 在大仓库冷盘下可能超时降级**：缺少真实大型仓库的冷盘测量，不凭本地小仓库时延调整生产预算。
+
+未验证：未在真实 rsync/openrsync 传输上执行；四宿主真实 Hook 信任与输出消费仍需各自 probe；Windows ACL/PowerShell 未验证；本版 CI 结果待推送后确认。
+
 ## 1.4.5 更新说明（2026-10-29）
 
 修 1.4.4 发布后暴露的两类问题：①Hook 把 `rsync` 的选项值和源目录记成写目标，导致文档化的同步命令被误拒；②GitHub Actions 的「仓库门禁」失败（`tests/hooks/test_protocol.py` 的 docstring 含非法转义 `\w`，Python 3.12 起是 `SyntaxWarning`，而本机 `python3` 是 3.9、看不到该类告警）。规则正文未变，总量仍为 131715 字节。

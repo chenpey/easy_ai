@@ -438,6 +438,133 @@ class CwdKnownPropagationTests(unittest.TestCase):
             _reads, unresolved = shell.read_command_paths(command, cwd_known=False)
             self.assertTrue(unresolved)
 
+    def test_tilde_cd_marks_relative_reads_and_writes_unknown(self) -> None:
+        # 去引用后以 `~` 开头即不可静态定位：不展开 HOME/passwd，也不拼 current/~/x。
+        base = "/tmp/base"
+        for prefix in (
+            "cd ~;",
+            "cd ~/x;",
+            "cd ~user/x;",
+            "cd ~root/x;",
+            "cd '~/x';",
+            'cd "~/x";',
+            "cd ~+;",
+        ):
+            command = prefix + " cat in; printf y > a"
+            analysis = shell.analyze(command, cwd=base)
+            self.assertEqual(read_paths(analysis), ["in"], command)
+            self.assertEqual(entry_cwds(analysis.reads), [None], command)
+            self.assertTrue(analysis.read_unknown, command)
+            self.assertEqual(write_targets(analysis), [("a", False)], command)
+            self.assertEqual(entry_cwds(analysis.writes), [None], command)
+            self.assertTrue(analysis.write_unknown, command)
+
+    def test_tilde_env_chdir_marks_nested_targets_unknown(self) -> None:
+        # 第二个接缝：包装器 cwd 不能把 `~` 当相对目录拼到外层 cwd 上。
+        base = "/tmp/base"
+        for command in (
+            "env -C ~ sh -c 'cat in; printf y > a'",
+            "env -C '~/x' sh -c 'cat in; printf y > a'",
+            "env -C~/x sh -c 'cat in; printf y > a'",
+            "env --chdir ~root/x sh -c 'cat in; printf y > a'",
+            "env --chdir=~/x sh -c 'cat in; printf y > a'",
+        ):
+            analysis = shell.analyze(command, cwd=base)
+            self.assertEqual(read_paths(analysis), ["in"], command)
+            self.assertEqual(entry_cwds(analysis.reads), [None], command)
+            self.assertTrue(analysis.read_unknown, command)
+            self.assertEqual(write_targets(analysis), [("a", False)], command)
+            self.assertEqual(entry_cwds(analysis.writes), [None], command)
+            self.assertTrue(analysis.write_unknown, command)
+            # 内层未知不污染包装命令之后的外层 cwd。
+            outer = shell.analyze(command + "; cat outer", cwd=base)
+            self.assertEqual(read_paths(outer), ["in", "outer"], command)
+            self.assertEqual(entry_cwds(outer.reads), [None, base], command)
+
+    def test_tilde_cd_inside_shell_wrappers_stays_local(self) -> None:
+        for command in (
+            "sh -c 'cd ~/x; cat in; printf y > a'; cat outer",
+            "env -C sub sh -c 'cd ~root/x; cat in; printf y > a'; cat outer",
+        ):
+            analysis = shell.analyze(command, cwd="/tmp/base")
+            self.assertEqual(read_paths(analysis), ["in", "outer"], command)
+            self.assertEqual(entry_cwds(analysis.reads), [None, "/tmp/base"], command)
+            self.assertTrue(analysis.read_unknown, command)
+            self.assertEqual(write_targets(analysis), [("a", False)], command)
+            self.assertEqual(entry_cwds(analysis.writes), [None], command)
+            self.assertTrue(analysis.write_unknown, command)
+
+    def test_static_cd_and_existing_unknown_targets_keep_behavior(self) -> None:
+        base = "/tmp/base"
+        for prefix, expected in (
+            ("cd .;", base),
+            ("cd sub;", base + "/sub"),
+            ("cd ..;", "/tmp"),
+            ("cd /abs;", "/abs"),
+        ):
+            command = prefix + " cat in; printf y > a"
+            analysis = shell.analyze(command, cwd=base)
+            self.assertEqual(entry_cwds(analysis.reads), [expected], command)
+            self.assertEqual(write_targets(analysis), [("a", True)], command)
+            self.assertEqual(entry_cwds(analysis.writes), [expected], command)
+            self.assertFalse(analysis.read_unknown, command)
+            self.assertFalse(analysis.write_unknown, command)
+        # 既有保守目标保持未知：`-`、`$HOME/x`、转义后文本仍是 `$HOME/x`。
+        for prefix in ("cd -;", "cd $HOME/x;", "cd \\$HOME/x;"):
+            command = prefix + " cat in; printf y > a"
+            analysis = shell.analyze(command, cwd=base)
+            self.assertEqual(entry_cwds(analysis.reads), [None], command)
+            self.assertEqual(write_targets(analysis), [("a", False)], command)
+            self.assertTrue(analysis.write_unknown, command)
+        # `cd ./~/x` 没有词首 tilde：显式字面相对目录仍可静态定位。
+        literal = shell.analyze("cd ./~/x; cat in; printf y > a", cwd=base)
+        self.assertEqual(entry_cwds(literal.reads), [base + "/~/x"])
+        self.assertEqual(write_targets(literal), [("a", True)])
+        self.assertFalse(literal.write_unknown, literal.as_dict())
+
+    def test_tilde_cwd_can_recover_without_clearing_prior_unknowns(self) -> None:
+        base = "/tmp/base"
+        recovered = shell.analyze("cd ~/x; cd /abs; cat in; printf y > a", cwd=base)
+        self.assertEqual(entry_cwds(recovered.reads), ["/abs"])
+        self.assertEqual(write_targets(recovered), [("a", True)])
+        self.assertEqual(entry_cwds(recovered.writes), ["/abs"])
+        self.assertFalse(recovered.read_unknown, recovered.as_dict())
+        self.assertFalse(recovered.write_unknown, recovered.as_dict())
+        # 先前的未知不因后续绝对 cd 被抹掉。
+        mixed = shell.analyze("cd ~/x; cat first; cd /abs; cat second", cwd=base)
+        self.assertEqual(read_paths(mixed), ["first", "second"])
+        self.assertEqual(entry_cwds(mixed.reads), [None, "/abs"])
+        self.assertTrue(mixed.read_unknown, mixed.as_dict())
+        # 绝对读写目标不因前序 tilde cd 变未知或变不完整。
+        absolute = shell.analyze("cd ~/x; cat /abs/in; printf y > /abs/a", cwd=base)
+        self.assertEqual(read_paths(absolute), ["/abs/in"])
+        self.assertFalse(absolute.read_unknown, absolute.as_dict())
+        self.assertEqual(write_targets(absolute), [("/abs/a", True)])
+        self.assertFalse(absolute.write_unknown, absolute.as_dict())
+        # cd 失败边仍可使用入口 cwd，不因成功边未知而一起抹掉。
+        failure = shell.analyze("cd ~/x || cat in", cwd=base)
+        self.assertEqual(entry_cwds(failure.reads), [base])
+        self.assertFalse(failure.read_unknown, failure.as_dict())
+
+    def test_static_env_chdir_keeps_behavior(self) -> None:
+        base = "/tmp/base"
+        for value, expected in (
+            (".", base),
+            ("sub", base + "/sub"),
+            ("..", "/tmp"),
+            ("/abs", "/abs"),
+        ):
+            command = "env -C %s sh -c 'cat in; printf y > a'" % value
+            analysis = shell.analyze(command, cwd=base)
+            self.assertEqual(entry_cwds(analysis.reads), [expected], command)
+            self.assertEqual(write_targets(analysis), [("a", True)], command)
+            self.assertEqual(entry_cwds(analysis.writes), [expected], command)
+            self.assertFalse(analysis.read_unknown, command)
+            self.assertFalse(analysis.write_unknown, command)
+        restored = shell.analyze("env -C /abs sh -c 'cat in'", cwd_known=False)
+        self.assertEqual(entry_cwds(restored.reads), ["/abs"])
+        self.assertFalse(restored.read_unknown, restored.as_dict())
+
 
 class GitPathTests(unittest.TestCase):
     def test_missing_cwd_does_not_use_process_directory(self) -> None:
@@ -1302,6 +1429,98 @@ class RsyncLayoutTests(unittest.TestCase):
         danger = self.analyze("rsync $(git reset --hard) dest/")
         self.assertEqual(git_actions(danger), [("reset", ["--hard"])])
 
+    def test_batch_write_marks_main_and_batch_targets_incomplete(self) -> None:
+        # 批次写的主目的与 FILE/FILE.sh 都不能是完整候选：不含“主项完整”的混合假象。
+        for option in ("--write-batch", "--only-write-batch"):
+            for command in (
+                "rsync %s=batch.bin f existingfile" % option,
+                "rsync %s batch.bin f existingfile" % option,
+            ):
+                analysis = self.analyze(command)
+                self.assertEqual(
+                    write_targets(analysis),
+                    [("existingfile", False), ("batch.bin", False), ("batch.bin.sh", False)],
+                    command,
+                )
+                self.assertTrue(analysis.write_unknown, command)
+                self.assertEqual(read_paths(analysis), ["f"], command)
+            new_file = self.analyze("rsync %s=batch.bin f newfile" % option)
+            self.assertEqual(
+                write_targets(new_file),
+                [("newfile", False), ("batch.bin", False), ("batch.bin.sh", False)],
+                option,
+            )
+            # 已存在的目录目的不展开成看似精确且完整的 dest/f。
+            directory = self.analyze("rsync %s=batch.bin f dest/" % option)
+            self.assertEqual(
+                write_targets(directory),
+                [("dest/", False), ("batch.bin", False), ("batch.bin.sh", False)],
+                option,
+            )
+            self.assertNotIn(("dest/f", True), write_targets(directory), option)
+
+    def test_batch_write_missing_empty_and_dynamic_values_are_unknown(self) -> None:
+        for option in ("--write-batch", "--only-write-batch"):
+            bare = self.analyze("rsync " + option)
+            self.assertEqual(write_targets(bare), [(None, False)], option)
+            self.assertTrue(bare.write_unknown, option)
+            # 选项在位置参数之后且缺值：目的仍不完整，写未知不得漏成 False。
+            missing = self.analyze("rsync f out " + option)
+            self.assertEqual(write_targets(missing), [("out", False)], option)
+            self.assertTrue(missing.write_unknown, option)
+            # 空值不生成空路径或 `.sh` 文件名，批次项保留 None/False 占位。
+            empty = self.analyze("rsync %s= f out" % option)
+            self.assertEqual(write_targets(empty), [("out", False), (None, False)], option)
+            self.assertTrue(empty.write_unknown, option)
+        # 动态值不记表达式源码，也不造 `$BATCH.sh`。
+        dynamic = self.analyze('rsync --write-batch="$BATCH" f existingfile')
+        self.assertEqual(write_targets(dynamic), [("existingfile", False), (None, False)])
+        self.assertNotIn("$BATCH", [str(item.get("target")) for item in dynamic.writes])
+        self.assertTrue(dynamic.write_unknown)
+        # 选项作为其他选项的值被消费时不是 batch-write：仍是普通完整布局。
+        consumed = self.analyze("rsync --exclude --write-batch f out")
+        self.assertEqual(write_targets(consumed), [("out", True)])
+        self.assertFalse(consumed.write_unknown)
+
+    def test_batch_write_does_not_override_read_batch_layout(self) -> None:
+        for command in (
+            "rsync --write-batch=batch.bin --read-batch=restore.bin f dest/",
+            "rsync --read-batch=restore.bin --write-batch=batch.bin f dest/",
+            "rsync --only-write-batch=batch.bin --read-batch=restore.bin "
+            "--remove-source-files f dest/",
+            "rsync --read-batch=restore.bin --only-write-batch=batch.bin "
+            "--remove-source-files f dest/",
+        ):
+            analysis = self.analyze(command)
+            self.assertEqual(read_paths(analysis), ["restore.bin"], command)
+            self.assertEqual(
+                write_targets(analysis),
+                [("dest/", False), ("batch.bin", False), ("batch.bin.sh", False)],
+                command,
+            )
+            self.assertTrue(analysis.read_unknown, command)
+            self.assertTrue(analysis.write_unknown, command)
+            # read-batch 的显式源既不当读取，也不当已知删除源。
+            self.assertNotIn("f", read_paths(analysis), command)
+            self.assertNotIn(("f", True), write_targets(analysis), command)
+
+    def test_batch_write_preserves_other_auxiliary_candidates(self) -> None:
+        analysis = self.analyze(
+            "rsync --write-batch=batch.bin --remove-source-files --log-file=log f existingfile"
+        )
+        # 源删除与日志项是自身可证明的候选；batch-write 只使主目的与批次项不完整。
+        self.assertEqual(
+            write_targets(analysis),
+            [
+                ("existingfile", False),
+                ("f", True),
+                ("log", True),
+                ("batch.bin", False),
+                ("batch.bin.sh", False),
+            ],
+        )
+        self.assertTrue(analysis.write_unknown)
+
     def test_reviewer_and_read_only_classification(self) -> None:
         for command in (
             "rsync f out",
@@ -1309,6 +1528,8 @@ class RsyncLayoutTests(unittest.TestCase):
             "rsync --files-from=list dest/",
             "rsync -Q src/ dest/",
             "rsync -n src/ dest/",
+            "rsync --write-batch=batch.bin f dest/",
+            "rsync --only-write-batch=batch.bin f dest/",
         ):
             violation = shell.reviewer_violation(command, cwd=self.cwd)
             self.assertIsNotNone(violation, command)
@@ -1324,6 +1545,16 @@ class RsyncLayoutTests(unittest.TestCase):
             "rsync %s/ %s/" % (self.root / "src", self.root / "dest")
         )
         self.assertEqual(incomplete, (False, True))
+        # batch-write 也披露未知写：不因主候选不完整而被当成部分可判定。
+        batch_write = shell.is_read_only_command(
+            "rsync --write-batch=%s %s %s"
+            % (self.root / "batch.bin", self.root / "f", self.root / "newfile")
+        )
+        self.assertEqual(batch_write, (False, True))
+        plain = shell.is_read_only_command(
+            "rsync %s %s" % (self.root / "f", self.root / "newfile")
+        )
+        self.assertEqual(plain, (False, False))
 
 
 if __name__ == "__main__":
