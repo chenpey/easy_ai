@@ -11,11 +11,148 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import HOOKS_ROOT, HookCase, clean_env
+from support import HOOKS_ROOT, HookCase, clean_env, core_module
 
 INSTALL = HOOKS_ROOT / "hooks" / "install.py"
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "pi_adapter_fixture.mjs"
 ANTIGRAVITY_GROUP = "easydev-hooks"
+HIDDEN_STDERR = "core_stderr：核心有诊断，细节已隐藏"
+
+# pi 适配器固定类别的验收 catalog。每条消息都取自 hooks/core.py 的真实文案（静态字面量、
+# 动态模板取当前生产者值域内的代表值、write_targets 的 gap、normalize 的多工作区、
+# run 的输入/协议/内部异常直接输出、probe 直接输出），第二项是期望的固定类别，
+# 顺序即 design §7 的输出顺序。期望值独立写死，不由被测正则生成。
+CORE_DIAGNOSTIC_CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # 状态不可用
+    ("私有状态不可用，已降级放行", ("状态不可用",)),
+    ("状态读取失败，已降级放行", ("状态不可用",)),
+    ("状态读取失败，保留已确定的拒绝", ("状态不可用",)),
+    ("状态读取失败，SKILL 读取恢复降级", ("状态不可用",)),
+    ("状态处理异常，已降级放行", ("状态不可用",)),
+    ("状态处理异常，保留已确定的拒绝", ("状态不可用",)),
+    ("状态写失败，已保留本次判定并降级", ("状态不可用",)),
+    ("transcript 输入取证的状态不可用，激活判定降级", ("状态不可用",)),
+    ("分派预取状态不可用，模型预检降级", ("状态不可用",)),
+    ("缺少会话标识，状态判定降级", ("状态不可用",)),
+    ("probe 记录不可写", ("状态不可用",)),
+    # 锁忙
+    ("状态锁不可用，已降级放行", ("锁忙",)),
+    ("状态锁不可用，SKILL 读取恢复降级", ("锁忙",)),
+    # Git 查询失败：只匹配两条固定文案，旧带路径的超时模板不再归类
+    ("Git 状态查询失败，基线检查降级", ("Git 查询失败",)),
+    ("基线指纹查询超时，基线检查降级", ("Git 查询失败",)),
+    # 旧的带路径超时模板已不存在于 core，且不得再归入 Git 类别（只走隐藏兜底）
+    ("基线指纹查询超时（/tmp/STATE-ROOT-SENTINEL/rel），基线检查降级", ()),
+    # 命令结构未覆盖
+    ("reviewer 命令结构未覆盖，已放行并披露", ("命令结构未覆盖",)),
+    ("命令结构无法完整解析，基线检查未覆盖", ("命令结构未覆盖",)),
+    ("命令结构无法完整解析", ("命令结构未覆盖",)),
+    # 写入目标未覆盖
+    ("缺少可定位的仓库根或 cwd，基线检查降级", ("写入目标未覆盖",)),
+    ("写入目标不完整，基线检查未覆盖", ("写入目标未覆盖",)),
+    ("写入目标位于仓库外，未纳入基线检查", ("写入目标未覆盖",)),
+    ("命令写入目标不完整", ("写入目标未覆盖",)),
+    ("命令内目录变化无法确定，基线检查未覆盖", ("写入目标未覆盖",)),
+    ("补丁目标解析不完整", ("写入目标未覆盖",)),
+    ("宿主未提供结构化非 shell 参数，无法核对写入目标", ("写入目标未覆盖",)),
+    ("写工具缺少可识别路径字段", ("写入目标未覆盖",)),
+    ("已有任务状态缺少任务根归属索引：无法识别历史任务根的旧归属，按降级处理", ("写入目标未覆盖",)),
+    # 写序列记账缺口：以 post 开头的记账文案只归本类
+    ("post 缺少可信成功结果，未计入成功写入", ("写序列记账缺口",)),
+    ("缺少工具 ID，写事件无法幂等记账", ("写序列记账缺口",)),
+    ("post 未找到与该 actor/epoch/tool ID 配对的 pre 记录，未建立成功豁免", ("写序列记账缺口",)),
+    ("post 写入目标不完整，写序列记覆盖缺口", ("写序列记账缺口",)),
+    ("post 目标含符号链接，未建立成功豁免", ("写序列记账缺口",)),
+    ("post 目标与 pre 记录的调用目标不一致（含仓库身份），未建立成功豁免", ("写序列记账缺口",)),
+    ("post 目标缺少 pre 指纹，未建立成功豁免", ("写序列记账缺口",)),
+    ("锁内复核发现任务绑定已变化，丢弃锁外预取并降级本次写入判定", ("写序列记账缺口",)),
+    ("锁外预取结果与当前任务绑定不一致，已降级", ("写序列记账缺口",)),
+    # transcript 证据降级：身份描述取当前生产者值域（会话/线程/actor）
+    ("transcript 不是普通文件，激活证据抽取降级", ("transcript 证据降级",)),
+    ("transcript 身份核验失败，激活判定降级", ("transcript 证据降级",)),
+    ("transcript 原生会话身份与当前会话不一致，未采用该 transcript 证据", ("transcript 证据降级",)),
+    ("transcript 原生线程身份与当前会话不一致，未采用该 transcript 证据", ("transcript 证据降级",)),
+    ("transcript 原生 actor 身份与当前会话不一致，未采用该 transcript 证据", ("transcript 证据降级",)),
+    ("transcript 缺原生会话身份，激活证据只按记录内容判定", ("transcript 证据降级",)),
+    ("transcript 证据抽取失败，激活判定降级", ("transcript 证据降级",)),
+    ("transcript 读取证据抽取失败，激活判定降级", ("transcript 证据降级",)),
+    ("transcript 输入取证失败，激活判定降级", ("transcript 证据降级",)),
+    ("无法从 transcript 取得最新用户记录，激活判定降级", ("transcript 证据降级",)),
+    ("该宿主无 transcript 能力，激活证据只按原始输入判定", ("transcript 证据降级",)),
+    # 分派/子代理降级：终态只取 CHILD_FAILURE_STATUSES 内的固定值
+    ("子代理未匹配到有效分派记录（或旧 epoch 已退役），只保留局部角色约束", ("分派/子代理降级",)),
+    ("子代理绑定与 root 当前 epoch 不匹配，已降级为局部只读约束", ("分派/子代理降级",)),
+    ("子代理启动未能匹配可信分派记录，未建立跨任务绑定", ("分派/子代理降级",)),
+    ("子代理完成缺少可关联分派，未计入审查完成", ("分派/子代理降级",)),
+    # 终态文案的动态值域就是 core 的 CHILD_FAILURE_STATUSES：逐值一条，不只举 failed。
+    *[
+        ("子代理终态为 %s，未计入审查完成" % status, ("分派/子代理降级",))
+        for status in sorted(core_module.CHILD_FAILURE_STATUSES)
+    ],
+    ("分派预取失败，模型预检降级", ("分派/子代理降级",)),
+    ("分派预检的锁外取证与当前上下文不一致，模型预检降级", ("分派/子代理降级",)),
+    ("同一分派 ID 的内容或角色已变化，该段观测失效且不重新取样", ("分派/子代理降级",)),
+    ("该分派 ID 的观测已因内容变化失效，完成事件不计入", ("分派/子代理降级",)),
+    ("宿主未提供 reviewer 交接正文，交接格式检查降级放行", ("分派/子代理降级",)),
+    ("该宿主无法可靠归因审查完成事件，P3 完成不启用", ("分派/子代理降级",)),
+    ("该宿主无法可靠归因审查完成事件，P3 不启用", ("分派/子代理降级",)),
+    # 激活判定降级
+    ("同一工具调用 ID 的成功读取内容已变化，该调用观测作废", ("激活判定降级",)),
+    ("SKILL 读取缺少工具 ID，重复投递无法按调用 ID 去重", ("激活判定降级",)),
+    ("缺少 root 绑定，SKILL 读取恢复降级", ("激活判定降级",)),
+    ("同一 SKILL 读取调用已消费，重复投递不恢复激活", ("激活判定降级",)),
+    ("SKILL 读取恢复的 root 绑定发生变化，丢弃本次恢复", ("激活判定降级",)),
+    ("输入取证的签名在锁内复核时已变化，丢弃该取证并降级", ("激活判定降级",)),
+    # 工具权限未覆盖
+    ("未知自定义工具的写权限未推断，已放行并披露", ("工具权限未覆盖",)),
+    # 输入或协议无效
+    ("协议字段类型不符（workspacePaths）；已放行", ("输入或协议无效",)),
+    ("输入超过上限；已放行", ("输入或协议无效",)),
+    ("输入不是合法 JSON；已放行", ("输入或协议无效",)),
+    ("输入不是 JSON 对象；已放行", ("输入或协议无效",)),
+    ("未知事件，已放行", ("输入或协议无效",)),
+    ("缺少命令文本", ("输入或协议无效",)),
+    ("Antigravity 提供 2 个 workspacePaths，按第一个可用路径判定工作区", ("输入或协议无效",)),
+    # 内部异常
+    ("hook 内部异常；已放行", ("内部异常",)),
+    # 多类同时命中：一条汇总内按 §7 顺序输出且不重复
+    (
+        "状态写失败，已保留本次判定并降级；写入目标位于仓库外，未纳入基线检查；"
+        "post 未找到与该 actor/epoch/tool ID 配对的 pre 记录，未建立成功豁免",
+        ("状态不可用", "写入目标未覆盖", "写序列记账缺口"),
+    ),
+    # 已知与未知混合：只输出已知类别；纯未知走隐藏兜底
+    ("状态写失败，已保留本次判定并降级；UNCLASSIFIED-SENTINEL 未知诊断", ("状态不可用",)),
+    ("UNCLASSIFIED-SENTINEL 不匹配任何固定类别", ()),
+    # 无合法诊断边界、只在正文里出现类别关键词：不得归类，只走隐藏兜底。
+    # 实现必须把每个类别族整体包成非捕获组，不能只给第一支加边界。
+    ("UNCLASSIFIED-SENTINEL 状态写失败", ()),
+    ("UNCLASSIFIED-SENTINEL 写入目标不完整，基线检查未覆盖", ()),
+    ("UNCLASSIFIED-SENTINEL 内部异常", ()),
+)
+
+# 按调用顺序逐条输出 catalog 文案的替身核心：每次调用一条 stderr 汇总。
+# 文案以 ASCII 转义的 JSON 引入：本机 Python 3.9 的 tokenizer 在含非 ASCII 的长行
+# （超过 1024 字节块边界）上会报“Non-UTF-8 code”，这种写法对长短都稳定。
+CATALOG_STUB = '''import json
+import os
+import sys
+
+MESSAGES = json.loads(__MESSAGES__)
+CURSOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalog-cursor")
+try:
+    index = int(open(CURSOR).read())
+except (OSError, ValueError):
+    index = 0
+open(CURSOR, "w").write(str(index + 1))
+sys.stderr.write("warning: " + MESSAGES[index] + "\\n")
+print("{}")
+'''
+
+
+def catalog_summary(labels: tuple) -> str:
+    """catalog 期望的汇总文案：无类别时是隐藏兜底，否则是固定类别列表。"""
+    return HIDDEN_STDERR if not labels else "core 降级：" + "；".join(labels)
 
 
 class InstallTests(HookCase):
@@ -460,11 +597,12 @@ class PiExtensionTests(HookCase):
         # 核心确实运行过：私有状态已由本次调用写出。
         self.assertTrue(any((self.state / "actors").glob("*.json")))
         # 判定不变，告警通道也不影响返回值：每次工具调用至多一条汇总，且不含细节。
-        # 本用例刻意清空 PATH，Git 不可用，因此每次调用都会披露“核心有诊断”。
+        # 本用例刻意清空 PATH，Git 不可用：三次 pre 都在取目标前因仓库定位降级告警，
+        # 归入“写入目标未覆盖”，而不是命令结构缺口或目标的 Git 状态查询。
         lines = self.warning_lines(completed.stderr)
         self.assertEqual(len(lines), 3, completed.stderr)
         for line in lines:
-            self.assertEqual(line.count("[easydev-hooks] warning"), 1, line)
+            self.assertEqual(line, "[easydev-hooks] warning: core 降级：写入目标未覆盖")
         self.assert_no_detail_leak(completed.stderr, "git reset --hard", "git status")
 
     # ---- P2-10：降级告警通道 --------------------------------------------
@@ -535,19 +673,63 @@ class PiExtensionTests(HookCase):
             self.assertIn("core 启动失败，已放行", line)
         self.assert_no_detail_leak(completed.stderr, "PY-SENTINEL")
 
-    def test_core_diagnostics_outside_the_whitelist_are_hidden(self) -> None:
+    def test_transcript_diagnostics_name_only_the_category(self) -> None:
         plugin = self.build()
-        # transcript 指向目录：核心给出“不是普通文件”的降级诊断，但不属于白名单类别。
+        # transcript 指向目录：核心给出“不是普通文件”的降级诊断，归属 transcript 类别。
         transcript = self.root / "TRANSCRIPT-SENTINEL"
         transcript.mkdir()
         completed = self.run_fixture(plugin, [], transcript=str(transcript))
         self.assertEqual(completed.returncode, 0, completed.stderr)
         lines = self.warning_lines(completed.stderr)
         self.assertEqual(len(lines), 1, completed.stderr)
-        self.assertIn("core_stderr：核心有诊断，细节已隐藏", lines[0])
-        # 原文（含“transcript”）不落盘到宿主 stderr。
-        self.assertNotIn("transcript", completed.stderr)
+        # 固定类别名本身含 transcript 字样，但核心原句与路径不得回显。
+        self.assertEqual(
+            lines[0], "[easydev-hooks] warning: core 降级：transcript 证据降级"
+        )
+        self.assertNotIn("不是普通文件", completed.stderr)
         self.assert_no_detail_leak(completed.stderr, "TRANSCRIPT-SENTINEL")
+
+    def test_unknown_core_diagnostics_stay_hidden(self) -> None:
+        plugin = self.build_with_core(
+            "import sys\n"
+            "sys.stderr.write('warning: UNCLASSIFIED-SENTINEL 未知降级文本\\n')\n"
+            "print('{}')\n"
+        )
+        completed = self.run_fixture(
+            plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        # 完全不匹配的新文案：保留“有诊断”兜底，不回显任何原文。
+        self.assertEqual(
+            self.warning_lines(completed.stderr),
+            ["[easydev-hooks] warning: " + HIDDEN_STDERR] * 2,
+            completed.stderr,
+        )
+        self.assert_no_detail_leak(completed.stderr, "UNCLASSIFIED-SENTINEL", "未知降级文本")
+
+    def test_forged_separators_only_leak_fixed_labels(self) -> None:
+        """替身伪造终态值与分隔符：只证明文本协议理论上可以多命中类别。
+
+        真实 core 的终态取自 CHILD_FAILURE_STATUSES、身份描述只取“会话/线程/actor”，
+        都不能注入全角分号；这条用例不得被当作真实 core 可达诊断，真实可达性另由
+        `CoreDiagnosticProducerTests` 验收。
+        """
+        forged = "warning: 子代理终态为 failed；状态写失败，已保留本次判定并降级 FORGED-STATUS-SENTINEL\n"
+        plugin = self.build_with_core(
+            "import sys\nsys.stderr.write(%r)\nprint('{}')\n" % forged
+        )
+        completed = self.run_fixture(
+            plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        # 伪造的分隔符让两个类别各命中一次：汇总仍只有固定 label，不回显原句。
+        # input 与 tool_call 各一次核心调用，每次一条汇总。
+        self.assertEqual(
+            self.warning_lines(completed.stderr),
+            ["[easydev-hooks] warning: core 降级：状态不可用；分派/子代理降级"] * 2,
+            completed.stderr,
+        )
+        self.assert_no_detail_leak(completed.stderr, "FORGED-STATUS-SENTINEL")
 
     def build_with_core(self, source: str) -> Path:
         """用替身核心驱动适配器故障分支：真实 spawn/pipe/close 语义不变。"""
@@ -616,10 +798,141 @@ class PiExtensionTests(HookCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         lines = self.warning_lines(completed.stderr)
         self.assertEqual(len(lines), 1, completed.stderr)
-        self.assertIn("状态不可用", lines[0])
-        # 只给类别，不回显核心原句与状态根路径。
+        # 只给完整固定汇总：类别名，不含核心原句与状态根路径。
+        self.assertEqual(lines[0], "[easydev-hooks] warning: core 降级：状态不可用")
         self.assertNotIn("私有状态不可用", completed.stderr)
         self.assert_no_detail_leak(completed.stderr, "STATE-ROOT-SENTINEL")
+
+    def test_lock_diagnostics_never_double_as_state_unavailable(self) -> None:
+        plugin = self.build_with_core(
+            "import sys\n"
+            "sys.stderr.write('warning: 状态锁不可用，已降级放行\\n')\n"
+            "print('{}')\n"
+        )
+        completed = self.run_fixture(
+            plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(
+            self.warning_lines(completed.stderr),
+            ["[easydev-hooks] warning: core 降级：锁忙"] * 2,
+            completed.stderr,
+        )
+        # 锁故障只归“锁忙”：不得同时出现“状态不可用”。
+        self.assertNotIn("状态不可用", completed.stderr)
+
+    def test_core_diagnostic_catalog_maps_fixed_categories(self) -> None:
+        plugin = self.build()
+        messages = [message for message, _ in CORE_DIAGNOSTIC_CATALOG]
+        (plugin / "core.py").write_text(
+            CATALOG_STUB.replace("__MESSAGES__", repr(json.dumps(messages))), encoding="utf-8"
+        )
+        # 夹具的 input 调用先消耗第 0 条文案，tool_call 数比 catalog 少 1，
+        # 因此总调用数正好等于文案条数，第 i 行对应第 i 条。
+        calls = [
+            {"toolName": "bash", "toolCallId": "c%d" % index, "input": {"command": "ls"}}
+            for index in range(len(messages) - 1)
+        ]
+        completed = self.run_fixture(plugin, calls)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        lines = self.warning_lines(completed.stderr)
+        self.assertEqual(len(lines), len(messages), completed.stderr)
+        for index, (message, labels) in enumerate(CORE_DIAGNOSTIC_CATALOG):
+            with self.subTest(message=message):
+                self.assertEqual(
+                    lines[index], "[easydev-hooks] warning: " + catalog_summary(labels)
+                )
+        self.assert_no_detail_leak(completed.stderr, "UNCLASSIFIED-SENTINEL", "STATE-ROOT-SENTINEL")
+
+
+class CoreDiagnosticProducerTests(HookCase):
+    """真实 core 的生产者值域：与替身能伪造的文本协议限制分开验收。
+
+    design §7/§8.4：终态只取 CHILD_FAILURE_STATUSES、身份描述只取“会话/线程/actor”，
+    这两个动态字段都不能注入全角分号或 `warning:`，因此真实可达诊断不会被伪造原文。
+    """
+
+    host = "codex"
+
+    def test_child_failure_statuses_are_the_frozen_domain(self) -> None:
+        self.assertEqual(
+            core_module.CHILD_FAILURE_STATUSES,
+            {
+                "failed",
+                "failure",
+                "error",
+                "cancelled",
+                "canceled",
+                "timeout",
+                "timed_out",
+                "aborted",
+                "interrupted",
+                "running",
+                "started",
+                "pending",
+                "stopped_early",
+            },
+        )
+
+    def record_child_done(self, session: str, status: str):
+        dispatch = "d-" + session
+        self.activate(session)
+        self.allow(self.dispatch_payload(session, self.reviewer_handoff(), tool_id=dispatch))
+        self.allow(
+            self.child_start_payload("agent-" + session, session=session, dispatch_id=dispatch)
+        )
+        return self.run_core(
+            self.child_done_payload(
+                session,
+                dispatch_id=dispatch,
+                status=status,
+                report="**[P1] 证据**\n",
+                agent="agent-" + session,
+            )
+        )
+
+    def test_every_child_failure_status_produces_its_own_terminal_warning(self) -> None:
+        for status in sorted(core_module.CHILD_FAILURE_STATUSES):
+            with self.subTest(status=status):
+                _code, value, stderr = self.record_child_done("p-" + status, status)
+                self.assertFalse(self.is_denied(value), value)
+                self.assertIn("子代理终态为 %s，未计入审查完成" % status, stderr)
+
+    def test_non_set_status_never_produces_the_terminal_warning(self) -> None:
+        # 含全角分号的非集合 status：真实 core 不产生该条终态告警，也不会把
+        # `；状态写失败` 送进诊断通道。
+        _code, value, stderr = self.record_child_done(
+            "p-forged", "failed；状态写失败，已保留本次判定并降级"
+        )
+        self.assertFalse(self.is_denied(value), value)
+        self.assertNotIn("子代理终态为", stderr)
+        self.assertNotIn("状态写失败", stderr)
+
+    def test_transcript_identity_reasons_are_bounded(self) -> None:
+        engine = core_module.Engine(
+            "codex",
+            json.loads(self.context_path.read_text(encoding="utf-8")),
+            mode="enforce",
+            env=self.environment(),
+        )
+        record = core_module.Record("codex", {}, core_module.HOSTS["codex"])
+        record.session_id = "s1"
+        record.actor_id = ""
+        path = self.root / "transcript.jsonl"
+        for payload, expected in (
+            ({"id": "other-session"}, ("会话", True)),
+            ({"thread_id": "other-thread"}, ("线程", True)),
+            ({"agent_id": "other-actor"}, ("actor", True)),
+            ({}, ("", False)),
+        ):
+            with self.subTest(payload=payload):
+                path.write_text(
+                    json.dumps({"type": "session_meta", "payload": payload}) + "\n",
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    engine._transcript_identity_problem(record, str(path)), expected
+                )
 
 
 class AntigravityNamedGroupTests(HookCase):

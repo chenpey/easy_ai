@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1555,6 +1556,773 @@ class RsyncLayoutTests(unittest.TestCase):
             "rsync %s %s" % (self.root / "f", self.root / "newfile")
         )
         self.assertEqual(plain, (False, False))
+
+
+HEREDOC_DATA_COMMANDS = (
+    "cat",
+    "tee",
+    "wc",
+    "sort",
+    "uniq",
+    "tr",
+    "cut",
+    "head",
+    "tail",
+    "nl",
+    "od",
+    "hexdump",
+    "base64",
+    "md5sum",
+    "sha1sum",
+    "sha256sum",
+)
+
+# 引用 delimiter 下必须完全当数据的正文：含危险 Git、真实替换、注释、不配对
+# 引号与伪重定向，全部只应是字面字节。
+QUOTED_HEREDOC_BODY = (
+    "git reset --hard\n"
+    "$(git reset --hard)\n"
+    "`git reset --hard`\n"
+    "# $(git reset --hard)\n"
+    "it's \"unbalanced\n"
+    "> fake\n"
+)
+
+
+class HeredocShellTests(unittest.TestCase):
+    """heredoc 正文边界、消费者判定与整次回退的证据保持。
+
+    期望值按 Bash/POSIX 语义与冻结的旧解析结果人工写死，不由被测 tokenizer 反算；
+    所有用例只驱动分析器，绝不执行被测命令。
+    """
+
+    def assert_legacy_facts(
+        self,
+        command: str,
+        git: List[Tuple[object, List[str]]],
+        writes: List[Tuple[object, object, bool]],
+        compound: bool = False,
+    ) -> None:
+        """整次回退时必须与改动前的旧结果一致（opaque、Git、写、窄拒绝标志）。"""
+        analysis = shell.analyze(command, cwd="/tmp/base")
+        self.assertTrue(analysis.opaque, command)
+        self.assertFalse(analysis.too_deep, command)
+        self.assertFalse(analysis.stdin_program, command)
+        self.assertEqual(analysis.compound_unresolved, compound, command)
+        self.assertEqual(git_actions(analysis), git, command)
+        self.assertEqual(
+            [
+                (item.get("kind"), item.get("target"), bool(item.get("complete")))
+                for item in analysis.writes
+            ],
+            writes,
+            command,
+        )
+
+    def test_quoted_heredoc_is_data(self) -> None:
+        for opener in ("<<'EOF'", '<<"EOF"', "<<\\EOF", '<<E"O"F', "<<E''OF"):
+            command = "cat > out.txt %s\n%sEOF" % (opener, QUOTED_HEREDOC_BODY)
+            with self.subTest(opener=opener):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertFalse(analysis.compound_unresolved)
+                self.assertFalse(analysis.stdin_program)
+                # 正文与结束行都不进 commands，只留外层命令。
+                self.assertEqual(analysis.commands, [["cat"]])
+                self.assertEqual(analysis.git, [])
+                self.assertEqual(analysis.reads, [])
+                # 外层静态重定向照旧记录，cwd 沿用工具目录。
+                self.assertEqual(write_targets(analysis), [("out.txt", True)])
+                self.assertEqual(entry_cwds(analysis.writes), ["/tmp/base"])
+        # 空引用 delimiter：定界词存在（不是缺 word），以空行结束。
+        empty = shell.analyze("cat <<''\ngit reset --hard\n\n", cwd="/tmp/base")
+        self.assertFalse(empty.opaque, empty.as_dict())
+        self.assertEqual(empty.git, [])
+        self.assertEqual(empty.commands, [["cat"]])
+        self.assertFalse(empty.stdin_program)
+
+    def test_unquoted_heredoc_evaluates_substitutions(self) -> None:
+        for body in (
+            "$(git reset --hard)",
+            "`git reset --hard`",
+            "'$(git reset --hard)'",
+            '"$(git reset --hard)"',
+            "# $(git reset --hard)",
+        ):
+            command = "cat <<EOF\n%s\nEOF" % body
+            with self.subTest(body=body):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 正文里的单引号/双引号/`#` 都没有 shell 引号或注释语义。
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertFalse(analysis.stdin_program)
+        # 替换内部的读/写仍按既有语义合并，正文自身不生成命令。
+        nested = shell.analyze("cat <<EOF\n$(cat secret; touch child)\nEOF", cwd="/tmp/base")
+        self.assertEqual(nested.git, [])
+        self.assertEqual(read_paths(nested), ["secret"])
+        self.assertEqual(write_targets(nested), [("child", True)])
+        self.assertNotIn(["secret"], nested.commands)
+        # 同一行多个替换与多行替换按源码顺序，各自只合并一次。
+        multi = shell.analyze(
+            "cat <<EOF\n$(echo one) $(echo two)\n$(echo three)\nEOF", cwd="/tmp/base"
+        )
+        self.assertEqual(
+            [command for command in multi.commands if command != ["cat"]],
+            [["echo", "one"], ["echo", "two"], ["echo", "three"]],
+        )
+        self.assertEqual(multi.commands.count(["cat"]), 1)
+        self.assertEqual(multi.git, [])
+
+    def test_heredoc_escape_rules(self) -> None:
+        # 反斜杠只对 `$`/反引号/反斜杠成对生效：偶数个后是真实替换。
+        for count, expected in (
+            (1, []),
+            (2, [("reset", ["--hard"])]),
+            (3, []),
+            (4, [("reset", ["--hard"])]),
+        ):
+            command = "cat <<EOF\n" + ("\\" * count) + "$(git reset --hard)\nEOF"
+            with self.subTest(backslashes=count):
+                self.assertEqual(git_actions(shell.analyze(command, cwd="/tmp/base")), expected)
+        # 反斜杠后为非 `$`/反引号/反斜杠时只前移一个字符，后续替换照常执行。
+        self.assertEqual(
+            git_actions(shell.analyze("cat <<EOF\n\\a$(git reset --hard)\nEOF", cwd="/tmp/base")),
+            [("reset", ["--hard"])],
+        )
+        self.assertEqual(
+            git_actions(shell.analyze("cat <<EOF\n\\`git reset --hard\\`\nEOF", cwd="/tmp/base")),
+            [],
+        )
+        # 引用正文的同形输入一律没有执行。
+        for body in ("\\$(git reset --hard)", "$(git reset --hard)", "\\\\$(git reset --hard)"):
+            command = "cat <<'EOF'\n%s\nEOF" % body
+            with self.subTest(body=body):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertEqual(analysis.git, [])
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+
+    def test_heredoc_multiple_bodies_follow_source_order(self) -> None:
+        # `cat <<A <<'B'`：A 的替换执行，B 的字面数据不执行。
+        analysis = shell.analyze(
+            "cat <<A <<'B'\n$(echo one)\nA\ngit reset --hard\nB", cwd="/tmp/base"
+        )
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(analysis.git, [])
+        self.assertEqual(
+            [command for command in analysis.commands if command != ["cat"]],
+            [["echo", "one"]],
+        )
+        self.assertEqual(analysis.commands.count(["cat"]), 1)
+        self.assertFalse(analysis.stdin_program)
+        # 同一物理行上的两个简单命令按源码顺序消费各自正文。
+        analysis = shell.analyze(
+            "cat <<A; cat <<B\n$(echo one)\nA\n$(echo two)\nB", cwd="/tmp/base"
+        )
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(
+            [command for command in analysis.commands if command != ["cat"]],
+            [["echo", "one"], ["echo", "two"]],
+        )
+        self.assertEqual(analysis.commands.count(["cat"]), 2)
+        # 同名 delimiter 仍按出现顺序配对。
+        analysis = shell.analyze(
+            "cat <<EOF; cat <<EOF\n$(echo one)\nEOF\n$(echo two)\nEOF", cwd="/tmp/base"
+        )
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(
+            [command for command in analysis.commands if command != ["cat"]],
+            [["echo", "one"], ["echo", "two"]],
+        )
+        # 混合 `<<-` 与非 `<<-`。
+        analysis = shell.analyze(
+            "cat <<A; cat <<-B\n$(echo one)\nA\n$(echo two)\n\tB", cwd="/tmp/base"
+        )
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(
+            [command for command in analysis.commands if command != ["cat"]],
+            [["echo", "one"], ["echo", "two"]],
+        )
+        # 第二份正文缺失：整次回退，不保留已消费的第一份。
+        self.assert_legacy_facts(
+            "cat <<A <<B\n$(echo one)\nA\n",
+            [],
+            [],
+        )
+        partial = shell.analyze("cat <<A <<B\n$(echo one)\nA\n", cwd="/tmp/base")
+        self.assertIn(["echo", "one"], partial.commands)
+
+    def test_tab_stripped_heredoc_keeps_following_command(self) -> None:
+        analysis = shell.analyze("cat <<-EOF\n\thello\n\tEOF\ngit reset --hard", cwd="/tmp/base")
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+        self.assertEqual(analysis.commands, [["cat"], ["git", "reset", "--hard"]])
+        # fd 前缀与 `<<-` 是一个运算符。
+        tokens, closed = shell.tokenize("cat 3<<-EOF\n\thello\n\tEOF")
+        self.assertTrue(closed)
+        self.assertIn("3<<-", [token.text for token in tokens if token.operator])
+        # 引用 delimiter 与 tab 缩进同时成立时正文仍是数据，后续真实 Git 保留。
+        quoted = shell.analyze(
+            "cat <<-'EOF'\n\tgit reset --hard\n\tEOF\ngit reset --hard", cwd="/tmp/base"
+        )
+        self.assertFalse(quoted.opaque, quoted.as_dict())
+        self.assertEqual(git_actions(quoted), [("reset", ["--hard"])])
+        self.assertEqual(quoted.commands, [["cat"], ["git", "reset", "--hard"]])
+        # `<< -EOF` 是普通 `<<` 加含 `-` 的 delimiter。
+        spaced = shell.analyze("cat << -EOF\nhello\n-EOF\ngit reset --hard", cwd="/tmp/base")
+        self.assertFalse(spaced.opaque, spaced.as_dict())
+        self.assertEqual(spaced.commands, [["cat"], ["git", "reset", "--hard"]])
+        self.assertEqual(git_actions(spaced), [("reset", ["--hard"])])
+        # `<<-` 只去前导 tab：空格缩进的结束行不匹配，整次回退保留旧证据。
+        self.assert_legacy_facts(
+            "cat <<-EOF\n\thello\n  EOF\ngit reset --hard",
+            [("reset", ["--hard"])],
+            [("git-reset", None, False)],
+        )
+
+    def test_heredoc_delimiter_is_exact(self) -> None:
+        # 尾随空格/制表/前缀空格/CR 都不是结束行：后续精确 EOF 之前的行属于正文。
+        body = "hello\nEOF \nEOF\t\n EOF\nEOF\r\ngit reset --hard"
+        analysis = shell.analyze("cat <<'EOF'\n" + body + "\nEOF", cwd="/tmp/base")
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(analysis.git, [])
+        self.assertEqual(analysis.commands, [["cat"]])
+        # 没有精确结束行：整次回退，旧 Git 证据不减少。
+        for body in ("hello\nEOF ", "hello\nEOF\t", "hello\n EOF", "hello\nEOF\r"):
+            command = "cat <<'EOF'\n" + body + "\ngit reset --hard"
+            with self.subTest(body=body):
+                self.assert_legacy_facts(
+                    command,
+                    [("reset", ["--hard"])],
+                    [("git-reset", None, False)],
+                )
+        # Unicode 分隔符按字节精确匹配。
+        unicode = shell.analyze("cat <<'ＥＯＦ'\nhello\nＥＯＦ", cwd="/tmp/base")
+        self.assertFalse(unicode.opaque, unicode.as_dict())
+        self.assertEqual(unicode.commands, [["cat"]])
+        self.assert_legacy_facts("cat <<'EOF'\nhello\nＥＯＦ", [], [])
+
+    def test_heredoc_fallback_preserves_legacy_evidence(self) -> None:
+        reset_git = [("reset", ["--hard"])]
+        reset_writes = [("git-reset", None, False)]
+        # 矩阵失败形态后接独立 reset/touch：回退必须保留旧证据，不能只置 opaque。
+        cases = (
+            ("cat <<$X\nhello\nEOF\ngit reset --hard", reset_git, reset_writes, False),
+            ("cat <<$(printf E)\nhello\nEOF\ngit reset --hard", reset_git, reset_writes, False),
+            ('cat <<"$X"\nhello\nEOF\ngit reset --hard', reset_git, reset_writes, False),
+            ("cat <<EOF", [], [], False),
+            ("cat <<\nEOF\ngit reset --hard", reset_git, reset_writes, False),
+            ("cat <<; git reset --hard", reset_git, reset_writes, False),
+            ("cat <<\nhello\n\ngit reset --hard", reset_git, reset_writes, False),
+            ("cat <<'EOF'\nhello\ngit reset --hard", reset_git, reset_writes, False),
+            ("cat <<A <<B\nhello\nA", [], [], False),
+            ("cat <<EOF\n${NAME}\nEOF\ngit reset --hard", reset_git, reset_writes, False),
+            ("cat <<EOF\n$((1+2))\nEOF\ngit reset --hard", reset_git, reset_writes, False),
+            (
+                "cat <<EOF\n`echo 'x'`\nEOF\ngit reset --hard",
+                reset_git,
+                reset_writes,
+                False,
+            ),
+            (
+                "cat <<EOF\nfoo \\\nbar\nEOF\ngit reset --hard",
+                reset_git,
+                reset_writes,
+                False,
+            ),
+            (
+                "cat <<EOF\n$(cat <<INNER\nx\nINNER)\nEOF\ngit reset --hard",
+                reset_git,
+                reset_writes,
+                False,
+            ),
+            ("cat <<EOF\n$(git reset --hard\nEOF\ngit reset --hard", [], [], False),
+            ("if true; then cat <<'EOF'\nhello\nEOF", [], [], True),
+        )
+        for command, git, writes, compound in cases:
+            with self.subTest(command=command):
+                self.assert_legacy_facts(command, git, writes, compound)
+        # 同一次输入里更早的 quoted 数据正文不能只回退最后一个 heredoc。
+        sentinel = shell.analyze(
+            "cat <<'A'\ngit reset --hard\nA\ncat <<$X\nhello\nEOF\ngit reset --hard",
+            cwd="/tmp/base",
+        )
+        self.assertTrue(sentinel.opaque)
+        self.assertEqual(
+            git_actions(sentinel),
+            [("reset", ["--hard"]), ("reset", ["--hard"])],
+        )
+
+    def test_heredoc_parameter_candidate_falls_back_before_close(self) -> None:
+        # `${x:-)}` 里的 `)` 不能被当成命令替换结束：预检先于配对，整次回退。
+        self.assert_legacy_facts(
+            "cat <<EOF\n$(echo ${x:-)}; git reset --hard)\nEOF",
+            [("reset", ["--hard"])],
+            [("git-reset", None, False)],
+            True,
+        )
+        self.assert_legacy_facts(
+            "cat <<EOF\n$(echo ${x:-)}; touch protected)\nEOF",
+            [],
+            [("touch", "protected", True)],
+            True,
+        )
+        # 简单 `${NAME}` 与算术展开同样整次回退，不因位于内层引用而放宽。
+        self.assert_legacy_facts(
+            "cat <<EOF\n$(echo ${NAME}; git reset --hard)\nEOF",
+            [("reset", ["--hard"])],
+            [("git-reset", None, False)],
+        )
+
+    def test_substitution_failure_falls_back_to_legacy(self) -> None:
+        reset_git = [("reset", ["--hard"])]
+        reset_writes = [("git-reset", None, False)]
+        # 候选事务里更早的 quoted 数据正文已被删除，随后普通命令替换递归超预算：
+        # 子分析只有 opaque，不能 merge 后继续提交，必须整次回退恢复旧证据。
+        over_budget = ("env " * 9) + "git reset --hard"
+        substitution = "printf '%s' " + '"$(' + over_budget + ')"'
+        self.assert_legacy_facts(
+            "cat <<'EOF'\ngit reset --hard\ntouch protected\nEOF\n" + substitution,
+            reset_git,
+            reset_writes + [("touch", "protected", True)],
+        )
+        # 没有 heredoc 候选事务的普通命令维持旧结果（保守边界，不引入新放行）。
+        plain = shell.analyze(substitution, cwd="/tmp/base")
+        self.assertTrue(plain.opaque)
+        self.assertFalse(plain.too_deep)
+        self.assertEqual(plain.git, [])
+        self.assertEqual(plain.writes, [])
+        self.assertFalse(plain.stdin_program)
+
+    def test_inner_substitution_nodes_are_proven(self) -> None:
+        # design §4.4：替换证明要覆盖内层节点。`$(echo `printf 'x'`)` 的内层复杂
+        # 反引号不属于支持的简单形态，整次回退，不能只证明最外层后删掉旧正文证据。
+        self.assert_legacy_facts(
+            "cat <<'A'\ngit reset --hard\ntouch protected\nA\n"
+            "cat <<EOF\n$(echo `printf 'x'`)\nEOF",
+            [("reset", ["--hard"])],
+            [("git-reset", None, False), ("touch", "protected", True)],
+        )
+        # 对照：替换内部的简单 `$()` 与无反引号形态仍可证明。
+        simple = shell.analyze("cat <<EOF\n$(echo $(echo x))\nEOF", cwd="/tmp/base")
+        self.assertFalse(simple.opaque, simple.as_dict())
+        self.assertEqual(
+            sorted(command for command in simple.commands if command != ["cat"]),
+            [["echo", "$(echo x)"], ["echo", "x"]],
+        )
+
+    def test_herestring_program_stdin_is_marked(self) -> None:
+        # `<<<` 的执行/opaque/重定向语义不变，但供给解释器/壳的 herestring 是
+        # stdin 程序，必须带标记，否则读取守卫会按“没有读取目标”放行。
+        reading = 'python3 - <<< \'print(open("/etc/passwd").read())\''
+        analysis = shell.analyze(reading, cwd="/tmp/base")
+        self.assertTrue(analysis.stdin_program, analysis.as_dict())
+        self.assertEqual(analysis.git, [])
+        self.assertEqual(analysis.writes, [])
+        self.assertEqual(shell.is_read_only_command(reading), (False, True))
+        reads, unknown = shell.read_command_paths(reading)
+        self.assertEqual(reads, [])
+        self.assertTrue(unknown)
+        for command in ("sh <<< 'git reset --hard'", "env bash <<< 'git reset --hard'"):
+            with self.subTest(command=command):
+                wrapped = shell.analyze(command, cwd="/tmp/base")
+                # 正文不是多行 heredoc：不新增脚本分析，Git/写证据与今天一致。
+                self.assertTrue(wrapped.stdin_program, wrapped.as_dict())
+                self.assertEqual(wrapped.git, [])
+                self.assertEqual(wrapped.writes, [])
+                self.assertEqual(shell.is_read_only_command(command), (False, True))
+                _reads, unknown = shell.read_command_paths(command)
+                self.assertTrue(unknown)
+        # 数据消费者与普通命令的 herestring 不标记。
+        self.assertFalse(shell.analyze("cat <<< hello", cwd="/tmp/base").stdin_program)
+        self.assertFalse(shell.analyze("printf '%s' <<< x", cwd="/tmp/base").stdin_program)
+
+    def test_eval_herestring_program_stdin_is_marked(self) -> None:
+        # `eval`/壳 `-c` 的脚本文本继承外层 stdin：`eval 'python3 -' <<< …` 的
+        # 正文是程序，不能按有效命令名（eval）判成数据输入。
+        for command in (
+            "eval 'python3 -' <<< 'print(1)'",
+            "env eval 'python3 -' <<< 'print(1)'",
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertTrue(analysis.stdin_program, analysis.as_dict())
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertEqual(analysis.git, [])
+                self.assertEqual(analysis.writes, [])
+                self.assertEqual(shell.is_read_only_command(command), (False, True))
+                _reads, unknown = shell.read_command_paths(command)
+                self.assertTrue(unknown)
+        # 脚本阶段的任一命令名都保守标记：`eval cat` 同样可能把正文喂给程序。
+        self.assertTrue(
+            shell.analyze("eval 'cat' <<< 'hello'", cwd="/tmp/base").stdin_program
+        )
+        self.assertEqual(shell.is_read_only_command("eval 'cat' <<< 'hello'"), (False, True))
+        _reads, unknown = shell.read_command_paths("eval 'cat' <<< 'hello'")
+        self.assertTrue(unknown)
+        # 非脚本阶段的普通命令/数据消费者仍不标记。
+        for command in ("cat <<< 'x'", "printf '%s' <<< 'x'"):
+            with self.subTest(command=command):
+                self.assertFalse(
+                    shell.analyze(command, cwd="/tmp/base").stdin_program
+                )
+
+    def test_heredoc_cwd_and_wrapper_evaluation(self) -> None:
+        # 外层重定向按段入口 cwd 解析。
+        chdir = shell.analyze("cd sub; cat > out <<EOF\nhello\nEOF", cwd="/tmp/base")
+        self.assertEqual(write_targets(chdir), [("out", True)])
+        self.assertEqual(entry_cwds(chdir.writes), ["/tmp/base/sub"])
+        # 替换内的 cd 不污染父 shell 的后续读取。
+        substitution = shell.analyze(
+            "cat <<EOF\n$(cd sub; cat app.py)\nEOF\ncat other", cwd="/tmp/base"
+        )
+        self.assertEqual(read_paths(substitution), ["app.py", "other"])
+        self.assertEqual(entry_cwds(substitution.reads), ["/tmp/base/sub", "/tmp/base"])
+        # `env -C` 的有效 cwd 累积到正文脚本的读/写。
+        wrapped = shell.analyze("env -C sub sh <<'EOF'\ntouch out\nEOF", cwd="/tmp/base")
+        self.assertEqual(write_targets(wrapped), [("out", True)])
+        self.assertEqual(entry_cwds(wrapped.writes), ["/tmp/base/sub"])
+        self.assertTrue(wrapped.stdin_program)
+        # 组尾 synthetic redirect 段使用组入口 cwd，且没有命令名也要处理正文。
+        group = shell.analyze("( cd sub ) <<'EOF'\ntouch out\nEOF", cwd="/tmp/base")
+        self.assertFalse(group.opaque, group.as_dict())
+        self.assertEqual(write_targets(group), [("out", True)])
+        self.assertEqual(entry_cwds(group.writes), ["/tmp/base"])
+        self.assertTrue(group.stdin_program)
+        # 子 shell 内、仍在顶层的 heredoc 正常消费，后续真实 Git 保留。
+        subshell = shell.analyze(
+            "(cat <<'EOF'\nhello\nEOF\n)\ngit reset --hard", cwd="/tmp/base"
+        )
+        self.assertFalse(subshell.opaque, subshell.as_dict())
+        self.assertEqual(subshell.commands, [["cat"], ["git", "reset", "--hard"]])
+        # argv 包装不重复消费同一阶段的正文替换。
+        wrapper = shell.analyze("sudo cat <<EOF\n$(echo once)\nEOF", cwd="/tmp/base")
+        self.assertEqual(
+            [command for command in wrapper.commands if command == ["echo", "once"]],
+            [["echo", "once"]],
+        )
+        self.assertFalse(wrapper.stdin_program)
+
+    def test_shell_heredoc_body_is_a_script(self) -> None:
+        for name in ("sh", "bash", "dash", "zsh", "ksh"):
+            command = "%s <<'EOF'\ngit reset --hard\nEOF" % name
+            with self.subTest(shell=name):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 引用 delimiter 只抑制外层展开，不能阻止接收正文的壳执行脚本。
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertTrue(analysis.stdin_program)
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+        unquoted = shell.analyze("bash <<EOF\ntouch protected\nEOF", cwd="/tmp/base")
+        self.assertEqual(write_targets(unquoted), [("protected", True)])
+        self.assertTrue(unquoted.stdin_program)
+        for command in (
+            "sh -s <<'EOF'\ngit reset --hard\nEOF",
+            "sudo sh <<'EOF'\ngit reset --hard\nEOF",
+            "env bash <<'EOF'\ngit reset --hard\nEOF",
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertTrue(analysis.stdin_program)
+        # `bash -c` 的脚本文本是新的求值阶段；外层 stdin 仍保守按壳正文处理。
+        script = shell.analyze("bash -c 'sh' <<'EOF'\ntouch protected\nEOF", cwd="/tmp/base")
+        self.assertEqual(write_targets(script), [("protected", True)])
+        self.assertTrue(script.stdin_program)
+        # 正文的 cd 与读写都在独立子上下文里，不外泄到父 shell。
+        body_cd = shell.analyze("sh <<'EOF'\ncd sub\ntouch out\nEOF\ncat after", cwd="/tmp/base")
+        self.assertEqual(write_targets(body_cd), [("out", True)])
+        self.assertEqual(entry_cwds(body_cd.writes), ["/tmp/base/sub"])
+        self.assertEqual(read_paths(body_cd), ["after"])
+        self.assertEqual(entry_cwds(body_cd.reads), ["/tmp/base"])
+        # 正文的读/写/Git 证据全部合并。
+        evidence = shell.analyze(
+            "sh <<'EOF'\ncat secret\ntouch out\ngit reset --hard\nEOF", cwd="/tmp/base"
+        )
+        self.assertEqual(read_paths(evidence), ["secret"])
+        self.assertEqual(write_targets(evidence), [("out", True), (None, False)])
+        self.assertEqual(git_actions(evidence), [("reset", ["--hard"])])
+        # 单引号与 `#` 中的真实外层替换不因正文脚本的引号/注释规则丢失。
+        outer = shell.analyze(
+            "sh <<EOF\n'$(git reset --hard)'\n# $(touch protected)\nEOF", cwd="/tmp/base"
+        )
+        self.assertEqual(git_actions(outer), [("reset", ["--hard"])])
+        self.assertIn(("protected", True), write_targets(outer))
+        # 解释器对照：Python 正文不按 shell 执行，不产生假 Git 拒绝。
+        python = shell.analyze("python3 - <<'PY'\ngit reset --hard\nPY", cwd="/tmp/base")
+        self.assertEqual(python.git, [])
+
+    def test_heredoc_data_consumer_whitelist(self) -> None:
+        for name in HEREDOC_DATA_COMMANDS:
+            command = "%s <<'EOF'\ngit reset --hard\nEOF" % name
+            with self.subTest(command=name):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertFalse(analysis.stdin_program)
+                self.assertEqual(analysis.git, [])
+                self.assertEqual(analysis.reads, [])
+                # 正文不产生假写；tee 自身的 argv 写规则不受名单改变。
+                self.assertEqual(
+                    [item for item in analysis.writes if item.get("kind") != "tee"],
+                    [],
+                )
+        # 绝对路径与 argv 包装解包后仍是纯数据消费者。
+        for command in (
+            "/usr/bin/cat <<'EOF'\ngit reset --hard\nEOF",
+            "env cat <<'EOF'\ngit reset --hard\nEOF",
+            "command cat <<'EOF'\ngit reset --hard\nEOF",
+            "sudo cat <<'EOF'\ngit reset --hard\nEOF",
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertEqual(analysis.git, [])
+                self.assertFalse(analysis.stdin_program)
+        # 外层重定向写照旧完整，正文 Git 字面不构成执行。
+        redirect = shell.analyze("cat > f <<'EOF'\ngit reset --hard\nEOF", cwd="/tmp/base")
+        self.assertEqual(redirect.git, [])
+        self.assertEqual(write_targets(redirect), [("f", True)])
+        self.assertFalse(redirect.stdin_program)
+        count = shell.analyze("wc -l <<'EOF'\ngit reset --hard\nEOF", cwd="/tmp/base")
+        self.assertEqual(count.git, [])
+        self.assertEqual(count.writes, [])
+        # 动态有效命令名/argv 命令替换不是静态消费者：保守按脚本并标真。
+        for command in (
+            "$(echo cat) <<'EOF'\ngit reset --hard\nEOF",
+            "cat $(echo file) <<'EOF'\ngit reset --hard\nEOF",
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertTrue(analysis.stdin_program)
+
+    def test_heredoc_executing_consumers_keep_reset(self) -> None:
+        for command in (
+            "xargs -I{} sh -c '{}' <<'EOF'\ngit reset --hard\nEOF",
+            "sed e <<'EOF'\ngit reset --hard\nEOF",
+            "awk '{print}' <<'EOF'\ngit reset --hard\nEOF",
+            "gawk '{print}' <<'EOF'\ngit reset --hard\nEOF",
+            "mawk '{print}' <<'EOF'\ngit reset --hard\nEOF",
+            "nawk '{print}' <<'EOF'\ngit reset --hard\nEOF",
+            "find . -maxdepth 0 <<'EOF'\ngit reset --hard\nEOF",
+            "frobnicate <<'EOF'\ngit reset --hard\nEOF",
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 非白名单消费者一律按脚本，正文 reset 证据必须保留。
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertTrue(analysis.stdin_program)
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+        # env 无法解包时保守按脚本，且不丢正文证据。
+        opaque_env = shell.analyze(
+            "env --unknown-option cat <<'EOF'\ngit reset --hard\nEOF", cwd="/tmp/base"
+        )
+        self.assertEqual(git_actions(opaque_env), [("reset", ["--hard"])])
+        self.assertTrue(opaque_env.stdin_program)
+
+    def test_heredoc_interpreter_data_branch(self) -> None:
+        for name in ("python", "python3", "node", "perl", "ruby", "php", "python3.12"):
+            command = "%s - <<'PY'\ngit reset --hard\nPY" % name
+            with self.subTest(interpreter=name):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 解释器正文按数据处理，但仍是不可证明的数据消费者输入。
+                self.assertEqual(analysis.git, [])
+                self.assertTrue(analysis.stdin_program)
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertEqual(shell.is_read_only_command(command), (False, True))
+        wrapped = shell.analyze("env python3 - <<'PY'\ngit reset --hard\nPY", cwd="/tmp/base")
+        self.assertEqual(wrapped.git, [])
+        self.assertTrue(wrapped.stdin_program)
+        # awk 系列不属于解释器数据分支：仍保守按脚本并保留 reset。
+        for name in ("awk", "gawk", "mawk", "nawk"):
+            command = "%s '{print}' <<'EOF'\ngit reset --hard\nEOF" % name
+            with self.subTest(awk=name):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertTrue(analysis.stdin_program)
+
+    def test_heredoc_consumer_binding_is_conservative(self) -> None:
+        reading = "print(open('/etc/passwd').read())"
+        for command in (
+            "(python3 -) <<'PY'\n%s\nPY" % reading,
+            "python3 - 3<<'PY' 0<&3\n%s\nPY" % reading,
+            "cat <<'PY' | python3 -\n%s\nPY" % reading,
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertTrue(analysis.stdin_program, analysis.as_dict())
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+        # 管道左段名为 cat 也不能抢先归纯数据：正文按脚本，reset 证据保留。
+        pipeline = shell.analyze(
+            "cat <<'EOF' | cat\ngit reset --hard\nEOF", cwd="/tmp/base"
+        )
+        self.assertTrue(pipeline.stdin_program)
+        self.assertEqual(git_actions(pipeline), [("reset", ["--hard"])])
+
+    def test_stdin_program_helper_contracts(self) -> None:
+        direct = "python3 - <<'PY'\nopen('protected','w').write('x')\nPY"
+        self.assertTrue(shell.analyze(direct).stdin_program)
+        self.assertEqual(shell.is_read_only_command(direct), (False, True))
+        # 壳正文：已知读取保留，未知位为真（transcript 只取已知读取的旧行为不变）。
+        reads, unknown = shell.read_command_paths("sh <<'EOF'\ncat secret\nEOF")
+        self.assertEqual([item.get("path") for item in reads], ["secret"])
+        self.assertTrue(unknown)
+        # 普通数据 heredoc 不因该标记变未知。
+        data_reads, data_unknown = shell.read_command_paths("cat <<EOF\n$(cat secret)\nEOF")
+        self.assertEqual([item.get("path") for item in data_reads], ["secret"])
+        self.assertFalse(data_unknown)
+        # cat 外层写仍非只读，但标记为假。
+        write_form = "cat > f <<'EOF'\nhello\nEOF"
+        self.assertFalse(shell.analyze(write_form).stdin_program)
+        self.assertEqual(shell.is_read_only_command(write_form), (False, False))
+        # merge 做 OR，as_dict 暴露同名布尔键。
+        merged = shell.Analysis()
+        merged.merge(shell.analyze(direct))
+        self.assertTrue(merged.stdin_program)
+        self.assertIs(shell.analyze(direct).as_dict()["stdin_program"], True)
+        self.assertIs(shell.Analysis().as_dict()["stdin_program"], False)
+
+    def test_wrapped_data_heredoc_has_no_implicit_read(self) -> None:
+        # argv 包装重分析必须继承“已证明的数据 stdin”事实，否则内层 cat 会再按
+        # 无 stdin 的旧规则记一条隐式 `.` 读取，使读取守卫遍历整个 cwd。
+        for command in (
+            "env cat <<'EOF'\nhello\nEOF",
+            "sudo cat <<'EOF'\nhello\nEOF",
+            "command wc -l <<'EOF'\nhello\nEOF",
+        ):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertEqual(read_paths(analysis), [], analysis.as_dict())
+                self.assertFalse(analysis.stdin_program)
+        # 显式文件参数仍是读取目标。
+        explicit = shell.analyze("env cat file.txt <<'EOF'\nhello\nEOF", cwd="/tmp/base")
+        self.assertEqual(read_paths(explicit), ["file.txt"])
+        # 解释器包装仍按解释器分支标真。
+        self.assertTrue(
+            shell.analyze("env python3 - <<'PY'\nprint(1)\nPY", cwd="/tmp/base").stdin_program
+        )
+
+    def test_cat_data_heredoc_has_no_implicit_path(self) -> None:
+        write_form = shell.analyze("cat > f <<'EOF'\nhello\nEOF", cwd="/tmp/base")
+        # 已明确提供纯数据 stdin 且无文件参数：不再产生隐式 `.` 读取候选。
+        self.assertEqual(write_form.reads, [])
+        self.assertFalse(write_form.stdin_program)
+        self.assertEqual(write_targets(write_form), [("f", True)])
+        plain = shell.analyze("cat <<'EOF'\nhello\nEOF", cwd="/tmp/base")
+        self.assertEqual(plain.reads, [])
+        self.assertFalse(plain.stdin_program)
+        # 显式文件参数与其他旧语义不变。
+        explicit = shell.analyze("cat app.py <<'EOF'\nhello\nEOF", cwd="/tmp/base")
+        self.assertEqual(read_paths(explicit), ["app.py"])
+        self.assertEqual(read_paths(shell.analyze("cat", cwd="/tmp/base")), ["."])
+        # 回退输入保持旧的隐式读取候选。
+        self.assertEqual(read_paths(shell.analyze("cat <<$X\nhello\nEOF", cwd="/tmp/base")), ["."])
+
+    def test_herestring_and_existing_lexing_unchanged(self) -> None:
+        herestring = shell.analyze("cat <<<$(git reset --hard)", cwd="/tmp/base")
+        self.assertEqual(git_actions(herestring), [("reset", ["--hard"])])
+        # herestring 不排队消费后续行。
+        tokens, closed = shell.tokenize("cat <<<'EOF'\nnext line")
+        self.assertTrue(closed)
+        self.assertEqual(
+            [token.text for token in tokens if token.operator], ["<<<", "\n"]
+        )
+        # fd 复制没有文件目标，也不把数据 heredoc 变成未知消费者。
+        self.assertEqual(
+            [item.get("kind") for item in shell.analyze("printf x 2>&1", cwd="/tmp/base").writes],
+            [],
+        )
+        self.assertFalse(shell.analyze("cat 2>&1 <<'EOF'\nhello\nEOF", cwd="/tmp/base").stdin_program)
+        self.assertEqual(
+            write_targets(shell.analyze("printf x > 1", cwd="/tmp/base")), [("1", True)]
+        )
+        # r7/r8/r9 的续行/注释/引号回归。
+        self.assertEqual(shell.argv_of("g\\\nit reset --hard"), [["git", "reset", "--hard"]])
+        comment = shell.analyze("\\\n# note \\\ngit reset --hard")
+        self.assertEqual(git_actions(comment), [("reset", ["--hard"])])
+        self.assertFalse(comment.opaque)
+        self.assertEqual(
+            write_targets(shell.analyze("printf x >&'1\\\n.txt'", cwd="/tmp/base")),
+            [("1\\\n.txt", True)],
+        )
+        continuation = shell.analyze("cd su\\\nb && printf x >\\\n>1.txt", cwd="/tmp/base")
+        self.assertEqual(write_targets(continuation), [("1.txt", True)])
+        self.assertEqual(entry_cwds(continuation.writes), ["/tmp/base/sub"])
+        # 引号里的 `<<` 是数据，不触发整次回退。
+        for command in ("echo 'a << b'", 'echo "a << b"'):
+            with self.subTest(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+
+    def test_heredoc_body_depth_limit_preserves_legacy_evidence(self) -> None:
+        command = "sh <<'EOF'\ngit reset --hard\ntouch protected\nEOF"
+        # d=7：正文第 8 层完整完成，reset 与完整 touch 写仍在。
+        complete = shell.analyze(command, depth=7)
+        self.assertFalse(complete.opaque, complete.as_dict())
+        self.assertFalse(complete.too_deep)
+        self.assertTrue(complete.stdin_program)
+        self.assertEqual(git_actions(complete), [("reset", ["--hard"])])
+        self.assertEqual(write_targets(complete), [(None, False), ("protected", True)])
+        # d=8：正文第 9 层超限 → 整次回退，旧证据保持。
+        fallback = shell.analyze(command, depth=8)
+        self.assertTrue(fallback.opaque)
+        self.assertFalse(fallback.too_deep)
+        self.assertEqual(git_actions(fallback), [("reset", ["--hard"])])
+        self.assertEqual(write_targets(fallback), [(None, False), ("protected", True)])
+        # d=9：入口本身超限，维持旧预算边界，不补扫正文。
+        limited = shell.analyze(command, depth=9)
+        self.assertTrue(limited.opaque)
+        self.assertTrue(limited.too_deep)
+        self.assertEqual(limited.git, [])
+        self.assertEqual(limited.writes, [])
+
+    def test_heredoc_script_and_wrapper_limit_preserves_legacy_evidence(self) -> None:
+        base = "sh <<'EOF'\ngit reset --hard\ntouch protected\nEOF"
+        chain = {}
+        nested = base
+        for level in range(1, 10):
+            nested = "sh -c " + shlex.quote(nested)
+            chain[level] = nested
+        # n=9 的旧预算边界：第 9 层脚本无法完成，旧结果就是空证据。
+        for level, opaque, git, writes in (
+            (7, False, [("reset", ["--hard"])], [(None, False), ("protected", True)]),
+            (8, True, [("reset", ["--hard"])], [(None, False), ("protected", True)]),
+            (9, True, [], []),
+        ):
+            analysis = shell.analyze(chain[level])
+            with self.subTest(level=level):
+                self.assertEqual(analysis.opaque, opaque, analysis.as_dict())
+                self.assertFalse(analysis.too_deep)
+                self.assertEqual(git_actions(analysis), git)
+                self.assertEqual(write_targets(analysis), writes)
+        for level, opaque in ((7, False), (8, False), (9, True)):
+            analysis = shell.analyze(("env " * level) + base)
+            with self.subTest(wrapper=level):
+                self.assertEqual(analysis.opaque, opaque, analysis.as_dict())
+                self.assertFalse(analysis.too_deep)
+                self.assertEqual(git_actions(analysis), [("reset", ["--hard"])])
+                self.assertEqual(
+                    write_targets(analysis), [(None, False), ("protected", True)]
+                )
+
+    def test_heredoc_scan_is_bounded(self) -> None:
+        # 近上限正文：一次线性消费，不逐行 analyze。
+        large = "cat <<'EOF'\n" + ("x" * 100000) + "\nEOF"
+        analysis = shell.analyze(large, cwd="/tmp/base")
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        self.assertEqual(analysis.commands, [["cat"]])
+        # 大量小 heredoc 仍按源码顺序消费且不丢后续命令。
+        many = "".join("cat <<'E'\nv\nE\n" for _ in range(100)) + "git reset --hard"
+        many_analysis = shell.analyze(many, cwd="/tmp/base")
+        self.assertFalse(many_analysis.opaque, many_analysis.as_dict())
+        self.assertEqual(many_analysis.commands.count(["cat"]), 100)
+        self.assertEqual(git_actions(many_analysis), [("reset", ["--hard"])])
+        # 未闭合/深层替换与超长输入都及时返回，异常不外泄。
+        unclosed = "cat <<EOF\n" + ("$(" * 2000) + "\nEOF"
+        self.assertTrue(shell.analyze(unclosed, cwd="/tmp/base").opaque)
+        deep = "cat <<EOF\n" + ("$(echo " * 40) + "x" + (")" * 40) + "\nEOF"
+        self.assertTrue(shell.analyze(deep, cwd="/tmp/base").opaque)
+        over = "cat <<'EOF'\n" + ("y" * (shell.MAX_COMMAND_BYTES + 1)) + "\nEOF"
+        limited = shell.analyze(over, cwd="/tmp/base")
+        self.assertTrue(limited.opaque)
+        self.assertTrue(limited.too_deep)
 
 
 if __name__ == "__main__":

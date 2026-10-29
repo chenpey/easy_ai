@@ -958,6 +958,106 @@ class DeployedGuardCommandTests(unittest.TestCase):
         self.assertIn("app.py", inside["executed"].stdout)
         self.assertEqual(inside["executed"].returncode, 0)
 
+    def test_python_heredoc_stdin_program_is_denied(self) -> None:
+        """G1：解释器 stdin heredoc 不是可证明的数据消费者输入。"""
+        for command in (
+            "python3 - <<'PY'\nprint(open(%r).read())\nPY" % str(self.sentinel),
+            "(python3 -) <<'PY'\nprint(open(%r).read())\nPY" % str(self.sentinel),
+        ):
+            with self.subTest(command=command):
+                analysis = guard.shell.analyze(command)
+                self.assertTrue(analysis.stdin_program, analysis.as_dict())
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                result = self.host_run(command)
+                self.assertEqual(result["decision"], "deny", (command, result))
+                self.assertIsNone(result["executed"], command)
+                self.assertEqual(self.current_health(), "target_unresolved", result)
+                self.assertNotIn("SENTINEL-OPERATOR-SECRET", json.dumps(result["raw"]))
+
+    def test_fd_forwarded_heredoc_stdin_program_is_denied(self) -> None:
+        """G1：非零 fd 的正文再经 `0<&3` 转接，仍不能证明是数据输入。"""
+        command = "python3 - 3<<'PY' 0<&3\nprint(open(%r).read())\nPY" % str(self.sentinel)
+        analysis = guard.shell.analyze(command)
+        self.assertTrue(analysis.stdin_program, analysis.as_dict())
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        result = self.host_run(command)
+        self.assertEqual(result["decision"], "deny", result)
+        self.assertIsNone(result["executed"])
+        self.assertEqual(self.current_health(), "target_unresolved", result)
+
+    def test_piped_heredoc_stdin_program_is_denied(self) -> None:
+        """G1：管道左段名为 cat 也不能把正文证明成纯数据。"""
+        command = "cat <<'PY' | python3 -\nprint(open(%r).read())\nPY" % str(self.sentinel)
+        analysis = guard.shell.analyze(command)
+        self.assertTrue(analysis.stdin_program, analysis.as_dict())
+        self.assertFalse(analysis.opaque, analysis.as_dict())
+        result = self.host_run(command)
+        self.assertEqual(result["decision"], "deny", result)
+        self.assertIsNone(result["executed"])
+        self.assertEqual(self.current_health(), "target_unresolved", result)
+
+    def test_herestring_program_stdin_is_denied(self) -> None:
+        """G1：`<<<` 供给解释器/壳的 herestring 也是 stdin 程序，不能按“无读取目标”放行。"""
+        reading = "print(open(%r).read())" % str(self.sentinel)
+        commands = (
+            'python3 - <<< "%s"' % reading,
+            "sh <<< 'echo EASYDEV-HERESTRING-SENTINEL'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                analysis = guard.shell.analyze(command)
+                # herestring 的执行/opaque/读写语义不变：正文不进入脚本分析。
+                self.assertTrue(analysis.stdin_program, analysis.as_dict())
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertEqual(analysis.git, [])
+                self.assertEqual(analysis.writes, [])
+                result = self.host_run(command)
+                self.assertEqual(result["decision"], "deny", (command, result))
+                self.assertIsNone(result["executed"], command)
+                self.assertEqual(self.current_health(), "target_unresolved", result)
+                self.assertNotIn("SENTINEL-OPERATOR-SECRET", json.dumps(result["raw"]))
+
+    def test_eval_herestring_program_stdin_is_denied(self) -> None:
+        """G1：`eval 'python3 -' <<< …` 的正文随脚本文本继承 stdin，同样不能放行。"""
+        reading = "print(open(%r).read())" % str(self.sentinel)
+        for command in (
+            'eval \'python3 -\' <<< "%s"' % reading,
+            'env eval \'python3 -\' <<< "%s"' % reading,
+        ):
+            with self.subTest(command=command):
+                analysis = guard.shell.analyze(command)
+                self.assertTrue(analysis.stdin_program, analysis.as_dict())
+                self.assertFalse(analysis.opaque, analysis.as_dict())
+                self.assertEqual(analysis.reads, [])
+                result = self.host_run(command)
+                self.assertEqual(result["decision"], "deny", (command, result))
+                self.assertIsNone(result["executed"], command)
+                self.assertEqual(self.current_health(), "target_unresolved", result)
+                self.assertNotIn("SENTINEL-OPERATOR-SECRET", json.dumps(result["raw"]))
+
+    def test_cat_heredoc_output_and_data_are_not_stdin_program(self) -> None:
+        """G1：外层写形态与普通数据 heredoc 都不带该标记，守卫照常放行。"""
+        write_form = "cat > f <<'EOF'\nhello\nEOF"
+        analysis = guard.shell.analyze(write_form)
+        self.assertFalse(analysis.stdin_program, analysis.as_dict())
+        self.assertEqual(analysis.reads, [])
+        self.assertEqual(
+            [(item.get("kind"), item.get("target")) for item in analysis.writes],
+            [("redirect", "f")],
+        )
+        result = self.host_run(write_form)
+        self.assertEqual(result["decision"], "allow", result)
+        self.assertIsNotNone(result["executed"])
+        self.assertEqual((self.workspace / "f").read_text(encoding="utf-8"), "hello\n")
+        # 普通数据 heredoc：正文没有读取目标/执行证据，守卫放行。
+        data = "cat <<'EOF'\nordinary data\nEOF"
+        data_analysis = guard.shell.analyze(data)
+        self.assertFalse(data_analysis.stdin_program, data_analysis.as_dict())
+        self.assertEqual(data_analysis.reads, [])
+        allowed = self.host_run(data)
+        self.assertEqual(allowed["decision"], "allow", allowed)
+        self.assertEqual(allowed["executed"].stdout, "ordinary data\n")
+
 
 if __name__ == "__main__":
     unittest.main()

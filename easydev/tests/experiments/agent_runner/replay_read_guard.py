@@ -376,6 +376,10 @@ def _targets_from_tool(tool: str, tool_input: Any) -> Tuple[List[Tuple[str, Opti
         analysis = shell.analyze(command)
         if analysis.opaque or analysis.too_deep or analysis.read_unknown:
             raise GuardFailure("target_unresolved", "命令结构无法安全解析，读取目标不可证明")
+        if analysis.stdin_program:
+            # 正文不是可证明的数据消费者输入（解释器/壳/组/fd/管道/未知消费者）：
+            # 一律先拒绝，必须先于“没有读取目标则放行”。
+            raise GuardFailure("target_unresolved", "命令的 stdin 不是可证明的数据输入")
         targets: List[Tuple[str, Optional[str]]] = []
         for read in analysis.reads:
             base = read.get("cwd")

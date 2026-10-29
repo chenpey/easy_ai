@@ -2,6 +2,23 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.7 更新说明（2026-10-29）
+
+修 heredoc 被当命令解析造成的误拦与基线不覆盖，收敛 pre/post 重复的结构告警，并把 pi 适配器的降级告警从「细节已隐藏」换成固定类别（规则正文未变，总量仍为 131715 字节）。
+
+- **heredoc 正文按消费者分流（P1）**：`shell.py` 先在词法阶段证明正文边界，再判消费者。纯数据白名单冻结为 `cat`/`tee`/`wc`/`sort`/`uniq`/`tr`/`cut`/`head`/`tail`/`nl`/`od`/`hexdump`/`base64`/`md5sum`/`sha1sum`/`sha256sum`（须有静态有效命令名与同段正文绑定）；`python`/`python3`/`node`/`perl`/`ruby`/`php`（含 `python3.12` 这类点分版本后缀）按解释器正文数据处理；两者之外——壳集合 `sh`/`bash`/`dash`/`zsh`/`ksh`（含 `-s`、`sudo sh`/`env bash` 与 `bash -c` 的脚本阶段）、`xargs`/`sed`/`awk` 系列/`find`、未知命令、组尾重定向、非零 fd 与 fd 转接、管道——一律保守按壳脚本分析。引用 delimiter 只抑制外层 heredoc 展开，不阻止收到正文的壳执行；未引用正文里的 `$()` 与简单反引号仍按真实替换检查，`git reset --hard` 与 reviewer 的 `touch protected` 沿用原 deny。
+- **`<<-` 与精确定界符**：`<<-` 只去前导 tab（空格与 CR 不算），定界符只做 quote removal、不做展开；`EOF ` / ` EOF` 不算结束行，`<< -EOF` 是普通 `<<` 加含 `-` 的定界符，`<<''` 以空行结束。
+- **整次 legacy 回退**：动态定界符（`<<$X`/`<<$(...)`）、未闭合正文、嵌套 heredoc、任意 `${...}`、`$((...))`、复杂反引号、未引用正文里的反斜杠续行等无法证明的形态，丢弃整次候选 token 回到旧词法路径，并保留旧的 Git/写/`compound_unresolved` 证据（不出现「正文已删但只置 opaque」的中间态）；正文、真实替换、`-c` 脚本阶段与 argv 解包等新增递归任一无法完成也整次回退，不 merge 未知标志替代。
+- **core 结构告警 pre-only（P2）**：五类基线结构缺口（命令结构无法解析、缺少可定位仓库根/cwd、写入目标不完整及该 gap、命令内目录变化、写入目标位于仓库外）保留原产生条件，只在 `pre_tool` 披露并在同一 pre 内去重；post 仍计算 prepared 用于指纹配对，但不再重复这些原句，post 自己的配对/记账缺口与 reviewer unknown 分支条件不变。指纹超时文案改为不含路径的 `基线指纹查询超时，基线检查降级`（顺带修掉路径泄漏）。这是事件作用域而非「已披露」状态：pre 未运行、post-only 宿主、缺口只在 post 出现时，具体结构原因不会被披露，属于已知信息损失，见 `hooks/README.md`。
+- **pi 固定类别（P2）**：适配器白名单从 6 条换成 12 类（状态不可用 / 锁忙 / Git 查询失败 / 命令结构未覆盖 / 写入目标未覆盖 / 写序列记账缺口 / transcript 证据降级 / 分派·子代理降级 / 激活判定降级 / 工具权限未覆盖 / 输入或协议无效 / 内部异常），每类在诊断边界后按固定文案族匹配、按表顺序去重输出；仍是一次调用至多一条汇总、8192 字节 stderr 捕获、2048 字节最终告警。未知新文案保持 `core_stderr：核心有诊断，细节已隐藏`，绝不回显命中原文、路径或 stack。
+- **回放读取守卫（P1 显式化）**：共用分析器新增 `Analysis.stdin_program`（正文不是可证明的数据消费者输入），组尾/fd 转接/管道/未知消费者都为真；`replay_read_guard` 先于「没有读取目标则放行」以 `target_unresolved` 拒绝，`is_read_only_command` 返回非只读且未知，`read_command_paths` 保留已知读取并置未知位。core 不消费该字段、不新增 deny；transcript 仍只取已知读取。
+
+影响面：已证明的数据 heredoc 不再被误拦（`cat > f <<'EOF' … EOF` 的正文不再进命令流，外层 `f` 恢复完整写目标并进入首次快照与基线检查）；壳正文与真实命令替换的执行证据保留原有 deny；同一调用的结构告警从 pre/post 两条降为一条，pi 侧「细节已隐藏」变成按类别可见。
+
+已知未覆盖：嵌套执行 heredoc（含 `$()`/反引号内的 heredoc）、任意 `${...}`（含简单 `${NAME}`）/`$((...))`/复杂或嵌套反引号、未引用正文里的反斜杠续行与跨行 `$()` 交互都走整次回退，回退仍沿用旧解析器的误拦与漏检，不构成沙箱；`<<-` 只认前导 tab，不做 CRLF 归一；Windows/PowerShell 未支持。旧的带路径指纹超时模板不再归入 Git 类别。
+
+验证（本机 macOS、无 PyYAML，基线 `9c72000` / 1.4.6）：`bash scripts/check.sh` rc=0（§2 SKILL 1.4.7、§3 五处版本一致 1.4.7、§6b 适配契约、§10 总量 131715 ≤ 131715）；`SMOKE_TMP=<工作区临时目录> bash scripts/smoke-install.sh` rc=0（7 个场景全过，测后手工清理，脚本不删调用方目录）；`tests/hooks` **1095 项 0 failures（1 skip）**、`tests/experiments/agent_runner` 92 项（含部署副本的 `test_replay_read_guard` 49 项）、`tests/experiments/swebench` 56 项、`test_role_metric` 18 项全部 OK；`public-contract-callers`/`version-gate`/`design-gate`/`audit-overflow` 四个 case rc=0；`~/.local/bin/python3.12 -W error::SyntaxWarning` 编译本次改动的 `*.py`（shell/core/三个 hooks 测试/replay 守卫与其测试）0 issues。红→绿证据：`git show HEAD:easydev/hooks/shell.py` 下同一组解析探针为 `cat > out.txt <<'EOF'` → `opaque=True`、`git=[reset --hard]`、`commands` 含正文行 `hello`/`EOF`；修复后同一探针 `opaque=False`、`git=[]`、`commands=[['cat']]`、写目标 `out.txt` 完整；`sh <<'EOF'`/`xargs -I{} sh -c '{}' <<'EOF'`/`sed e <<'EOF'`/`awk '{system($0)}' <<'EOF'` 仍识别 `reset --hard`，`python3 - <<'PY'` 正文为数据且 `stdin_program=True`；`cat <<-EOF` 正文按 tab 剥离消费且其后的真实 `reset --hard` 仍被识别；未闭合正文保持 `opaque=True` 且不夸大证据。core 侧新用例在 HEAD 的 `core.py` 下 8 条失败（pre-only 与去路径文案），修复后 12 条全绿。pi 侧 catalog 做了变异自检：删掉 `probe 记录不可写` 分支后对应用例转红，恢复后全绿。
+
 ## 1.4.6 更新说明（2026-10-29）
 
 收尾 1.4.5 遗留的三项已知问题（规则正文未变，总量仍为 131715 字节）。

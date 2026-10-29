@@ -14,6 +14,17 @@ from typing import Dict, Iterable, List, Optional, Tuple
 MAX_COMMAND_BYTES = 256 * 1024
 MAX_UNWRAP_DEPTH = 8
 
+
+class _CandidateFailure(Exception):
+    """heredoc 候选分析链无法完成：整次输入回退到旧词法路径。"""
+
+
+# 候选事务状态只活在一次 analyze 调用栈内：`_CANDIDATE_OWNER` 表示当前栈上有
+# 一条已证明边界的 heredoc token 流（其新增递归失败必须整次回退）；
+# `_LEGACY_DEPTH` 表示正在用旧词法重解析（不得再进入候选消费或再次回退）。
+_CANDIDATE_OWNER = False
+_LEGACY_DEPTH = 0
+
 GIT_GLOBAL_EQUAL_OPTIONS = (
     "--git-dir=",
     "--work-tree=",
@@ -192,13 +203,45 @@ _KNOWN_COMMANDS = frozenset(
 )
 
 # 重定向按运算符分类：数字前缀只是被重定向的 fd，不是目标文件名。
-_REDIRECT_OPERATOR_RE = re.compile(r"^[0-9]*(&>>|&>|>>|>\||<<<|<<|<>|>|<)$")
+# `<<<` 优先于 `<<-`，`<<-` 优先于 `<<`（最长匹配）。
+_REDIRECT_OPERATOR_RE = re.compile(r"^[0-9]*(&>>|&>|>>|>\||<<<|<<-|<<|<>|>|<)$")
 # `>&1`/`2>&1`/`<&3`/`>&-` 是 fd 复制，没有文件目标；`> 1`、`2> 1` 是普通文件。
 _REDIRECT_DUP_RE = re.compile(r"^[0-9]*(?:>&|<&)(?:[0-9]+|-)$")
 # `>&word` 只在 word 展开为纯数字或 `-` 时复制/关闭 fd；否则整段 word 是文件目标。
 _FD_WORD_RE = re.compile(r"^(?:[0-9]+|-)$")
+# 显式把 stdin 接到另一个 fd（如 `python3 - 3<<'PY' 0<&3`）：正文不再直接供给 stdin。
+_STDIN_DUP_RE = re.compile(r"^0?<&[0-9]+$")
 _READ_REDIRECTS = {"<", "<>"}
 _WRITE_REDIRECTS = {">", ">>", "<>", ">|", "&>", "&>>"}
+# heredoc 运算符：正文由 `tokenize` 的 header 路径消费，不生成文件读写。
+_HEREDOC_OPERATORS = frozenset({"<<", "<<-"})
+# 正文可归纯数据（`stdin_program=False`）的消费者；其余一律保守按脚本分析。
+_HEREDOC_DATA_COMMANDS = frozenset(
+    {
+        "cat",
+        "tee",
+        "wc",
+        "sort",
+        "uniq",
+        "tr",
+        "cut",
+        "head",
+        "tail",
+        "nl",
+        "od",
+        "hexdump",
+        "base64",
+        "md5sum",
+        "sha1sum",
+        "sha256sum",
+    }
+)
+# 壳消费者的正文一律按脚本递归分析，引用 delimiter 也不阻止这一执行阶段。
+_HEREDOC_SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh"})
+# 独立解释器：正文按数据对待（不按 shell 解析），但仍不是可证明的只读输入。
+_HEREDOC_INTERPRETER_RE = re.compile(
+    r"^(?:python|python3|node|perl|ruby|php)(?:[0-9]+(?:\.[0-9]+)*)?$"
+)
 
 
 class Analysis(object):
@@ -216,6 +259,9 @@ class Analysis(object):
         self.recursive_follow = False
         # 已识别为复合结构但无法安全配对/归属：reviewer 侧的窄拒绝类别。
         self.compound_unresolved = False
+        # 正文不是可证明的数据消费者输入（解释器 stdin、壳正文、组/fd/管道与
+        # 未知消费者）：读取守卫一律拒绝，共用 helper 按未知上报。
+        self.stdin_program = False
 
     def merge(self, other: "Analysis") -> None:
         self.opaque = self.opaque or other.opaque
@@ -228,6 +274,7 @@ class Analysis(object):
         self.read_unknown = self.read_unknown or other.read_unknown
         self.recursive_follow = self.recursive_follow or other.recursive_follow
         self.compound_unresolved = self.compound_unresolved or other.compound_unresolved
+        self.stdin_program = self.stdin_program or other.stdin_program
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -240,6 +287,7 @@ class Analysis(object):
             "read_unknown": self.read_unknown,
             "recursive_follow": self.recursive_follow,
             "compound_unresolved": self.compound_unresolved,
+            "stdin_program": self.stdin_program,
         }
 
 
@@ -258,7 +306,18 @@ class Token(object):
     token 可以不提供来源（保持既有构造调用兼容），默认按裸写处理。
     """
 
-    __slots__ = ("text", "operator", "dynamic", "raw_source", "quoted")
+    __slots__ = (
+        "text",
+        "operator",
+        "dynamic",
+        "raw_source",
+        "quoted",
+        "heredoc_state",
+        "heredoc_substitutions",
+        "heredoc_body",
+        "heredoc_quoted",
+        "heredoc_binding_unresolved",
+    )
 
     def __init__(
         self,
@@ -273,6 +332,14 @@ class Token(object):
         self.dynamic = dynamic
         self.raw_source = raw_source
         self.quoted = quoted
+        # heredoc 元数据只挂在 `<<`/`<<-` 运算符 token 上：`parsed` 表示边界与
+        # 正文替换都已证明，`fallback` 挂在整次词法回退的旧 token 流首 token。
+        # 没有元数据的手工 `Token('<<', operator=True)` 仍按旧行为 opaque。
+        self.heredoc_state: Optional[str] = None
+        self.heredoc_substitutions: Tuple[str, ...] = ()
+        self.heredoc_body: Optional[str] = None
+        self.heredoc_quoted = False
+        self.heredoc_binding_unresolved = False
 
 
 def _is_fd_word(word: str) -> bool:
@@ -577,14 +644,17 @@ def _strip_line_continuations(text: str) -> str:
     return "".join(pieces)
 
 
-def tokenize(text: str) -> Tuple[List[Token], bool]:
+def _tokenize_text(text: str, heredoc_mode: bool = False) -> Tuple[List[Token], bool]:
     """按引号/转义/注释/替换嵌套切成 token；返回 (tokens, closed)。
 
-    入口先消除单引号外的行续接，argv、重定向运算符与目标、cwd 因此共用同一
-    份词法结果。词内 `$(...)`/反引号整体保留在一个 token 里（内部空白与 `;` 不再
-    切词），裸 `( ) { }` 是语法 token，而 `foo{a,b}`、find 的 `{}` 仍是 word。
+    入口输入已由调用方消除单引号外的行续接，argv、重定向运算符与目标、cwd 因此
+    共用同一份词法结果。词内 `$(...)`/反引号整体保留在一个 token 里（内部空白与
+    `;` 不再切词），裸 `( ) { }` 是语法 token，而 `foo{a,b}`、find 的 `{}` 仍是 word。
+
+    `heredoc_mode=False` 是旧词法：`<<-` 仍切成 `<<` 与 `-EOF`，不消费任何正文。
+    `heredoc_mode=True` 只额外把 `<<-` 识别成一个运算符；正文消费与定界词判定由
+    `tokenize` 的 header 路径负责，这里不读正文。
     """
-    text = _strip_line_continuations(text)
     tokens: List[Token] = []
     previous_end = -1
     closed = True
@@ -629,6 +699,9 @@ def tokenize(text: str) -> Tuple[List[Token], bool]:
                 if i < length and text[i] == "<":
                     if i + 1 < length and text[i + 1] == "<":
                         op += "<<"
+                        i += 2
+                    elif heredoc_mode and i + 1 < length and text[i + 1] == "-":
+                        op += "<-"
                         i += 2
                     else:
                         op += "<"
@@ -695,6 +768,368 @@ def tokenize(text: str) -> Tuple[List[Token], bool]:
         emit(Token(word, False, dynamic, raw_word, raw_word != word), end)
         i = end
     return tokens, closed
+
+
+def _legacy_tokenize(text: str) -> Tuple[List[Token], bool]:
+    """旧词法路径：整段续行归一后切词，heredoc 正文仍留在 token 流里。"""
+    return _tokenize_text(_strip_line_continuations(text))
+
+
+def tokenize(text: str) -> Tuple[List[Token], bool]:
+    """切词并消费可证明的 heredoc 正文；返回 (tokens, closed)。
+
+    header 路径先按物理 header 划边界、只在 header 内消除行续接，再识别
+    `<<`/`<<-` 与定界词；正文在裸换行后按源码顺序消费，不进 token 流。任何不能
+    证明的形态（未闭合、动态/不支持定界词、`${`/`$((`/复杂反引号/正文续行/
+    嵌套 heredoc、结构不完整）都丢弃整次候选，用 `_legacy_tokenize` 重解析并在
+    首 token 标 `fallback`，保证不比旧路径更宽松。
+    """
+    if "<<" in text or "\\\n" in text:
+        candidate = _tokenize_with_heredocs(text)
+        if candidate is not None:
+            return candidate
+        tokens, closed = _legacy_tokenize(text)
+        if tokens:
+            tokens[0].heredoc_state = "fallback"
+        return tokens, closed
+    return _legacy_tokenize(text)
+
+
+def _logical_header_end(text: str, start: int) -> int:
+    """当前 shell header 的结束位置：第一个顶层、未引用、未转义的物理换行。
+
+    注释止于物理换行，反斜杠+真实换行是续接，引用与 `$(...)` 内的换行都不是
+    header 结束；生成器到该事件立即停止，因此不会看到 heredoc 正文。
+    """
+    for position, kind, depth, _frame in _scan_structure(text, start):
+        if kind == "space" and depth == 0 and text[position] == "\n":
+            return position
+    return len(text)
+
+
+def _decode_heredoc_delimiter(raw: str) -> Tuple[str, bool, bool]:
+    """定界词的 quote removal；返回 (文本, 是否出现引用/转义, 是否可证明)。
+
+    只去引用、不做任何展开：裸字符原样，单引号内原样，双引号内只去掉针对 `$`、
+    反引号、双引号、反斜杠的反斜杠，裸反斜杠引用下一字符。未转义的 `$`/反引号
+    （含 `$'...'`/`$"..."` 扩展引用）、结尾反斜杠、物理换行、NUL 或未闭合引用
+    一律不可证明，由调用方整次回退。
+    """
+    if "\n" in raw or "\x00" in raw:
+        return "", False, False
+    pieces: List[str] = []
+    quoted = False
+    quote: Optional[str] = None
+    index = 0
+    length = len(raw)
+    while index < length:
+        char = raw[index]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            else:
+                pieces.append(char)
+            index += 1
+            continue
+        if quote == '"':
+            if char == "\\":
+                following = raw[index + 1] if index + 1 < length else ""
+                if following in {"$", "`", '"', "\\"}:
+                    pieces.append(following)
+                    quoted = True
+                    index += 2
+                    continue
+                if not following:
+                    return "", False, False
+                pieces.append("\\")
+                index += 1
+                continue
+            if char == '"':
+                quote = None
+                index += 1
+                continue
+            if char in {"$", "`"}:
+                return "", False, False
+            pieces.append(char)
+            index += 1
+            continue
+        if char == "\\":
+            if index + 1 >= length:
+                return "", False, False
+            pieces.append(raw[index + 1])
+            quoted = True
+            index += 2
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            quoted = True
+            index += 1
+            continue
+        if char in {"$", "`"}:
+            return "", False, False
+        pieces.append(char)
+        index += 1
+    if quote is not None:
+        return "", False, False
+    return "".join(pieces), quoted, True
+
+
+def _read_heredoc_body(
+    text: str, start: int, delimiter: str, strip_tabs: bool
+) -> Tuple[Optional[str], int, bool]:
+    """按 LF 物理行读正文；返回 (正文, 下一游标, 是否找到精确定界行)。
+
+    普通 `<<` 要求整行（不含 LF）等于定界符；`<<-` 只去掉每行**前导 U+0009** 后
+    比较，正文行也按同一规则去 tab。尾随空格/制表/CR/Unicode 空白都不参与裁剪，
+    结束行可以在 EOF 且没有 LF。
+    """
+    lines: List[str] = []
+    position = start
+    length = len(text)
+    while True:
+        newline = text.find("\n", position)
+        end = length if newline < 0 else newline
+        line = text[position:end]
+        candidate = line.lstrip("\t") if strip_tabs else line
+        if candidate == delimiter:
+            return "\n".join(lines), (length if newline < 0 else newline + 1), True
+        lines.append(candidate)
+        if newline < 0:
+            return None, length, False
+        position = newline + 1
+
+
+def _substitution_close(text: str, index: int) -> Optional[int]:
+    """`$(...)` 从 `index` 开始的最外层配对 close；未闭合返回 None。"""
+    for position, kind, depth, frame in _scan_structure(text, index):
+        if kind == "close" and frame == "$(" and depth == 0:
+            return position
+    return None
+
+
+def _backtick_close(text: str, index: int) -> Optional[int]:
+    """未转义的闭反引号位置；数据根的单/双引号与 `#` 不抑制配对。"""
+    position = index + 1
+    length = len(text)
+    while position < length:
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if char == "`":
+            return position
+        position += 1
+    return None
+
+
+def _backticks_supported(text: str) -> bool:
+    """替换源码里的旧式反引号必须简单：内容不含引号/反斜杠/嵌套反引号。
+
+    design §4.4 对数据根的反引号限制必须同时覆盖内层替换节点，否则
+    `$(echo `printf 'x'`)` 这类形态会绕过“不支持即整次回退”。
+    """
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char != "`":
+            index += 1
+            continue
+        close = text.find("`", index + 1)
+        if close < 0:
+            return False
+        if any(marker in text[index + 1 : close] for marker in ("'", '"', "\\", "`")):
+            return False
+        index = close + 1
+    return True
+
+
+def _proven_substitution(text: str) -> bool:
+    """替换源码必须能被旧 tokenizer 与完整结构检查完整消费。
+
+    这份证明要覆盖 `_scan_structure` 记录的所有内层替换节点，不能只看最外层。
+    """
+    if not text.strip():
+        return True
+    if not _backticks_supported(text):
+        return False
+    tokens, closed = _legacy_tokenize(text)
+    if not closed:
+        return False
+    try:
+        _node, index, ok = _parse_sequence(tokens, 0, (), 0)
+    except RecursionError:
+        return False
+    return ok and index == len(tokens)
+
+
+def _heredoc_substitution_spans(body: str) -> Tuple[Tuple[str, ...], bool]:
+    """未引用 heredoc 正文的真实执行替换；返回 (按源码序的替换源码, 是否可证明)。
+
+    这是 heredoc 的**数据根**上下文：`'`、`"`、`#` 都只是普通字符，反斜杠只对
+    `$`、反引号、反斜杠成对生效（奇偶性由逐对推进自然得出）。任何 `${`（含简单
+    `${NAME}`）、`$((`、反斜杠+LF、嵌套 heredoc 候选或复杂旧式反引号都整次回退，
+    不能等选出候选 close 后再检查截短源码。
+    """
+    if "${" in body or "$((" in body or "\\\n" in body or "<<" in body:
+        return (), False
+    spans: List[str] = []
+    index = 0
+    length = len(body)
+    while index < length:
+        char = body[index]
+        if char == "\\":
+            following = body[index + 1] if index + 1 < length else ""
+            index += 2 if following in {"$", "`", "\\"} else 1
+            continue
+        if char == "$" and body.startswith("$(", index):
+            close = _substitution_close(body, index)
+            if close is None:
+                return (), False
+            content = body[index + 2 : close]
+            if not _proven_substitution(content):
+                return (), False
+            spans.append(content)
+            index = close + 1
+            continue
+        if char == "`":
+            close = _backtick_close(body, index)
+            if close is None:
+                return (), False
+            content = body[index + 1 : close]
+            # 旧式反引号有二次反斜杠处理：含引号/反斜杠/嵌套的形态本版不支持。
+            if any(marker in content for marker in ("'", '"', "\\", "`")):
+                return (), False
+            if not _proven_substitution(content):
+                return (), False
+            spans.append(content)
+            index = close + 1
+            continue
+        index += 1
+    return tuple(spans), True
+
+
+def _mark_heredoc_pipeline_bindings(root: object) -> None:
+    """把管道任一侧（含组重定向）持有的已解析 heredoc 标为绑定不明。
+
+    管道归属只能来自结构树：`cat <<EOF | python3 -` 的正文不是 cat 的独占 stdin，
+    不能只按左段命令名就当成纯数据。
+    """
+    stack: List[Tuple[object, bool]] = [(root, False)]
+    while stack:
+        node, in_pipeline = stack.pop()
+        if isinstance(node, Token):
+            if in_pipeline and node.heredoc_state == "parsed":
+                node.heredoc_binding_unresolved = True
+            continue
+        if isinstance(node, dict):
+            pipe = node.get("kind") == "chain" and node.get("connector") == "|"
+            for value in node.values():
+                stack.append((value, in_pipeline or pipe))
+            continue
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                stack.append((item, in_pipeline))
+
+
+def _tokenize_with_heredocs(text: str) -> Optional[Tuple[List[Token], bool]]:
+    """header 路径：按物理 header 切词，并在裸换行后按源码顺序消费 pending 正文。
+
+    返回 None 表示整次候选不可证明，由 `tokenize` 用旧词法回退。
+    """
+    tokens: List[Token] = []
+    closed = True
+    cursor = 0
+    length = len(text)
+    pending: List[Dict[str, object]] = []
+    pending_index = 0
+    while cursor < length:
+        header_end = _logical_header_end(text, cursor)
+        normalized = _strip_line_continuations(text[cursor:header_end])
+        header_tokens, header_closed = _tokenize_text(normalized, heredoc_mode=True)
+        if not header_closed:
+            return None
+        closed = closed and header_closed
+        index = 0
+        while index < len(header_tokens):
+            token = header_tokens[index]
+            if token.operator:
+                base = _redirect_base(token.text)
+                if base in _HEREDOC_OPERATORS:
+                    if index + 1 >= len(header_tokens) or header_tokens[index + 1].operator:
+                        # 缺定界词（含裸换行/下一个 token 是运算符）：不跨段偷取 word。
+                        return None
+                    word = header_tokens[index + 1]
+                    raw_word = word.raw_source if word.raw_source is not None else word.text
+                    delimiter, quoted, valid = _decode_heredoc_delimiter(raw_word)
+                    if not valid:
+                        return None
+                    word.text = delimiter
+                    word.quoted = quoted
+                    token.heredoc_quoted = quoted
+                    pending.append(
+                        {
+                            "token": token,
+                            "delimiter": delimiter,
+                            "strip_tabs": base == "<<-",
+                            "quoted": quoted,
+                        }
+                    )
+                    index += 2
+                    continue
+                index += 1
+                continue
+            raw_word = token.raw_source if token.raw_source is not None else token.text
+            if "<<" in raw_word and _has_evaluation(raw_word):
+                # 命令替换/反引号里另有 heredoc：本版不支持嵌套布局。
+                return None
+            index += 1
+        tokens.extend(header_tokens)
+        if header_end >= length:
+            break
+        tokens.append(Token("\n", True, False, "\n"))
+        cursor = header_end + 1
+        while pending_index < len(pending):
+            entry = pending[pending_index]
+            pending_index += 1
+            body, next_cursor, found = _read_heredoc_body(
+                text,
+                cursor,
+                str(entry["delimiter"]),
+                bool(entry["strip_tabs"]),
+            )
+            if not found:
+                return None
+            operator = entry["token"]
+            operator.heredoc_body = body
+            if not entry["quoted"]:
+                substitutions, proven = _heredoc_substitution_spans(body)
+                if not proven:
+                    return None
+                operator.heredoc_substitutions = substitutions
+            cursor = next_cursor
+    if pending_index != len(pending):
+        return None
+    try:
+        node, index, ok = _parse_sequence(tokens, 0, (), 0)
+    except RecursionError:
+        return None
+    if not ok or index != len(tokens):
+        return None
+    for entry in pending:
+        entry["token"].heredoc_state = "parsed"
+    _mark_heredoc_pipeline_bindings(node)
+    return tokens, closed
+
+
+def _tokenize_for_analysis(text: str) -> Tuple[List[Token], bool]:
+    """分析链内部的切词：事务回退期间强制旧路径，避免再次进入候选消费。"""
+    if _LEGACY_DEPTH:
+        return _legacy_tokenize(text)
+    return tokenize(text)
 
 
 _SEPARATOR_OPERATORS = frozenset({";", "&", "\n"})
@@ -1051,9 +1486,17 @@ def _strip_redirects(
             continue
         base = _redirect_base(token.text) if token.operator else None
         if base is not None:
-            if base == "<<":
-                # heredoc 正文不在 argv 里，无法证明内容安全。
-                opaque = True
+            if base in _HEREDOC_OPERATORS:
+                # 正文已由 tokenize 的 header 路径消费：只有带 parsed 元数据且紧跟
+                # 非运算符定界词时才不因 heredoc 自身置 opaque；缺元数据/回退/
+                # 缺 word 一律保守 opaque。
+                parsed = (
+                    token.heredoc_state == "parsed"
+                    and index + 1 < len(tokens)
+                    and not tokens[index + 1].operator
+                )
+                if not parsed:
+                    opaque = True
                 index += 2
                 continue
             if index + 1 < len(tokens):
@@ -2808,7 +3251,9 @@ def _collect_reads(
     redirects: List[Tuple[str, str]],
     analysis: Analysis,
     argv_tokens: Optional[List[Token]] = None,
+    data_stdin: bool = False,
 ) -> None:
+    """收集读取目标；`data_stdin` 表示已证明的纯数据 heredoc 提供了 stdin。"""
     for op, target in redirects:
         if op in _READ_REDIRECTS and target not in {"/dev/null"}:
             analysis.reads.append({"kind": "redirect", "path": target, "recursive": False, "follow": False})
@@ -2831,7 +3276,12 @@ def _collect_reads(
             analysis.read_unknown = True
         return
     if name in READ_COMMANDS:
-        targets = [token for token in rest if not _looks_like_option(token)] or ["."]
+        targets = [token for token in rest if not _looks_like_option(token)]
+        if not targets:
+            if data_stdin:
+                # 已证明供给 cat 等的纯数据 stdin：不再把隐式 stdin 记成 `.` 读取。
+                return
+            targets = ["."]
         for target in targets:
             analysis.reads.append({"kind": name, "path": target, "recursive": name in {"cat", "less", "more"}, "follow": False})
         return
@@ -2894,13 +3344,22 @@ def analyze(
         analysis.opaque = True
         analysis.too_deep = True
         return analysis
+    if _LEGACY_DEPTH:
+        # 事务回退期间的递归：维持旧路径与旧深度规则，不再进入候选消费。
+        return _legacy_reanalyze(command, depth, limit, cwd, cwd_known, True)
     tokens, closed = tokenize(command)
     if not closed:
         analysis.opaque = True
         return analysis
     try:
         return _analyze_tokens(
-            tokens, analysis, depth, limit, cwd=cwd if cwd_known else None, cwd_known=cwd_known
+            tokens,
+            analysis,
+            depth,
+            limit,
+            cwd=cwd if cwd_known else None,
+            cwd_known=cwd_known,
+            source_text=command,
         )
     except RecursionError:
         # 极深结构不该把异常抛到调用方（那会被编码成 fail-open 放行）：保留
@@ -2930,7 +3389,7 @@ def _scan_evaluated_words(
     skip_delimiter = False
     for index, token in enumerate(tokens):
         if token.operator:
-            if _redirect_base(token.text) == "<<":
+            if _redirect_base(token.text) in _HEREDOC_OPERATORS:
                 # here-doc 的 delimiter 只做引用去除，不是求值 word。
                 skip_delimiter = True
             continue
@@ -2947,7 +3406,13 @@ def _scan_evaluated_words(
             continue
         for substring in contents:
             # 替换是独立子上下文：进入目录/已知性精确传递，子 cd 不污染父命令。
-            analysis.merge(analyze(substring, depth + 1, limit, cwd, cwd_known))
+            nested = analyze(substring, depth + 1, limit, cwd, cwd_known)
+            analysis.merge(nested)
+            if nested.opaque or nested.too_deep:
+                # 候选 heredoc 事务里新增的递归无法完成（深度/预算/结构）时，
+                # 不能 merge 不完整结果后继续提交；`_candidate_failure` 只在
+                # 候选事务中生效，普通输入仍沿用旧结果。
+                _candidate_failure()
     return effects
 
 
@@ -2973,6 +3438,178 @@ def _apply_cwd_rules(
                 entry["complete"] = False
 
 
+def _segment_heredocs(tokens: List[Token]) -> List[Tuple[Token, str, int, int]]:
+    """本简单段里已证明边界的 heredoc：`(运算符 token, base, 运算符位置, 定界词位置)`。"""
+    entries: List[Tuple[Token, str, int, int]] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.operator:
+            index += 1
+            continue
+        base = _redirect_base(token.text)
+        if base in _HEREDOC_OPERATORS:
+            if (
+                token.heredoc_state == "parsed"
+                and index + 1 < len(tokens)
+                and not tokens[index + 1].operator
+            ):
+                entries.append((token, base, index, index + 1))
+            index += 2
+            continue
+        index += 1
+    return entries
+
+
+def _unwrap_consumer_argv(
+    argv_tokens: List[Token],
+    cwd: Optional[str],
+    cwd_known: bool,
+) -> Tuple[Optional[List[Token]], str, Optional[str], bool]:
+    """按 `_wrapper_inner` 逐层解包 argv 包装。
+
+    返回 (有效命令 tokens, 阶段, 有效 cwd, cwd 是否已知)：`argv` 阶段是可直接
+    判定 basename 的有效命令；`script` 阶段表示遇到壳 `-c`/eval 的脚本文本，
+    外层 stdin 仍由该包装命令接收；tokens 为 None 表示无法证明有效命令（包装
+    未知、内层切词不闭合、包装层数超限）。
+    """
+    effective_cwd: Optional[str] = cwd
+    effective_known = cwd_known
+    current = argv_tokens
+    if not current:
+        return None, "argv", effective_cwd, effective_known
+    for _level in range(MAX_UNWRAP_DEPTH):
+        inner, wrapper_opaque, inner_cwd, inner_stage = _wrapper_inner(current)
+        if wrapper_opaque:
+            return None, "argv", effective_cwd, effective_known
+        if inner is None:
+            return current, "argv", effective_cwd, effective_known
+        effective_cwd, effective_known = _wrapper_effective_cwd(
+            inner_cwd, effective_cwd, effective_known
+        )
+        if inner_stage == "script":
+            # 壳 `-c`/eval 的脚本文本是新的求值阶段；外层 stdin 仍由该壳接收。
+            return current, "script", effective_cwd, effective_known
+        inner_tokens, inner_closed = _legacy_tokenize(inner)
+        if not inner_closed or not inner_tokens or inner_tokens[0].operator:
+            return None, "argv", effective_cwd, effective_known
+        current = inner_tokens
+    # 包装层数超限：不猜有效命令。
+    return None, "argv", effective_cwd, effective_known
+
+
+def _heredoc_consumer(
+    entries: List[Tuple[Token, str, int, int]],
+    tokens: List[Token],
+    argv: List[str],
+    argv_tokens: List[Token],
+    cwd: Optional[str],
+    cwd_known: bool,
+) -> Tuple[str, Optional[str], bool]:
+    """判定正文消费者：返回 (模式, 正文有效 cwd, cwd 是否已知)。
+
+    模式 `data` 只给静态纯数据白名单（`stdin_program=False`）；`interpreter` 是
+    独立解释器数据分支（正文不按 shell 解析，但仍不是可证明的只读输入）；其余
+    一切（壳、xargs/sed/awk/find、未知命令、无命令名段、fd 转接、管道、argv
+    无法绑定）都按脚本保守分析。
+    """
+    script: Tuple[str, Optional[str], bool] = ("script", cwd, cwd_known)
+    for token, base, _operator_index, _word_index in entries:
+        if token.heredoc_binding_unresolved:
+            # 管道任一侧：正文不是该命令的独占 stdin。
+            return script
+        if token.text[: len(token.text) - len(base)] not in {"", "0"}:
+            # 非零 fd 的正文不能证明直接供给命令的 stdin。
+            return script
+    if any(token.operator and _STDIN_DUP_RE.match(token.text) for token in tokens):
+        # `0<&3` 之类的 fd 转接：正文不再直接对应 stdin。
+        return script
+    if not argv or not argv_tokens:
+        return script
+    for token in argv_tokens:
+        raw = token.raw_source if token.raw_source is not None else token.text
+        if _has_evaluation(raw):
+            # argv 含真实命令替换：有效命令名/参数不是静态值。
+            return script
+    effective, stage, effective_cwd, effective_known = _unwrap_consumer_argv(
+        argv_tokens, cwd, cwd_known
+    )
+    if effective is None or stage == "script":
+        return ("script", effective_cwd, effective_known)
+    name = os.path.basename(effective[0].text)
+    if name in _HEREDOC_SHELLS:
+        return ("script", effective_cwd, effective_known)
+    if name in _HEREDOC_DATA_COMMANDS:
+        return ("data", effective_cwd, effective_known)
+    if _HEREDOC_INTERPRETER_RE.match(name):
+        return ("interpreter", effective_cwd, effective_known)
+    return ("script", effective_cwd, effective_known)
+
+
+def _herestring_is_stdin_program(
+    argv_tokens: List[Token], cwd: Optional[str], cwd_known: bool
+) -> bool:
+    """`<<<` herestring 供给解释器/壳时，正文是 stdin 程序而不是可证明的数据输入。
+
+    herestring 的执行/opaque/重定向语义保持不变：这里只按同段 argv 解包后的
+    阶段与有效 basename 判定是否加 `stdin_program` 标记，不新增脚本分析。
+    """
+    if not argv_tokens:
+        return False
+    effective, stage, _cwd, _known = _unwrap_consumer_argv(argv_tokens, cwd, cwd_known)
+    if stage == "script":
+        # `eval`/壳 `-c` 的脚本文本继承外层 stdin（`eval 'python3 -' <<< …`）：
+        # 有效命令名不再是消费者，任何命令都可能读到该正文，保守标记。
+        return True
+    if effective is None:
+        return False
+    name = os.path.basename(effective[0].text)
+    return name in _HEREDOC_SHELLS or bool(_HEREDOC_INTERPRETER_RE.match(name))
+
+
+def _candidate_failure() -> None:
+    """候选 heredoc 事务里的新增递归无法完成：交给事务入口整次回退。"""
+    if _CANDIDATE_OWNER and not _LEGACY_DEPTH:
+        raise _CandidateFailure()
+
+
+def _analyze_candidate_fragment(
+    text: str,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+) -> Analysis:
+    """正文/真实替换的递归分析；任何无法完成都必须整次回退，不能当空执行。"""
+    if depth + 1 > MAX_UNWRAP_DEPTH:
+        raise _CandidateFailure()
+    nested = analyze(text, depth + 1, limit, cwd, cwd_known)
+    if nested.opaque or nested.too_deep:
+        raise _CandidateFailure()
+    return nested
+
+
+def _analyze_heredoc_bodies(
+    entries: List[Tuple[Token, str, int, int]],
+    mode: str,
+    cwd: Optional[str],
+    cwd_known: bool,
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+) -> None:
+    """按消费者合并正文证据：脚本模式整份正文，各模式都合并真实外层替换。"""
+    for token, _base, _operator_index, _word_index in entries:
+        if mode == "script" and token.heredoc_body:
+            analysis.merge(
+                _analyze_candidate_fragment(token.heredoc_body, depth, limit, cwd, cwd_known)
+            )
+        for substitution in token.heredoc_substitutions:
+            analysis.merge(
+                _analyze_candidate_fragment(substitution, depth, limit, cwd, cwd_known)
+            )
+
+
 def _analyze_simple_segment(
     tokens: List[Token],
     analysis: Analysis,
@@ -2981,28 +3618,53 @@ def _analyze_simple_segment(
     cwd: Optional[str],
     cwd_known: bool,
     owns_evaluation: bool = True,
+    inherited_data_stdin: bool = False,
 ) -> Tuple[Tuple[Optional[str], bool], ...]:
     """分析一段简单命令；返回 (成功出口, 失败出口, 合并出口, 是否可能改 cwd)。
 
     顺序固定：先扫描（过滤前）全部实际求值的 word，再剥离重定向/前置赋值并做
-    既有 argv 与读写分类；已识别的执行证据不能因 argv 为空或包装剥离而丢失。
+    既有 argv 与读写分类；heredoc 正文在 argv 为空（组尾 synthetic redirect 段）
+    时也必须先按消费者处理，不能因没有命令名就漏掉保守执行与标记。
+    `inherited_data_stdin` 是 argv 包装递归带入的事实：env/sudo/command 等不改变
+    stdin，内层命令看到的仍是外层已证明的纯数据。
     """
     entry: Tuple[Optional[str], bool] = (cwd, cwd_known)
     word_effects = _scan_evaluated_words(
         tokens, analysis, depth, limit, cwd, cwd_known, owns_evaluation
     )
+    heredocs = _segment_heredocs(tokens)
     argv, argv_tokens, redirects, redirect_opaque = _strip_redirects(
         tokens, word_effects, analysis
     )
     analysis.opaque = analysis.opaque or redirect_opaque
+    mode = "none"
+    body_cwd: Optional[str] = cwd
+    body_cwd_known = cwd_known
+    if heredocs:
+        mode, body_cwd, body_cwd_known = _heredoc_consumer(
+            heredocs, tokens, argv, argv_tokens, cwd, cwd_known
+        )
+        if mode != "data":
+            analysis.stdin_program = True
+    if any(token.operator and _redirect_base(token.text) == "<<<" for token in tokens):
+        # `<<<` 的 herestring 事实马上被 `_strip_redirects` 丢弃，先在这里判定消费者：
+        # 供给解释器/壳时正文是 stdin 程序，只加标记，不新增脚本分析。
+        if _herestring_is_stdin_program(argv_tokens, cwd, cwd_known):
+            analysis.stdin_program = True
+    proven_data_stdin = mode == "data" or (inherited_data_stdin and not heredocs)
     # 没有命令名的重定向（`> app.py`、`cd src; > app.py`）仍是真实读写副作用；
     # `cd . > file` 的重定向在 cd 之前打开，因此按进入本段的 cwd 解析。
     before = len(analysis.reads)
-    _collect_reads(argv, redirects, analysis, argv_tokens)
+    _collect_reads(argv, redirects, analysis, argv_tokens, data_stdin=proven_data_stdin)
     _apply_cwd_rules(analysis.reads, before, analysis, cwd, cwd_known, True)
     before_writes = len(analysis.writes)
     _write_targets_for_command(argv, redirects, analysis, cwd, cwd_known, argv_tokens)
     _apply_cwd_rules(analysis.writes, before_writes, analysis, cwd, cwd_known, False)
+    if heredocs and owns_evaluation:
+        # 每个阶段的正文只由该段拥有者消费一次；argv 包装重分析不重复追加。
+        _analyze_heredoc_bodies(
+            heredocs, mode, body_cwd, body_cwd_known, analysis, depth, limit
+        )
     if not argv:
         return entry, entry, entry, False
     if os.path.basename(argv[0]) == "cd":
@@ -3016,12 +3678,14 @@ def _analyze_simple_segment(
     if wrapper_opaque:
         analysis.opaque = True
     if inner is not None:
-        inner_tokens, inner_closed = tokenize(inner)
+        inner_tokens, inner_closed = _tokenize_for_analysis(inner)
         if not inner_closed or depth + 1 > MAX_UNWRAP_DEPTH:
             analysis.opaque = True
+            _candidate_failure()
         else:
             inherited, inherited_known = _wrapper_effective_cwd(wrapper_cwd, cwd, cwd_known)
             # argv 解包不重复合并同一批外层 word；shell -c/eval 是新的求值阶段。
+            # argv 阶段的内层命令共享外层已证明的数据 stdin；script 阶段是新输入。
             nested = _analyze_tokens(
                 inner_tokens,
                 Analysis(),
@@ -3030,7 +3694,11 @@ def _analyze_simple_segment(
                 inherited,
                 inherited_known,
                 wrapper_stage == "script",
+                inner,
+                inherited_data_stdin=proven_data_stdin and wrapper_stage != "script",
             )
+            if nested.opaque or nested.too_deep:
+                _candidate_failure()
             analysis.merge(nested)
     elif os.path.basename(argv[0]) not in _KNOWN_COMMANDS and not any(
         os.path.basename(argv[0]) in executables for executables, _ in PACKAGE_WRITE_PATTERNS
@@ -3130,12 +3798,15 @@ def _analyze_node(
     cwd: Optional[str],
     cwd_known: bool,
     owns_evaluation: bool = True,
+    inherited_data_stdin: bool = False,
 ) -> Tuple[Tuple[Optional[str], bool], ...]:
     """分析一个结构节点；返回 (成功出口, 失败出口, 合并出口, 是否可能改 cwd)。
 
     `&&` 右侧从左侧成功边进入、`||` 右侧从失败边进入；顺序列表用合并出口。
     subshell/管道的 cd 不外泄，brace/条件/循环按设计保守合流。
     `owns_evaluation=False` 只用于 argv 包装解包：外层已取过这些 word 的执行证据。
+    `inherited_data_stdin` 只由 argv 包装递归带到它自己的那条命令（列表首段）；
+    不传给后续段或复合结构分支。
     """
     entry: Tuple[Optional[str], bool] = (cwd, cwd_known)
     if node is None:
@@ -3150,6 +3821,7 @@ def _analyze_node(
             cwd,
             cwd_known,
             owns_evaluation,
+            inherited_data_stdin,
         )
     if kind == "negated":
         result = _analyze_node(
@@ -3217,9 +3889,17 @@ def _analyze_node(
         success: Tuple[Optional[str], bool] = entry
         failure: Tuple[Optional[str], bool] = entry
         may_change = False
-        for part in node["parts"]:  # type: ignore[union-attr]
+        for position, part in enumerate(node["parts"]):  # type: ignore[union-attr]
+            # argv 包装解包的内层命令就了这条列表的第一段：它才是接收外层 stdin 的命令。
             result = _analyze_node(
-                part, analysis, depth, limit, state[0], state[1], owns_evaluation
+                part,
+                analysis,
+                depth,
+                limit,
+                state[0],
+                state[1],
+                owns_evaluation,
+                inherited_data_stdin and position == 0,
             )
             may_change = may_change or bool(result[3])
             state = result[2]
@@ -3426,6 +4106,71 @@ def _analyze_pipeline_node(
     return entry, entry, entry, may_change
 
 
+def _analyze_token_stream(
+    tokens: List[Token],
+    analysis: Analysis,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool,
+    inherited_data_stdin: bool = False,
+) -> Analysis:
+    # `cwd` 是进入本段命令时的有效目录（包装内层命令可能带 `env -C`）；
+    # `cwd_known=False` 表示调用方无法静态确定该段目录。
+    if tokens and tokens[0].heredoc_state == "fallback":
+        # 词法回退的旧 token 流：整次输入不是已证明结构。
+        analysis.opaque = True
+    if not cwd_known:
+        cwd = None
+    node, index, ok = _parse_sequence(tokens, 0, (), 0)
+    if not ok or index < len(tokens):
+        # 已识别为复合结构却无法安全配对/归属：置窄标志，保留已成功解析的段。
+        analysis.compound_unresolved = True
+        analysis.opaque = True
+        _analyze_node(
+            node, analysis, depth, limit, cwd, cwd_known, owns_evaluation, inherited_data_stdin
+        )
+        return analysis
+    _analyze_node(
+        node, analysis, depth, limit, cwd, cwd_known, owns_evaluation, inherited_data_stdin
+    )
+    return analysis
+
+
+def _legacy_reanalyze(
+    source_text: str,
+    depth: int,
+    limit: int,
+    cwd: Optional[str],
+    cwd_known: bool,
+    owns_evaluation: bool,
+) -> Analysis:
+    """事务回退：original_text 在原 depth/limit/cwd 上用旧词法重解析一次。
+
+    丢弃候选已合并的证据，从新的 Analysis 开始；期间 `_LEGACY_DEPTH` 保证所有
+    递归（含正文、替换、script 阶段与 argv 解包）不再进入候选消费。
+    """
+    global _LEGACY_DEPTH
+    _LEGACY_DEPTH += 1
+    try:
+        legacy_tokens, legacy_closed = _legacy_tokenize(source_text)
+        legacy = Analysis()
+        if not legacy_closed:
+            legacy.opaque = True
+            return legacy
+        return _analyze_token_stream(
+            legacy_tokens, legacy, depth, limit, cwd, cwd_known, owns_evaluation
+        )
+    except RecursionError:
+        legacy = Analysis()
+        legacy.opaque = True
+        legacy.compound_unresolved = True
+        return legacy
+    finally:
+        _LEGACY_DEPTH -= 1
+
+
 def _analyze_tokens(
     tokens: List[Token],
     analysis: Analysis,
@@ -3434,20 +4179,55 @@ def _analyze_tokens(
     cwd: Optional[str] = None,
     cwd_known: bool = True,
     owns_evaluation: bool = True,
+    source_text: Optional[str] = None,
+    inherited_data_stdin: bool = False,
 ) -> Analysis:
-    # `cwd` 是进入本段命令时的有效目录（包装内层命令可能带 `env -C`）；
-    # `cwd_known=False` 表示调用方无法静态确定该段目录。
-    if not cwd_known:
-        cwd = None
-    node, index, ok = _parse_sequence(tokens, 0, (), 0)
-    if not ok or index < len(tokens):
-        # 已识别为复合结构却无法安全配对/归属：置窄标志，保留已成功解析的段。
-        analysis.compound_unresolved = True
-        analysis.opaque = True
-        _analyze_node(node, analysis, depth, limit, cwd, cwd_known, owns_evaluation)
-        return analysis
-    _analyze_node(node, analysis, depth, limit, cwd, cwd_known, owns_evaluation)
-    return analysis
+    """分析一条 token 流；heredoc 候选事务失败时整次回退到旧词法。
+
+    `source_text` 是这条 token 流的原文：候选 heredoc 的任一新增递归无法完成时，
+    用它在原 depth/limit/cwd 上做一次旧路径全量分析，丢弃已合并的候选证据。
+    `inherited_data_stdin` 只由 argv 包装解包传入：内层命令的 stdin 就是外层已
+    证明的纯数据，`_collect_reads` 据此不再记隐式 `.` 读取。
+    """
+    global _CANDIDATE_OWNER, _LEGACY_DEPTH
+    if tokens and tokens[0].heredoc_state == "fallback":
+        # 整次词法回退：这条 token 流及其所有递归都维持旧路径与旧深度规则，
+        # 不再进入候选消费，也不再触发同一回退。
+        _LEGACY_DEPTH += 1
+        try:
+            return _analyze_token_stream(
+                tokens,
+                analysis,
+                depth,
+                limit,
+                cwd,
+                cwd_known,
+                owns_evaluation,
+                inherited_data_stdin,
+            )
+        finally:
+            _LEGACY_DEPTH -= 1
+    previous_owner = _CANDIDATE_OWNER
+    _CANDIDATE_OWNER = previous_owner or any(
+        token.heredoc_state == "parsed" for token in tokens
+    )
+    try:
+        return _analyze_token_stream(
+            tokens,
+            analysis,
+            depth,
+            limit,
+            cwd,
+            cwd_known,
+            owns_evaluation,
+            inherited_data_stdin,
+        )
+    except _CandidateFailure:
+        if source_text is None or _LEGACY_DEPTH:
+            raise
+        return _legacy_reanalyze(source_text, depth, limit, cwd, cwd_known, owns_evaluation)
+    finally:
+        _CANDIDATE_OWNER = previous_owner
 
 
 def segment_text(tokens: List[str]) -> str:
@@ -3469,7 +4249,7 @@ def write_candidates(analysis: Analysis) -> List[Dict[str, object]]:
 def is_read_only_command(command: str) -> Tuple[bool, bool]:
     """返回 (只读且可判定, 有未知/不透明部分)。"""
     analysis = analyze(command)
-    if analysis.opaque or analysis.write_unknown:
+    if analysis.opaque or analysis.write_unknown or analysis.stdin_program:
         return False, True
     if any(not write.get("complete", False) for write in analysis.writes):
         return False, True
@@ -3522,7 +4302,7 @@ def read_command_paths(
     `cwd_known=False` 时丢弃 cwd，命令内得出的相对读取按未知上报，不回落请求 cwd。
     """
     analysis = analyze(command, cwd=cwd, cwd_known=cwd_known)
-    return analysis.reads, analysis.opaque or analysis.read_unknown
+    return analysis.reads, analysis.opaque or analysis.read_unknown or analysis.stdin_program
 
 
 def command_flags(command: str) -> Dict[str, bool]:

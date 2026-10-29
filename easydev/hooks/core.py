@@ -1876,6 +1876,18 @@ class Engine(object):
                 self.warnings.append("reviewer 命令结构未覆盖，已放行并披露")
         return None
 
+    def _warn_structure_once(self, record: Record, message: str) -> None:
+        """基线结构告警只在 pre 披露；同一 pre 调用内同一原句只留一条。
+
+        post 仍照常计算 prepared 用于指纹配对，只是不重复 pre 已披露的结构缺口；
+        这是按事件限定披露，不是跨事件“已警告”状态。
+        """
+        if record.event != "pre_tool":
+            return
+        if message in self.warnings:
+            return
+        self.warnings.append(message)
+
     def _prepare_write(
         self,
         record: Record,
@@ -1896,17 +1908,17 @@ class Engine(object):
             command = _string(_first(tool.get("args") or {}, "command", "CommandLine", "cmd"))
             analysis = shell.analyze(command, cwd=_tool_cwd(record) or None)
             if analysis.opaque or analysis.too_deep:
-                self.warnings.append("命令结构无法完整解析，基线检查未覆盖")
+                self._warn_structure_once(record, "命令结构无法完整解析，基线检查未覆盖")
                 return None
         repo = self._repo_root(record)
         if not repo:
-            self.warnings.append("缺少可定位的仓库根或 cwd，基线检查降级")
+            self._warn_structure_once(record, "缺少可定位的仓库根或 cwd，基线检查降级")
             return None
         targets, complete, gap = write_targets_from_tool(
             self.host, tool, self.capabilities, _tool_cwd(record)
         )
         if not complete:
-            self.warnings.append(gap or "写入目标不完整，基线检查未覆盖")
+            self._warn_structure_once(record, gap or "写入目标不完整，基线检查未覆盖")
             return None
         tool_cwd = _tool_cwd(record)
         entries: List[Dict[str, Any]] = []
@@ -1940,7 +1952,7 @@ class Engine(object):
             target_repo = paths.repo_root(os.path.dirname(absolute), deadline=self.deadline) or repo
             lexical = paths.lexical_rel(target_repo, absolute)
             if lexical is None:
-                self.warnings.append("写入目标位于仓库外，未纳入基线检查")
+                self._warn_structure_once(record, "写入目标位于仓库外，未纳入基线检查")
                 continue
             # 解析后的目标仓库内父链同样不允许软链消解。
             link = paths.symlink_component(target_repo, absolute)
@@ -2058,7 +2070,8 @@ class Engine(object):
                     % (detail, relative, relative),
                 )
             if item.get("fingerprint") == "deadline":
-                self.warnings.append("基线指纹查询超时（%s），基线检查降级" % relative)
+                # 超时文案不带仓库相对路径：路径不进 stderr/诊断输出。
+                self.warnings.append("基线指纹查询超时，基线检查降级")
                 continue
             origins = task.setdefault("origins", {})
             origin_key = item["origin_key"]

@@ -34,14 +34,87 @@ const WARNING_MAX = 2048;
 const WARNING_PREFIX = "[easydev-hooks] warning";
 const HIDDEN_STDERR_TEXT = "core_stderr：核心有诊断，细节已隐藏";
 
-// 告警白名单：只输出类别名，不输出命中的原句。
+// 诊断边界：行首、核心的 `warning: ` 前缀，或同一条汇总里的全角分号。
+// 无转义文本协议原则上不能消歧，但当前 core 的生产者值域有界；边界只是
+// 把“整条固定文案”与普通正文区分开，不能当作字段边界的证明。
+const DIAGNOSTIC_BOUNDARY = "(?:^|warning:\\s*|；)";
+
+function diagnosticPattern(family: string): RegExp {
+  // 每个类别族整体包成非捕获组：`DIAGNOSTIC_BOUNDARY + family` 的语义是
+  // “边界 + 族内任一支”，而不是“边界只约束第一支”。
+  return new RegExp(DIAGNOSTIC_BOUNDARY + "(?:" + family + ")", "m");
+}
+
+// 固定类别：只输出类别名，不回显命中的原句、路径与 stack。
+// 数组顺序即输出顺序；每类只匹配 core 的固定前缀/有限中间字段，
+// 绝不把分组值拼进输出，工具输入也不会进入告警文案。
 const STDERR_CATEGORIES: Array<{ label: string; pattern: RegExp }> = [
-  { label: "状态不可用", pattern: /状态(不可用|读取失败|写失败|处理异常)/ },
-  { label: "锁忙", pattern: /锁忙|状态锁不可用/ },
-  { label: "Git 查询失败", pattern: /Git (状态查询|查询)失败|基线指纹查询超时/ },
-  { label: "命令结构未覆盖", pattern: /命令结构(未覆盖|无法完整解析)|(写入目标|post 写入目标)不完整/ },
-  { label: "输入或协议无效", pattern: /协议字段类型不符|输入超限|非法 JSON/ },
-  { label: "内部异常", pattern: /内部异常/ },
+  {
+    label: "状态不可用",
+    pattern: diagnosticPattern(
+      "私有状态不可用|状态(?:读取失败|写失败|处理异常)" +
+        "|(?:transcript 输入取证的|分派预取)状态不可用|缺少会话标识，状态判定降级|probe 记录不可写",
+    ),
+  },
+  { label: "锁忙", pattern: diagnosticPattern("锁忙|状态锁不可用") },
+  {
+    label: "Git 查询失败",
+    pattern: diagnosticPattern(
+      "(?:Git 状态查询失败，基线检查降级|基线指纹查询超时，基线检查降级)(?=；|$)",
+    ),
+  },
+  {
+    label: "命令结构未覆盖",
+    pattern: diagnosticPattern("(?:reviewer )?命令结构(?:未覆盖|无法完整解析)"),
+  },
+  {
+    label: "写入目标未覆盖",
+    pattern: diagnosticPattern(
+      "写入目标(?:不完整|位于仓库外)|命令写入目标不完整|命令内目录变化无法确定" +
+        "|缺少可定位的仓库根或 cwd|补丁目标解析不完整|宿主未提供结构化非 sh[e]ll 参数" +
+        "|写工具缺少可识别路径字段|已有任务状态缺少任务根归属索引",
+    ),
+  },
+  {
+    label: "写序列记账缺口",
+    pattern: diagnosticPattern(
+      "post (?:缺少可信成功结果|未找到|写入目标不完整|目标含符号链接|目标与 pre|目标缺少 pre 指纹)" +
+        "|缺少工具 ID，写事件无法幂等记账|锁内复核发现任务绑定已变化|锁外预取结果与当前任务绑定不一致",
+    ),
+  },
+  {
+    label: "transcript 证据降级",
+    pattern: diagnosticPattern(
+      "transcript (?:不是普通文件|身份核验失败|原生.*?身份与当前会话不一致|缺原生会话身份" +
+        "|证据抽取失败|读取证据抽取失败|输入取证失败)" +
+        "|无法从 transcript 取得最新用户记录|该宿主无 transcript 能力",
+    ),
+  },
+  {
+    label: "分派/子代理降级",
+    pattern: diagnosticPattern(
+      "子代理(?:未匹配到有效分派记录|绑定与 root 当前 epoch 不匹配|启动未能匹配可信分派记录" +
+        "|完成缺少可关联分派|终态为)" +
+        "|分派预取失败|分派预检的锁外取证与当前上下文不一致|同一分派 ID 的内容或角色已变化" +
+        "|该分派 ID 的观测已因内容变化失效|宿主未提供 reviewer 交接正文|该宿主无法可靠归因审查完成事件",
+    ),
+  },
+  {
+    label: "激活判定降级",
+    pattern: diagnosticPattern(
+      "同一工具调用 ID 的成功读取内容已变化|SKILL 读取缺少工具 ID|缺少 root 绑定，SKILL 读取恢复降级" +
+        "|同一 SKILL 读取调用已消费|SKILL 读取恢复的 root 绑定发生变化|输入取证的签名在锁内复核时已变化",
+    ),
+  },
+  { label: "工具权限未覆盖", pattern: diagnosticPattern("未知自定义工具的写权限未推断") },
+  {
+    label: "输入或协议无效",
+    pattern: diagnosticPattern(
+      "协议字段类型不符|输入超过上限|输入不是合法 JSON|输入不是 JSON 对象|输入超限|非法 JSON" +
+        "|未知事件|缺少命令文本|Antigravity 提供 [0-9]+ 个 workspacePaths",
+    ),
+  },
+  { label: "内部异常", pattern: diagnosticPattern("hook 内部异常|内部异常") },
 ];
 
 function clampBytes(text: string, limit: number): string {
@@ -49,12 +122,13 @@ function clampBytes(text: string, limit: number): string {
   return buffer.length <= limit ? text : buffer.subarray(0, limit).toString("utf8");
 }
 
-/** 把核心 stderr 折成白名单类别；无可公开类别时只披露“有诊断”。 */
+/** 把核心 stderr 折成固定类别；同一类别只列一次，无可公开类别时只披露“有诊断”。 */
 function summarizeCoreStderr(text: string): string | null {
   if (!text.trim()) return null;
-  const labels = STDERR_CATEGORIES.filter(({ pattern }) => pattern.test(text)).map(
-    ({ label }) => label,
-  );
+  const labels: string[] = [];
+  for (const { label, pattern } of STDERR_CATEGORIES) {
+    if (!labels.includes(label) && pattern.test(text)) labels.push(label);
+  }
   if (labels.length === 0) return HIDDEN_STDERR_TEXT;
   return "core 降级：" + labels.join("；");
 }
