@@ -750,7 +750,7 @@ echo "=== 10. 规则文档总量棘轮（只减不增） ==="
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 基线取 1.4.0 实测总量（1.3.2 之后随 models.md 措辞与精简同步下调），之后只允许在删除正文后向下重设。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=131715
+MAX_TOTAL=131662
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

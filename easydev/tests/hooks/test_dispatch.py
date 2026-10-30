@@ -6,6 +6,7 @@ import json
 import os
 
 from conftest import subtests
+from hooks import core as core_module
 from support import HookCase
 
 
@@ -146,6 +147,147 @@ class DispatchMixin(object):
                 self.allow(
                     self.dispatch_payload("s1", prompt, tool_id="decl-%d" % index)
                 )
+
+    def test_role_declaration_accepts_qualified_reviewer_forms(self) -> None:
+        """真实交接的角色值常带限定语，或在同一行接着写禁止项。
+
+        回放被拒的 11 份真实 reviewer 交接：`角色：独立 reviewer`、
+        `角色声明：你是 easydev 的独立 reviewer`、`你是独立设计审查者（read-only）`
+        都被判“缺少角色声明”；禁令与声明同行时整行被丢弃，声明与格式证据一起
+        消失。这里逐条锁住可接受写法。
+        """
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        heads = (
+            "角色：独立 reviewer",
+            "角色/读写边界：独立 reviewer，只读审查，不改被审代码。",
+            "角色声明：你是 easydev 的独立 reviewer（reviewer-role）。",
+            "你是独立 reviewer，只读审查。禁止修改任何文件。",
+            "你是 EasyDev 的独立设计审查者（read-only，不实施、不修改仓库）。",
+            "你是独立施工审查实例（只读；不得修改任何文件、不得 commit/push）。",
+        )
+        for index, head in enumerate(heads):
+            with subtests.test(head=head):
+                prompt = "%s\n角色路径：%s\n**[P级] 简短标题**\n" % (head, role_path)
+                self.allow(
+                    self.dispatch_payload("s1", prompt, tool_id="qual-%d" % index)
+                )
+
+    def test_evidence_before_same_line_prohibition_still_counts(self) -> None:
+        """否定词只否定它后面的话：同行尾部禁令不得吞掉前面的声明与模板。"""
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        prompt = (
+            "角色：reviewer；角色路径：%s；每条发现以 **[P级] 简短标题** 起头；"
+            "不要复述我的结论。\n" % role_path
+        )
+        self.allow(self.dispatch_payload("s1", prompt, tool_id="same-line"))
+
+    def test_role_path_followed_by_fullwidth_punctuation_counts(self) -> None:
+        """真实交接写成 `…/reviewer-role.md（先读它，再开始）。`，路径后不是空格。"""
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        prompt = "角色：reviewer\n角色规则文件：%s（先读它，再开始）。\n**[P级] 简短标题**\n" % role_path
+        self.allow(self.dispatch_payload("s1", prompt, tool_id="fw-path"))
+
+    def test_finding_format_accepts_pipe_level_placeholder(self) -> None:
+        """`**[P0|P1|P2|P3] 简短标题**` 是冻结核可用的等价占位写法。
+
+        真实设计审查交接就是这么写模板的（两条），却被判“缺少机器格式”。
+        """
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        prompt = (
+            "角色：reviewer\n角色路径：%s\n"
+            "报告格式：每条以 `**[P0|P1|P2|P3] 简短标题**` 起头。\n" % role_path
+        )
+        self.allow(self.dispatch_payload("s1", prompt, tool_id="pipe-format"))
+
+    def prompt_only_dispatch(self, prompt: str, tool_id: str):
+        """不带 `agent`/`agent_type` 字段的分派：角色只能从 prompt 推断。"""
+        if self.host == "antigravity":
+            return self.tool_payload("s1", "invoke_subagent", {"prompt": prompt}, tool_id=tool_id)
+        if self.host in {"codex", "dsh"}:
+            return self.tool_payload("s1", "spawn_agent", {"prompt": prompt}, tool_id=tool_id)
+        return self.tool_payload("s1", "subagent", {"action": "create", "task": prompt}, tool_id=tool_id)
+
+    def test_prompt_only_dispatch_does_not_read_narration_as_reviewer(self) -> None:
+        """`agent` 缺失时只能看 prompt：叙述句里的“独立审查者”不得把开发分派判成审查。
+
+        `审查由独立审查者完成`、`完成后由独立 reviewer 复核，不要自行宣称完成`
+        都是描述；后者还验证了“否定词只截断前缀”不会把叙述变成声明（行首锚定）。
+        提问句同理：`你是什么角色？reviewer 还是 main？` 不是交接声明。误判的
+        后果是整单 `deny`（reviewer 交接缺项）。
+        """
+        self.activate()
+        self.write_models(VALID)
+        for index, prompt in enumerate(
+            (
+                "实现这个函数并回报。\n开发完后审查由独立审查者完成，报告列未覆盖范围。",
+                "实现这个函数，完成后由独立 reviewer 复核，不要自行宣称完成。",
+                "改完交给 reviewer 子代理，不要自己宣称完成。",
+                "实现这个函数并回报。\n你是什么角色？reviewer 还是 main？",
+                "实现这个函数并回报。\n你是 main 还是 reviewer？",
+                "实现这个函数并回报。\n你是什么角色？独立审查者还是主代理？",
+                "实现这个函数并回报。\n你是 main 还是独立审查者？",
+            )
+        ):
+            with subtests.test(prompt=prompt):
+                self.allow(self.prompt_only_dispatch(prompt, "narr-%d" % index))
+
+    def test_prompt_only_complete_reviewer_handoff_is_allowed(self) -> None:
+        """prompt 兜底路径的正面契约：整句声明 + 角色路径 + 模板仍被接受。"""
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        prompt = "你是独立 reviewer，只读审查。\n角色路径：%s\n**[P级] 简短标题**\n" % role_path
+        self.allow(self.prompt_only_dispatch(prompt, "prompt-only-rev"))
+
+    def test_role_path_evidence_survives_fullwidth_characters_in_install_root(self) -> None:
+        """安装根含全角标点（`资料（备份）`）时路径仍是证据。
+
+        把全角标点当分隔符会把这种安装根切碎、让路径证据永远不可检出（任何
+        reviewer 分派都被拒且无法通过改写交接绕过），所以只能对候选“剥包裹”。
+        """
+        target = self.root / "资料（备份）" / "easydev" / "references" / "reviewer-role.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("reviewer\n", encoding="utf-8")
+        assert core_module.role_path_evidence("角色路径：%s" % target, "reviewer", str(target))
+        assert core_module.role_path_evidence("角色路径：（%s）" % target, "reviewer", str(target))
+        assert core_module.role_path_evidence(
+            "角色细则见 `%s`（先读它，再开始）。" % target, "reviewer", str(target)
+        )
+        # 组合情形：安装根含全角括号，且路径后还跟着全角注释。
+        assert core_module.role_path_evidence(
+            "角色路径：%s（先读它，再开始）。" % target, "reviewer", str(target)
+        )
+        assert not core_module.role_path_evidence(
+            "角色路径：/tmp/other/easydev/references/reviewer-role.md", "reviewer", str(target)
+        )
+
+    def test_discussed_negated_or_partial_role_wording_is_not_a_declaration(self) -> None:
+        """放宽识别不等于取消契约：讨论、否定与半截写法仍不算声明。"""
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        for index, head in enumerate(
+            (
+                "角色：应该是 reviewer 还是 developer？",
+                "不要用 reviewer 模板，先讨论一下。",
+                "reviewer 只读是否合理？",
+                "你想让 reviewer 看哪部分？",
+            )
+        ):
+            with subtests.test(head=head):
+                prompt = "%s\n角色路径：%s\n**[P级] 简短标题**\n" % (head, role_path)
+                reason = self.deny(
+                    self.dispatch_payload("s1", prompt, tool_id="neg-%d" % index)
+                )
+                assert "角色声明" in reason
 
     def test_missing_handoff_message_names_the_literal_to_add(self) -> None:
         """只报“缺什么”模型只能猜格式；拒绝理由必须给出可照抄的字面量。"""

@@ -64,6 +64,8 @@ REVIEWER_HEADER_FORMS = (
     "**[P级] 简短标题**",
     "**[P级别] 简短标题**",
     "**[P0/P1/P2/P3] 简短标题**",
+    # 竖线写法是同一占位模板的 ASCII 变体：真实设计审查交接就这么写。
+    "**[P0|P1|P2|P3] 简短标题**",
 )
 REVIEWER_SEVERITIES = ("P0", "P1", "P2", "P3")
 NEGATION_MARKERS = ("不要", "不需要", "别", "禁止", "不是", "never", "do not", "don't")
@@ -174,22 +176,39 @@ EXPLICIT_INVOCATION_RE = re.compile(
     re.IGNORECASE,
 )
 FENCED_BLOCK_RE = re.compile(r"```([A-Za-z0-9_-]*)\n(.*?)```", re.DOTALL)
+# 角色值前常见的限定语（`角色：独立 reviewer`、`角色声明：你是 easydev 的独立
+# reviewer`）。只收实际交接里出现过的限定词，不放开任意文字：`角色：应该是
+# reviewer 还是 developer` 这类讨论仍不算声明。
+ROLE_QUALIFIER_SRC = r"(?:[ \t*_]*(?:一名|一个|你是|独立的?|easydev[ \t*_]*的)[ \t*_]*)*"
 ROLE_LINE_RE = re.compile(
     # 角色声明按行首锚定（`^` + MULTILINE）：正文里顺带提到角色不算声明。行首的
     # Markdown 强调/标题/列表标记不影响判定，`**角色**：reviewer`、`## 角色：reviewer`、
-    # `1. 角色：reviewer`、`角色声明：reviewer`、`你的角色是 reviewer` 与交接模板的
-    # 复合标签 `角色/读写边界/…：reviewer` 都是同一声明——模板写法不可检出会让照
-    # 文档写交接的模型被稳定拒绝。
+    # `1. 角色：reviewer`、`角色声明：reviewer`、`你的角色是 reviewer`、`角色：独立
+    # reviewer` 与交接模板的复合标签 `角色/读写边界/…：reviewer` 都是同一声明——
+    # 模板写法不可检出会让照文档写交接的模型被稳定拒绝。
     r"^[ \t*_#+.\-]*(?:\d{1,2}[.)][ \t]+)?[*_ \t]*"
     r"(?:你的[ \t*_]*)?(?:角色(?:声明)?|role)"
     r"(?:[*_ \t]*[/、，,][^:：\n]{0,30})?"
     r"[*_ \t]*(?:[:：]|是|为)[ \t*_]*"
-    r"(main|developer|reviewer|designer)\b",
+    + ROLE_QUALIFIER_SRC
+    + r"(main|developer|reviewer|designer)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 REVIEWER_DECLARATION_RE = re.compile(
-    r"(?:独立\s*reviewer|reviewer\s*子代理|作为\s*reviewer|你是\s*(?:一名\s*)?reviewer|role[ \t]*[:：][ \t]*reviewer)",
-    re.IGNORECASE,
+    # 没有 `角色：` 标签的整句声明（`你是独立 reviewer`、`你是 EasyDev 的独立设计审查者`）。
+    # `独立审查者/审查实例` 必须有第一人称或标签引入语：`审查由独立审查者完成` 是叙述，
+    # 不是交接声明；reviewer 前的限定语只收白名单词（`你是 main 还是 reviewer？`、
+    # `你是 main 还是独立审查者？` 都不算），句子不跨行、不跨分句。`独立 reviewer`/`reviewer 子代理`
+    # 只在行首算声明：`完成后由独立 reviewer 复核` 是叙述，同行尾部禁令截断前缀后
+    # 保留下来也不能变成声明。
+    r"(?:(?:你是|你的角色(?:是|为)?|作为)"
+    + ROLE_QUALIFIER_SRC
+    + r"独立\s*(?:设计|施工|代码)?\s*审查(?:者|实例)"
+    r"|^[ \t*_#+.\-]*(?:独立\s*reviewer|reviewer\s*子代理)"
+    r"|作为\s*reviewer"
+    r"|你[ \t*_]*是[ \t*_]*(?:(?:一名|一个|独立的?|easydev[ \t*_]*的)[ \t*_]*)*reviewer"
+    r"|role[ \t]*[:：][ \t]*reviewer)",
+    re.IGNORECASE | re.MULTILINE,
 )
 CODE_REVIEW_RE = re.compile(r"(?:diff|代码审查|审查代码|代码范围|review\s+the\s+(?:code|diff))", re.IGNORECASE)
 WRITE_TOOL_NAMES = shell.WRITE_TOOL_NAMES
@@ -830,16 +849,42 @@ def machine_context(prompt: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _negation_offset(line: str) -> int:
+    """行内第一个否定词的偏移；`别` 只在词首生效（`识别`/`特别` 不是否定）。"""
+    offsets = []
+    for marker in NEGATION_MARKERS:
+        start = 0
+        while True:
+            found = line.find(marker, start)
+            if found < 0:
+                break
+            if marker == "别" and found and "\u4e00" <= line[found - 1] <= "\u9fff":
+                start = found + 1
+                continue
+            offsets.append(found)
+            break
+    return min(offsets) if offsets else -1
+
+
 def _evidence_lines(text: str) -> str:
-    """丢弃引用行、取反与“解释模板”语境，只留真实初始声明。"""
+    """丢弃引用行与“解释模板”语境，只留真实初始声明。
+
+    否定词只否定它后面的话：`…以 **[P级] 简短标题** 起头；不要复述结论` 里的
+    模板证据在声明一侧，整行丢弃会把同行的角色声明、角色路径与模板一起吞掉
+    （真实 reviewer 交接正是这么写的）。
+    """
     kept = []
     for line in _strip_fences(text or "").splitlines():
         stripped = line.lstrip()
         if stripped.startswith(">"):
             continue
+        stop = _negation_offset(line)
+        if stop >= 0:
+            line = line[:stop]
+            stripped = line.lstrip()
+            if not stripped:
+                continue
         lowered = stripped.lower()
-        if any(marker in stripped for marker in NEGATION_MARKERS):
-            continue
         if any(marker in lowered for marker in TEMPLATE_EXPLANATION_MARKERS):
             # “发现模板如下：**[P级] 简短标题**”这类同行写法本身就是格式证据：
             # 只有该行不含任何冻结模板时才当纯解释丢掉，且只保留这一行。
@@ -854,17 +899,45 @@ def declared_role(prompt: str) -> str:
     return match.group(1).lower() if match else ""
 
 
+# 路径包裹用全角标点：`（…/reviewer-role.md）`、`“…”` 之类写法要能被剥掉。
+PATH_WRAPPER_CHARS = "（）「」『』【】《》〈〉“”‘’"
+
+
+def _path_token_variants(token: str, wanted: str):
+    """一个 token 的候选写法。
+
+    全角标点既可能是包裹（`（…/reviewer-role.md）`、`“…”`），也可能本身属于安装路径
+    （`资料（备份）/…`）。把全角标点当分隔符会把后者切碎、导致路径证据永远不可检出，
+    所以只对候选做“剥包裹”“首个全角括号处截断”“首次出现目标后缀处截断”三种补充尝试。
+    """
+    yield token
+    stripped = token.strip(PATH_WRAPPER_CHARS)
+    if stripped and stripped != token:
+        yield stripped
+    for index, char in enumerate(token):
+        if char in PATH_WRAPPER_CHARS:
+            if index:
+                yield token[:index]
+            break
+    found = token.find(wanted)
+    if found > 0:
+        yield token[: found + len(wanted)]
+
+
 def role_path_evidence(text: str, role: str, role_path: str) -> bool:
     """按安装上下文核对角色路径；只含子串的另一安装树不算证据。"""
     wanted = "references/%s-role.md" % role
     normalized = (text or "").replace("\\", "/")
     target = os.path.realpath(role_path)
-    for token in re.split(r"[\s`'\"()<>\[\]{},，。；、：:]+", normalized):
-        if not token or not token.endswith(wanted):
-            continue
-        candidate = token if os.path.isabs(token) else os.path.join(os.path.dirname(os.path.dirname(role_path)), token.lstrip("./"))
-        if os.path.realpath(candidate) == target:
-            return True
+    for token in re.split(r"[\s`'\"()<>\[\]{},，。；、：:！？]+", normalized):
+        for candidate_text in _path_token_variants(token, wanted):
+            if not candidate_text.endswith(wanted):
+                continue
+            candidate = candidate_text if os.path.isabs(candidate_text) else os.path.join(
+                os.path.dirname(os.path.dirname(role_path)), candidate_text.lstrip("./")
+            )
+            if os.path.realpath(candidate) == target:
+                return True
     return False
 
 
@@ -1501,7 +1574,10 @@ class Engine(object):
             root,
             task,
             record,
-            role=role or declared_role(user_text) or "main",
+            # 根角色已在上面按“完整标准交接”派生（声明 + 角色路径 + 模板）：单独一行
+            # `角色：reviewer` 不把主代理锁成只读，否则“角色：独立 reviewer 这条为什么
+            # 被拒”这类讨论与修复请求会被整段拒掉（1.5.0 修过同类 P2）。
+            role=role or "main",
             role_source="explicit" if explicit else "machine",
             readonly=bool(user_text and READONLY_DIRECTIVE_RE.search(user_text)),
             machine=machine,

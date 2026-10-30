@@ -261,6 +261,28 @@ class RegressionMixin(object):
                 self.activate("s1", prompt)
                 self.allow(self.write_tool("s1", "src/app.py", tool_id="disc-%d" % index))
 
+    def test_role_talk_does_not_freeze_main_readonly(self) -> None:
+        """根角色只按完整标准交接派生：顺带提到角色/限定语不得把主代理锁成只读。
+
+        1.5.0 修过 READONLY_DIRECTIVE_RE 一侧的同类 P2；角色派生侧同样要求：
+        只有“声明 + 角色路径 + 机器模板”三件套齐全才改根角色，否则一条
+        `角色：reviewer；不要分派子代理` 就会把“帮我修 hook”整段拒掉。
+        """
+        for index, prompt in enumerate(
+            (
+                "使用 easydev 帮我改这个 bug。\n角色：reviewer；不要分派子代理，你自己改。",
+                "使用 easydev 修 hook。\n角色：独立 reviewer 这条一直被拒，为什么？帮我修。",
+                "使用 easydev，你是独立 reviewer 时该怎么报告？说说就好",
+                "使用 easydev，你是什么角色？reviewer 还是 main？",
+                "使用 easydev，你是 main 还是 reviewer？",
+            )
+        ):
+            with subtests.test(prompt=prompt):
+                self.activate("s1", prompt)
+                self.allow(
+                    self.write_tool("s1", "src/app.py", tool_id="role-talk-%d" % index)
+                )
+
     @pytest.mark.parametrize(
         "prompt",
         [
