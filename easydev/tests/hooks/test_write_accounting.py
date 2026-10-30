@@ -114,6 +114,77 @@ class ReadOnlyShellTests(WriteAccountingCase):
         assert int(self.task_state().get("write_seq") or 0) == 0
 
 
+class MetadataOnlyShellTests(WriteAccountingCase):
+    """只改 .git/索引/远端的 git 命令没有工作区目标：静默且不建 pending。"""
+
+    METADATA_COMMANDS = (
+        "git add .",
+        "git commit -m test",
+        "git fetch",
+        "git push",
+        "git config user.name tester",
+        "git branch feature-x",
+    )
+
+    def test_git_metadata_writes_are_silent_and_not_pending(self) -> None:
+        self.activate("s1")
+        for index, command in enumerate(self.METADATA_COMMANDS):
+            with subtests.test(command=command):
+                tool_id = "meta-%d" % index
+                _code, value, pre_stderr = self.run_core(
+                    self.shell("s1", command, tool_id=tool_id)
+                )
+                assert not self.is_denied(value), value
+                assert pre_stderr == ""
+                assert (self.task_state().get("pending_writes") or {}) == {}
+                _code, value, post_stderr = self.run_core(
+                    self.shell(
+                        "s1", command, tool_id=tool_id, event="post_tool", outcome="success"
+                    )
+                )
+                assert not self.is_denied(value), value
+                assert post_stderr == ""
+        task = self.task_state()
+        assert int(task.get("write_seq") or 0) == 0
+        assert (task.get("pending_writes") or {}) == {}
+
+    def test_metadata_classification_matches_worktree_effect(self) -> None:
+        """`business` 只标记不改工作区的 git 子命令；改工作区的仍是业务写。"""
+        cases = (
+            ("git add .", False),
+            ("git commit -m test", False),
+            ("git fetch", False),
+            ("git push", False),
+            ("git config user.name tester", False),
+            ("git gc", False),
+            ("git branch -d old", False),
+            ("git tag -d v1", False),
+            ("git reset --hard HEAD", True),
+            ("git checkout -- .", True),
+            ("git stash", True),
+            ("git rm old.py", True),
+            ("git mv a.py b.py", True),
+            ("git pull", True),
+        )
+        for command, business in cases:
+            with subtests.test(command=command):
+                writes = shell_module.analyze(command).writes
+                assert writes, command
+                assert all(write.get("business", True) is business for write in writes), writes
+
+    def test_metadata_write_keeps_business_target_in_same_call(self) -> None:
+        """同一次调用里既 git add 又改工作区文件：业务目标仍完整记账。"""
+        self.activate("s1")
+        command = "git add src/app.py; printf x > src/app.py"
+        _code, value, pre_stderr = self.run_core(self.shell("s1", command, tool_id="meta-mixed"))
+        assert not self.is_denied(value), value
+        assert pre_stderr == ""
+        entries = list((self.task_state().get("pending_writes") or {}).values())
+        assert len(entries) == 1, entries
+        assert entries[0]["complete"], entries[0]
+        assert [key.rsplit("::", 1)[-1] for key in entries[0]["targets"]] == ["src/app.py"]
+
+
 class DuplicateTargetTests(WriteAccountingCase):
     """同一文件多次写只算一个目标：配对一致，写序列只推进一次。"""
 
@@ -641,12 +712,12 @@ class InterpreterStdinTests(WriteAccountingCase):
         assert int(self.task_state().get("write_seq") or 0) == 0
 
 
-class RepeatedStdinGapNoticeTests(WriteAccountingCase):
-    """执行型 stdin 的记账缺口按任务只提醒一次，其它缺口原因每次披露。
+class RepeatedGapNoticeTests(WriteAccountingCase):
+    """写序列缺口按「任务 + 原因」去重：同一原因重复调用只提醒一次。
 
     未解析正文的写入仍然不建立成功豁免（记账仍是缺口）；只去掉同一任务里重复的同一句
-    提醒，避免 `python3 - <<'PY'` 这类常见调用每次都刷降级类告警。换 epoch 会重新提醒
-    一次；非 stdin 的缺口（如目标在仓库外）不受影响，每次仍披露。
+    提醒，避免 `python3 - <<'PY'`、`cp -R` 这类常见调用每次都刷降级类告警。不同原因
+    仍分别披露；换 epoch 会重新提醒一次。
     """
 
     def gap_post(self, command: str, tool_id: str) -> List[str]:
@@ -667,13 +738,21 @@ class RepeatedStdinGapNoticeTests(WriteAccountingCase):
         assert int(task.get("write_seq") or 0) == 0
         assert (task.get("last_success") or {}) == {}
 
-    def test_stdin_gap_with_other_reason_is_disclosed_every_time(self) -> None:
-        """缺口同时含仓库外目标时不能按 stdin 去重：两种原因要分开披露。"""
+    def test_different_gap_reasons_are_disclosed_separately(self) -> None:
+        """不同缺口原因不被合并静默：stdin 未解析与目标集不完整各提醒一次。"""
         self.activate("s1")
-        command = "python3 - <<'PY' > %s\nprint(1)\nPY" % (self.root / "outside.txt")
-        for index in (1, 2):
-            warnings = self.gap_post(command, "mix-%d" % index)
-            assert warnings == [POST_INCOMPLETE], (index, warnings)
+        assert self.gap_post("python3 - <<'PY'\nprint(1)\nPY", "reason-py") == [POST_INCOMPLETE]
+        assert self.gap_post("echo hi | tee", "reason-tee") == [POST_INCOMPLETE]
+        # 同一原因的重复调用不再提醒。
+        assert self.gap_post("echo hi | tee", "reason-tee-2") == []
+
+    def test_incomplete_target_gap_is_disclosed_once_per_task(self) -> None:
+        """目标集不完整（`tee` 无目标）同任务只提醒一次，换任务重新提醒。"""
+        self.activate("s1")
+        assert self.gap_post("echo hi | tee", "tee-a") == [POST_INCOMPLETE]
+        assert self.gap_post("echo hi | tee", "tee-b") == []
+        self.activate("s1", prompt="使用 easydev，换一个新任务")
+        assert self.gap_post("echo hi | tee", "tee-c") == [POST_INCOMPLETE]
 
     def test_new_epoch_reminds_again(self) -> None:
         """换 epoch（新用户回合/新任务）后重新提醒一次，记账仍是不完整。"""
@@ -685,12 +764,49 @@ class RepeatedStdinGapNoticeTests(WriteAccountingCase):
             assert int(task.get("write_seq") or 0) == 0
             assert (task.get("last_success") or {}) == {}
 
-    def test_non_stdin_gap_is_disclosed_every_time(self) -> None:
+
+class OutsideTargetTests(WriteAccountingCase):
+    """仓库外写入不在基线范围内：单独出现静默，与仓库内目标混合时按原因去重。"""
+
+    def test_outside_only_write_is_silent_and_not_pending(self) -> None:
         self.activate("s1")
-        command = "printf a > %s" % (self.root / "outside.txt")
+        command = "printf x > %s" % (self.root / "outside.log")
+        _code, value, pre_stderr = self.run_core(self.shell("s1", command, tool_id="out-1"))
+        assert not self.is_denied(value), value
+        assert pre_stderr == ""
+        assert (self.task_state().get("pending_writes") or {}) == {}
+        _code, value, post_stderr = self.run_core(
+            self.shell("s1", command, tool_id="out-1", event="post_tool", outcome="success")
+        )
+        assert not self.is_denied(value), value
+        assert post_stderr == ""
+        assert int(self.task_state().get("write_seq") or 0) == 0
+
+    def test_mixed_outside_target_is_disclosed_once_per_task(self) -> None:
+        self.activate("s1")
+        command = "printf x > %s; printf y > src/app.py" % (self.root / "outside.log")
         for index in (1, 2):
-            warnings = self.gap_post(command, "out-%d" % index)
-            assert warnings == [POST_INCOMPLETE], (index, warnings)
+            with subtests.test(call=index):
+                tool_id = "mix-out-%d" % index
+                _code, value, pre_stderr = self.run_core(
+                    self.shell("s1", command, tool_id=tool_id)
+                )
+                assert not self.is_denied(value), value
+                assert pre_stderr == ""
+                entries = list((self.task_state().get("pending_writes") or {}).values())
+                assert len(entries) == 1, entries
+                assert entries[0]["gap"]
+                assert entries[0]["gap_reason"] == "outside"
+                (self.repo / "src" / "app.py").write_text("value = 8\n", encoding="utf-8")
+                _code, value, post_stderr = self.run_core(
+                    self.shell(
+                        "s1", command, tool_id=tool_id, event="post_tool", outcome="success"
+                    )
+                )
+                assert not self.is_denied(value), value
+                warnings = engine_warnings(post_stderr)
+                assert warnings == ([POST_INCOMPLETE] if index == 1 else []), (index, warnings)
+        assert int(self.task_state().get("write_seq") or 0) == 0
 
 
 class CrossToolPostTests(WriteAccountingCase):

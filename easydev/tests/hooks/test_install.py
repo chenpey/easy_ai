@@ -581,7 +581,14 @@ class PiExtensionTests(HookCase):
             text=True,
             cwd=str(self.root),
             # 清空 PATH：适配器若回落 PATH 里的 python3 就起不来核心，从而暴露问题。
-            env=clean_env({"PATH": "/nonexistent"}),
+            # 本用例验收折叠内容，显式恢复上屏并把日志写进用例私有目录。
+            env=clean_env(
+                {
+                    "PATH": "/nonexistent",
+                    "EASYDEV_HOOKS_WARNINGS": "stderr",
+                    "EASYDEV_HOOKS_LOG": str(self.warning_log_path),
+                }
+            ),
             timeout=120,
         )
         assert completed.returncode == 0, completed.stderr
@@ -611,12 +618,29 @@ class PiExtensionTests(HookCase):
             line for line in stderr.splitlines() if line.startswith("[easydev-hooks] warning")
         ]
 
+    @property
+    def warning_log_path(self) -> Path:
+        return self.root / "pi-warnings.log"
+
+    def warning_log_lines(self) -> list:
+        """读适配器私有告警日志：每行 `<iso>\\t<event>\\t<告警行>`。"""
+        path = self.warning_log_path
+        if not path.exists():
+            return []
+        lines = []
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            parts = raw.split("\t")
+            assert len(parts) == 3, raw
+            lines.append(parts[2])
+        return lines
+
     def run_fixture(
         self,
         plugin: Path,
         calls: list,
         transcript: str = "",
         context_overrides: dict | None = None,
+        env_overrides: dict | None = None,
     ) -> subprocess.CompletedProcess:
         node = shutil.which("node")
         if not node:
@@ -635,13 +659,21 @@ class PiExtensionTests(HookCase):
             "transcript": transcript,
             "calls": calls,
         }
+        # 默认把告警上屏并写到本用例私有日志：这些用例验收折叠内容（类别/去重/
+        # 不泄漏），默认“只进日志”的通道行为由下面两个用例单独验收。
+        env = {
+            "PATH": "/nonexistent",
+            "EASYDEV_HOOKS_WARNINGS": "stderr",
+            "EASYDEV_HOOKS_LOG": str(self.warning_log_path),
+        }
+        env.update(env_overrides or {})
         return subprocess.run(
             [node, str(FIXTURE), json.dumps(spec)],
             capture_output=True,
             text=True,
             cwd=str(self.root),
             # 清空 PATH：适配器若回落 PATH 里的 python3 就起不来核心，从而暴露问题。
-            env=clean_env({"PATH": "/nonexistent"}),
+            env=clean_env(env),
             timeout=120,
         )
 
@@ -792,6 +824,43 @@ class PiExtensionTests(HookCase):
         assert lines[0] == "[easydev-hooks] warning: core 降级：状态不可用"
         assert "私有状态不可用" not in completed.stderr
         self.assert_no_detail_leak(completed.stderr, "STATE-ROOT-SENTINEL")
+
+    def test_default_warning_channel_is_private_log_only(self) -> None:
+        """默认不上屏：降级类别只写私有日志，不占用宿主交互区。"""
+        plugin = self.build()
+        blocked_root = self.root / "STATE-ROOT-SENTINEL"
+        blocked_root.write_text("x\n", encoding="utf-8")
+        completed = self.run_fixture(
+            plugin,
+            [],
+            context_overrides={"state_root": str(blocked_root)},
+            env_overrides={"EASYDEV_HOOKS_WARNINGS": ""},
+        )
+        assert completed.returncode == 0, completed.stderr
+        # 输入框/交互区不受干扰：默认模式下 stderr 没有告警行。
+        assert self.warning_lines(completed.stderr) == [], completed.stderr
+        assert self.warning_log_lines() == [
+            "[easydev-hooks] warning: core 降级：状态不可用"
+        ], self.warning_log_lines()
+        text = self.warning_log_path.read_text(encoding="utf-8")
+        self.assert_no_detail_leak(text, "STATE-ROOT-SENTINEL")
+
+    def test_transport_failure_still_visible_by_default(self) -> None:
+        """适配层自身故障（核心未跑起来）仍必须上屏：那是守卫失效，不是降级。"""
+        plugin = self.build_with_core("import sys\nsys.exit(1)\n")
+        completed = self.run_fixture(
+            plugin,
+            [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}],
+            env_overrides={"EASYDEV_HOOKS_WARNINGS": ""},
+        )
+        assert completed.returncode == 0, completed.stderr
+        lines = self.warning_lines(completed.stderr)
+        assert len(lines) == 2, completed.stderr  # input + tool_call
+        for line in lines:
+            assert "core 非 0 退出（1），已放行" in line
+            assert "core 降级" not in line
+        # 同一汇总也落日志，事后可查。
+        assert len(self.warning_log_lines()) == 2, self.warning_log_lines()
 
     def test_lock_diagnostics_never_double_as_state_unavailable(self) -> None:
         plugin = self.build_with_core(

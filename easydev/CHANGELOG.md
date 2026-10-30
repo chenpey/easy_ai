@@ -2,6 +2,21 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.5.1 更新说明（2026-10-30）
+
+修「写序列记账缺口」告警在正常开发中的噪音：`git fetch/push/config/add/commit`、写 `/tmp` 日志或临时脚本这类没有工作区目标（或目标在基线范围外）的调用，不再每次成功 post 都报一次 `post 写入目标不完整，写序列记覆盖缺口`；**并且 pi 宿主默认不再把这些降级提示插到交互区（输入框上方）**——类别汇总只写私有日志。**判定与 deny 规则零变化**：不改基线/快照/写序列的记账语义，reviewer 只读仍拒绝 `git push` 等元数据写。
+
+- **P2 git 元数据写被当成「写目标不可枚举」**：`shell.analyze` 的 `writes` 条目新增 `business` 字段（缺省 `True`，向后兼容）；`add`/`commit`/`fetch`/`push`/`config`/`gc`/`prune`/`repack`/`update-index` 与 `branch`/`tag` 的 ref 写标 `business=False`——它们只改 `.git`/索引/远端。`core.write_targets_from_tool` 记账时跳过这些条目（全部是元数据写时 `targets=[]`、`complete=True`，不建 pending、post 静默）；`reset`/`restore`/`checkout`/`switch`/`clean`/`stash`/合并类等会改工作区或产物的子命令保持 `business=True`。`shell.reviewer_violation` 继续看到同一份 `writes`，reviewer 只读的拒绝不变。
+- **P2 纯仓库外目标不再算记账缺口**：`_prepare_write` 的 `gap` 改为 `unstable or unparsed or degraded or (outside and bool(entries))`——只有仓库外目标时 `entries=[] gap=False`，不建 pending、post 静默；同时取消 pre 的 `写入目标位于仓库外，未纳入基线检查`（基线本来只覆盖任务仓库，仓库外写入不是基线能力的降级）。仓库内 + 仓库外混合目标仍按缺口处理。
+- **P3 剩余真缺口按「任务 + 原因」去重**：`pending` 记录 `gap_reason`（`stdin_unparsed`/`targets_incomplete`/`command_cwd_unknown`/`structure_unparsed`/`no_repo`/`git_unavailable`/`unstable`/`deadline`/`outside`，多原因以 `+` 连接），`_warn_accounting_gap` 从「只有 stdin 去重」改为「同一任务 + 同一原因集合只提醒一次」：同一原因重复调用不再刷屏，不同原因仍分别披露，换 epoch 重新提醒。记账不变：pending 仍不完整、不建立成功豁免、不推进 `write_seq`。
+- **P2 已知取舍**：纯仓库外写入静默后，`rm -rf` 之类不在 deny 表内的外部破坏不再有提示（此前也只是 warning，不是拦截）。
+- **P2 pi 告警通道不再上屏**：pi 会把扩展 stderr 直接展示在交互区，正常开发中的降级提示会干扰输入。`hooks/pi/index.ts` 改为默认把类别汇总写私有日志（`$EASYDEV_HOOKS_LOG`，否则 `$XDG_STATE_HOME/easydev-hooks/pi-warnings.log`，目录 `0700`/文件 `0600`/超 1 MiB 截断，每行 `<ISO 时间>\t<事件>\t<固定类别汇总>`），`EASYDEV_HOOKS_WARNINGS=stderr` 恢复上屏（调试/冒烟用）。**传输层故障仍默认上屏并在日志留痕**（`core 启动失败`/超时/信号终止/非 0 退出/输出超限/无输出/无效 JSON/非对象）：它意味着守卫没有生效，不是降级。日志只含固定类别与事件名，不存 prompt、命令或路径；日志不可写时不回落 stderr，也不影响 fail-open 返回值。
+- **文档与版本**：`hooks/README.md` 的 P1 基线、P3 收口、诊断作用域与告警通道四段同步上述改动；版本号 1.5.1（`manifest.json`、`SKILL.md`、两份 README、本文件五处一致）。`SKILL.md` 与 `references/` 规则正文未改，总量仍为 131715 字节，`check.sh` §10 棘轮不变。
+
+验证（本机 macOS、Python 3.12、pytest 8.4.2，基线 `098121c` / 1.5.0）：红→绿——新增/改写的 11 项测试在 HEAD 上全部失败（git 元数据 pre/post 静默、纯仓库外静默、混合目标 `gap_reason`、按原因去重、换任务重提醒、`business` 分类、适配器默认只写日志、传输层故障仍上屏），修复后 `tests/hooks/test_write_accounting.py` + `test_heredoc_warnings.py` **59 passed**、`tests/hooks/test_install.py` **55 passed**。会话回放（`/tmp/replay_hook.py`，543 事件真实会话）：`post 写入目标不完整` 从 **39 条降到 5 条**，剩下的都是同一任务里首次出现的真实原因（执行型 stdin 未解析跨 epoch、`tee` 目标集不完整、仓库内外混合），`git` 元数据与纯 `/tmp` 写入 0 条；`git status`、纯读 shell 仍静默。全量：`python3 -m pytest tests/hooks` **1210 passed（130.88s）**、`tests/experiments/agent_runner` **92 passed**、`tests/experiments/swebench` **56 passed**、`test_role_metric.py` **18 passed**；四个 case 脚本 rc=0；`bash scripts/check.sh` rc=0（§3 五处版本一致 1.5.1、§10 总量 131715 未超棘轮）；`SMOKE_TMP=<临时目录> bash scripts/smoke-install.sh` rc=0。排查告警时可查私有日志：`tail -n 20 "${XDG_STATE_HOME:-$HOME/.local/state}/easydev-hooks/pi-warnings.log"`；需要重新上屏时设 `EASYDEV_HOOKS_WARNINGS=stderr`。
+
+未验证：Linux/CI 结果待推送后以 CI 为准；四宿主真实 Hook 端到端（pi/Antigravity/Codex/DSH）与 Windows/PowerShell 未重跑；会话回放只证明离线行为。
+
 ## 1.5.0 更新说明（2026-10-30）
 
 恢复 1.4.9 迁移到 pytest 时丢掉的红跑定位粒度：`unittest.subTest` 被移除后，其中 110 处"前置准备 + 循环 + 后置断言"结构退化成普通循环，一个参数失败就跳出函数，既定位不到是哪个参数，也看不到同函数其余参数的结果。本版给出 `subTest` 的等价物并逐处还原；**运行时扩展行为零变化**（`conftest.py` 与 `tests/` 都不在 hooks 分发文件集内，`SKILL.md` 与 `references/` 规则正文未变，总量仍 131715 字节）。

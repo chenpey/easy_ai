@@ -990,6 +990,10 @@ def write_targets_from_tool(
         targets = []
         complete = True
         for write in analysis.writes:
+            if write.get("business") is False:
+                # 只改 .git/索引/远端的命令没有工作区目标可记账；reviewer 只读仍由
+                # `shell.reviewer_violation` 看到同一份 writes 并拒绝。
+                continue
             target = write.get("target")
             if isinstance(target, str) and target:
                 cwd = write.get("cwd")
@@ -1063,9 +1067,19 @@ def _merge_write_entries(
     return list(merged.values()), unstable
 
 
-def _write_targets_gap() -> Dict[str, Any]:
-    """写类工具的目标集合无法完整建立：pre 披露结构原因，post 保留记账缺口。"""
-    return {"repo": None, "entries": [], "gap": True, "task_key": None}
+def _write_targets_gap(reason: str) -> Dict[str, Any]:
+    """写类工具的目标集合无法完整建立：pre 披露结构原因，post 保留记账缺口。
+
+    `reason` 是缺口原因分类（`targets_incomplete`、`stdin_unparsed` 等），pre 写进
+    pending，post 按「同一任务 + 同一原因」去重披露。
+    """
+    return {
+        "repo": None,
+        "entries": [],
+        "gap": True,
+        "gap_reason": reason,
+        "task_key": None,
+    }
 
 
 ROOT_MARKERS = {"root", "main"}
@@ -1987,33 +2001,41 @@ class Engine(object):
         内容基线的目标在锁外在这里自动保存首次快照（大文件 I/O 不进共享 task 锁）。
 
         写类工具始终返回结构：`gap=True` 表示目标集合无法完整建立（结构缺口、
-        执行型 stdin 未枚举出写目标、预取指纹不一致、目标在仓库外），`entries=[]`
-        且 `gap=False` 表示这次调用没有写目标可记账（纯读 shell、空 patch）。两者
-        不能混为一谈：后者不建 pending，也不告警。
+        执行型 stdin 未枚举出写目标、预取指纹不一致或取证超时、仓库内与仓库外
+        混合目标），`entries=[]` 且 `gap=False` 表示这次调用没有写目标可记账
+        （纯读 shell、空 patch、只改 `.git` 的 git 元数据命令、纯仓库外写入）。
+        两者不能混为一谈：后者不建 pending，也不告警。`gap_reason` 是去重用的
+        原因分类。
         """
         tool = record.tool
         if tool.get("kind") not in {"write", "patch", "shell"}:
             return None
+        analysis = None
         unparsed = False
         if tool.get("kind") == "shell":
             command = _string(_first(tool.get("args") or {}, "command", "CommandLine", "cmd"))
             analysis = shell.analyze(command, cwd=_tool_cwd(record) or None)
             if analysis.opaque or analysis.too_deep:
                 self._warn_structure_once(record, "命令结构无法完整解析，基线检查未覆盖")
-                return _write_targets_gap()
+                return _write_targets_gap("structure_unparsed")
             # 执行型 stdin（解释器正文、herestring）没有被枚举成写目标：
             # “无法证明没有写”不等于“已证明没有写”，按目标集不完整处理。
             unparsed = bool(getattr(analysis, "stdin_unparsed", False))
         repo = self._repo_root(record)
         if not repo:
             self._warn_structure_once(record, "缺少可定位的仓库根或 cwd，基线检查降级")
-            return _write_targets_gap()
+            return _write_targets_gap("no_repo")
         targets, complete, targets_gap = write_targets_from_tool(
             self.host, tool, self.capabilities, _tool_cwd(record)
         )
         if not complete:
             self._warn_structure_once(record, targets_gap or "写入目标不完整，基线检查未覆盖")
-            return _write_targets_gap()
+            reason = (
+                "command_cwd_unknown"
+                if analysis is not None and analysis.write_unknown
+                else "targets_incomplete"
+            )
+            return _write_targets_gap(reason)
         tool_cwd = _tool_cwd(record)
         entries: List[Dict[str, Any]] = []
         outside = False
@@ -2047,7 +2069,8 @@ class Engine(object):
             target_repo = paths.repo_root(os.path.dirname(absolute), deadline=self.deadline) or repo
             lexical = paths.lexical_rel(target_repo, absolute)
             if lexical is None:
-                self._warn_structure_once(record, "写入目标位于仓库外，未纳入基线检查")
+                # 仓库外写入不在基线能力的范围内（基线只覆盖任务仓库），不算记账
+                # 缺口：只有目标时静默跳过，与仓库内目标混合时仍按缺口处理。
                 outside = True
                 continue
             # 解析后的目标仓库内父链同样不允许软链消解。
@@ -2071,22 +2094,32 @@ class Engine(object):
                     entry["origin"] = paths.classify(target_repo, relative, deadline=self.deadline)
                 except paths.GitUnavailable:
                     self.warnings.append("Git 状态查询失败，基线检查降级")
-                    return _write_targets_gap()
+                    return _write_targets_gap("git_unavailable")
             entries.append(entry)
         # 同一文件多次写只算一个目标：快照与配对都按合并后的集合做一次。
         entries, unstable = _merge_write_entries(entries)
         # 取证超时仍算目标集不完整（post 不建立成功豁免），但不因此 pre 拒绝。
         degraded = any(item.get("deadline") for item in entries)
-        gap = outside or unstable or unparsed or degraded
-        # 只有「缺口原因恰好只有执行型 stdin 未解析」才进入按任务去重的提醒；
-        # 同时存在仓库外目标、预取不一致或取证超时时，仍每次披露。
-        gap_stdin_only = unparsed and not (outside or unstable or degraded)
+        # 缺口原因逐项累计：post 按「同一任务 + 同一原因集合」去重披露，不同原因
+        # 仍分别披露（见 `_warn_accounting_gap`）。只有仓库外目标时没有可核对的
+        # 基线目标，静默跳过；仓库内与仓库外混合时仓库内目标的记账仍不完整。
+        reasons: List[str] = []
+        if unstable:
+            reasons.append("unstable")
+        if unparsed:
+            reasons.append("stdin_unparsed")
+        if degraded:
+            reasons.append("deadline")
+        if outside and entries:
+            reasons.append("outside")
+        gap = bool(reasons)
+        gap_reason = "+".join(reasons)
         if not entries:
             return {
                 "repo": repo,
                 "entries": [],
                 "gap": gap,
-                "gap_stdin_only": gap_stdin_only,
+                "gap_reason": gap_reason,
                 "task_key": None,
             }
         if classify and record.activation_scope == "task_active" and not self._manual_task_root_for(root_key, task_key):
@@ -2103,7 +2136,7 @@ class Engine(object):
             "repo": repo,
             "entries": entries,
             "gap": gap,
-            "gap_stdin_only": gap_stdin_only,
+            "gap_reason": gap_reason,
             "task_key": None,
         }
 
@@ -3120,9 +3153,9 @@ class Engine(object):
                 == len([item for item in entries if not item.get("symlink")])
             ),
             "gap": gap,
-            # 缺口是否只来自「执行型 stdin 正文未解析」：post 据此把同一任务里重复的
-            # 同一句提醒去重，记账本身仍按不完整处理。
-            "gap_stdin_only": bool((prepared or {}).get("gap_stdin_only")),
+            # 缺口原因集合（`+` 连接）：post 据此把同一任务里重复的同一原因去重，
+            # 记账本身仍按不完整处理。
+            "gap_reason": str((prepared or {}).get("gap_reason") or ""),
         }
         if len(pending) > 200:
             for key in list(pending)[:100]:
@@ -3255,23 +3288,24 @@ class Engine(object):
         entry: Dict[str, Any],
         prepared: Optional[Dict[str, Any]],
     ) -> None:
-        """写序列缺口披露：执行型 stdin 正文按任务提醒一次，其余原因每次提醒。
+        """写序列缺口披露：同一任务里同一组缺口原因只提醒一次。
 
-        去重只作用于「pre 与 post 的缺口原因都只有执行型 stdin 未解析」这一种：同一任务
-        里反复跑 `python3 - <<'PY'` 这类命令时，重复的同一句提醒没有新信息。记账不变——
-        pending 仍是不完整、不建立成功豁免；换 epoch（新任务）重新提醒一次。缺口还含其它
-        原因（仓库外目标、预取不一致、取证超时、pre 缺失等）时每次仍披露，避免把不同原因
-        静默合并。
+        去重键是 pre 与 post 两侧的缺口原因集合，不是笼统的“已警告”状态：同一任务里
+        反复跑 `python3 - <<'PY'`、`cp -R`、`sed -i` 这类常见调用时，重复的同一句提醒
+        没有新信息；换一类原因（例如先 stdin 未解析、后目标集不完整）仍分别披露。
+        记账不变——pending 仍是不完整、不建立成功豁免；换 epoch（新任务）重新提醒一次。
         """
-        stdin_only = bool(entry.get("gap_stdin_only")) and bool(
-            (prepared or {}).get("gap_stdin_only")
+        raw = "%s + %s" % (
+            str((prepared or {}).get("gap_reason") or ""),
+            str(entry.get("gap_reason") or ""),
         )
-        notices = task.setdefault("gap_notices", {}) if stdin_only else {}
+        reasons = sorted({part.strip() for part in raw.split("+") if part.strip()})
+        reason = "+".join(reasons) or "incomplete"
+        notices = task.setdefault("gap_notices", {})
         epoch = int(task.get("task_epoch") or 0)
-        if stdin_only:
-            if notices.get("stdin_unparsed") == epoch:
-                return
-            notices["stdin_unparsed"] = epoch
+        if notices.get(reason) == epoch:
+            return
+        notices[reason] = epoch
         self.warnings.append("post 写入目标不完整，写序列记覆盖缺口")
 
     def _is_code_write(self, relative: str, task: Dict[str, Any], repo: str) -> bool:

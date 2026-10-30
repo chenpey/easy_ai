@@ -100,6 +100,19 @@ GIT_WRITE_SUBCOMMANDS = {
     "submodule",
     "worktree",
 }
+# 只写 .git/索引/远端、不产生工作区文件的子命令：core 的基线目标跳过它们
+# （`business=False`），reviewer 只读仍依据同一份 writes 拒绝。
+GIT_METADATA_SUBCOMMANDS = {
+    "add",
+    "commit",
+    "config",
+    "fetch",
+    "gc",
+    "prune",
+    "push",
+    "repack",
+    "update-index",
+}
 SHELL_WRAPPERS = {"bash", "sh", "zsh"}
 WRITE_COMMANDS = {
     "touch",
@@ -2812,13 +2825,28 @@ def _write_targets_for_command(
             args = [str(token) for token in action.get("args") or []]
             if sub in {"branch", "tag"}:
                 if _ref_command_writes(args):
-                    analysis.writes.append({"kind": "git-" + sub, "target": None, "complete": False})
+                    # 建/删/移 ref 与改上游只改 .git，没有工作区目标。
+                    analysis.writes.append(
+                        {
+                            "kind": "git-" + sub,
+                            "target": None,
+                            "complete": False,
+                            "business": False,
+                        }
+                    )
                 continue
             if sub in GIT_WRITE_SUBCOMMANDS:
                 if sub == "stash":
                     if args and args[0] in {"list", "show", "help"}:
                         continue
-                analysis.writes.append({"kind": "git-" + sub, "target": None, "complete": False})
+                analysis.writes.append(
+                    {
+                        "kind": "git-" + sub,
+                        "target": None,
+                        "complete": False,
+                        "business": sub not in GIT_METADATA_SUBCOMMANDS,
+                    }
+                )
                 continue
             if sub == "config":
                 if not any(
@@ -2826,7 +2854,14 @@ def _write_targets_for_command(
                     or token in {"--list", "--show-origin", "-l"}
                     for token in args
                 ):
-                    analysis.writes.append({"kind": "git-config", "target": None, "complete": False})
+                    analysis.writes.append(
+                        {
+                            "kind": "git-config",
+                            "target": None,
+                            "complete": False,
+                            "business": False,
+                        }
+                    )
         return
     if name in {"python", "python3", "node"}:
         literal = " ".join(rest)

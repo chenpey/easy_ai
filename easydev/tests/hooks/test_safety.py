@@ -600,12 +600,13 @@ class SafetyMixin(object):
                 assert not self.snapshots(relative), relative
             keys = self.registered_targets()
             assert not [key for key in keys if "::dest/app.py" in key], keys
-            # 成功 post 仍披露不完整写缺口，不推进写序列。
+            # 成功 post 仍披露不完整写缺口（同一任务/同一原因只提醒一次），
+            # 不推进写序列。
             _code, value, stderr = self.run_core(
                 self.shell("s1", command, tool_id=tool_id, event="post_tool", outcome="success")
             )
             assert not self.is_denied(value), value
-            assert "写序列记覆盖缺口" in stderr
+            assert ("写序列记覆盖缺口" in stderr) == (index == 0), (index, stderr)
             assert not self.snapshots("dest/app.py")
 
 

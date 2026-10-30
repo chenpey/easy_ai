@@ -6,7 +6,15 @@
  * 避免宿主默认 fail-closed 阻断正常工具。
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  truncateSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,6 +41,19 @@ const STDERR_CAPTURE_MAX = 8192;
 const WARNING_MAX = 2048;
 const WARNING_PREFIX = "[easydev-hooks] warning";
 const HIDDEN_STDERR_TEXT = "core_stderr：核心有诊断，细节已隐藏";
+// 告警默认只写私有日志：pi 会把扩展的 stderr 直接展示在交互区（输入框上方），
+// 每轮开发都刷“降级”类提示会干扰输入。`EASYDEV_HOOKS_WARNINGS=stderr` 恢复
+// 旧的上屏行为（调试/冒烟用）。传输层故障始终上屏：它意味着守卫根本没跑起来。
+const WARNINGS_MODE =
+  process.env.EASYDEV_HOOKS_WARNINGS === "stderr" ? "stderr" : "log";
+const WARNING_LOG_MAX = 1024 * 1024;
+const WARNING_LOG =
+  process.env.EASYDEV_HOOKS_LOG ||
+  join(
+    process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
+    "easydev-hooks",
+    "pi-warnings.log",
+  );
 
 // 诊断边界：行首、核心的 `warning: ` 前缀，或同一条汇总里的全角分号。
 // 无转义文本协议原则上不能消歧，但当前 core 的生产者值域有界；边界只是
@@ -133,12 +154,40 @@ function summarizeCoreStderr(text: string): string | null {
   return "core 降级：" + labels.join("；");
 }
 
-/** 一次调用最多一条汇总告警；输出失败不得影响 fail-open 返回值。 */
-function emitWarning(parts: string[]): void {
-  if (parts.length === 0) return;
-  const line = `${WARNING_PREFIX}: ${parts.join("；")}`;
+/** 汇总告警写私有日志（有界、不存 prompt/命令/路径）；失败不得影响放行。 */
+function appendWarningLog(line: string, event: string): void {
   try {
-    console.error(clampBytes(line, WARNING_MAX));
+    mkdirSync(dirname(WARNING_LOG), { recursive: true, mode: 0o700 });
+    try {
+      if (statSync(WARNING_LOG).size >= WARNING_LOG_MAX) truncateSync(WARNING_LOG, 0);
+    } catch {
+      // 日志还不存在：直接追加。
+    }
+    const stamp = new Date().toISOString();
+    appendFileSync(WARNING_LOG, `${stamp}\t${event}\t${line}\n`, { mode: 0o600 });
+  } catch {
+    // 日志不可用时不回落到 stderr：宿主交互区不应因告警通道故障被刷屏。
+  }
+}
+
+/** 一次调用最多一条汇总；默认只把传输层故障上屏，降级类别进日志。 */
+function emitWarning(parts: string[], event: string): void {
+  if (parts.length === 0) return;
+  const line = clampBytes(`${WARNING_PREFIX}: ${parts.join("；")}`, WARNING_MAX);
+  appendWarningLog(line, event);
+  if (WARNINGS_MODE === "stderr") {
+    try {
+      console.error(line);
+    } catch {
+      // 告警通道本身不可用时保持静默放行。
+    }
+    return;
+  }
+  // 传输层故障（spawn/超时/非 0/JSON/空输出）说明 Hook 未生效，必须让人看见。
+  const transport = parts.filter((part) => !part.startsWith("core 降级："));
+  if (transport.length === 0) return;
+  try {
+    console.error(clampBytes(`${WARNING_PREFIX}: ${transport.join("；")}`, WARNING_MAX));
   } catch {
     // 告警通道本身不可用时保持静默放行。
   }
@@ -209,6 +258,7 @@ function envelope(
 async function callCore(payload: Record<string, unknown>): Promise<CoreResponse | null> {
   if (!pluginAvailable()) return null;
   const text = JSON.stringify(payload);
+  const event = typeof payload.event === "string" ? payload.event : "";
   return new Promise((resolve) => {
     let settled = false;
     let stderrBytes = Buffer.alloc(0);
@@ -221,7 +271,7 @@ async function callCore(payload: Record<string, unknown>): Promise<CoreResponse 
       clearTimeout(timer);
       const summary = summarizeCoreStderr(stderrBytes.toString("utf8"));
       if (summary) diagnostics.push(summary);
-      emitWarning(diagnostics);
+      emitWarning(diagnostics, event);
       resolve(value);
     };
     const timer = setTimeout(() => {

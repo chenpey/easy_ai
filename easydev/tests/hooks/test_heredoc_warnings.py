@@ -1,7 +1,8 @@
-"""M2a：五类基线结构告警只在 pre 披露（design v4 §6 / §8.3）。
+"""M2a：四类基线结构告警只在 pre 披露（design v4 §6 / §8.3）。
 
 post 仍照常计算 prepared 用于指纹配对与写序列记账，只是不重复 pre 已披露的
-结构缺口；这是按事件限定披露，不是跨事件“已警告”状态。危险 Git 字面在源码里
+结构缺口；这是按事件限定披露，不是跨事件“已警告”状态。“写入目标位于仓库外”
+不再算结构缺口：基线只覆盖任务仓库，纯仓库外写入静默跳过。危险 Git 字面在源码里
 用字符串拼接构造，避免作者自己的命令行被现网 hook 拦下。
 """
 
@@ -27,7 +28,6 @@ STRUCTURE_UNPARSABLE = "命令结构无法完整解析，基线检查未覆盖"
 NO_REPO = "缺少可定位的仓库根或 cwd，基线检查降级"
 WRITE_TOOL_WITHOUT_PATH = "写工具缺少可识别路径字段"
 CWD_UNKNOWN_GAP = "命令内目录变化无法确定，基线检查未覆盖"
-TARGET_OUTSIDE = "写入目标位于仓库外，未纳入基线检查"
 REVIEWER_UNKNOWN = "reviewer 命令结构未覆盖，已放行并披露"
 POST_INCOMPLETE = "post 写入目标不完整，写序列记覆盖缺口"
 POST_UNPAIRED = "post 未找到与该 actor/epoch/tool ID 配对的 pre 记录，未建立成功豁免"
@@ -160,7 +160,7 @@ class ShellHeredocTests(HeredocWarningCase):
 
 
 class StructureWarningScopeTests(HeredocWarningCase):
-    """五类基线结构原句：pre 披露、post 不重复，原判定与返回不变。"""
+    """四类基线结构原句：pre 披露、post 不重复，原判定与返回不变。"""
 
     def test_unclosed_heredoc_structure_warning_is_pre_only(self) -> None:
         self.activate("s1")
@@ -209,13 +209,7 @@ class StructureWarningScopeTests(HeredocWarningCase):
                 dict(command="until cd sub; do true; done; printf x > app.py"),
                 CWD_UNKNOWN_GAP,
             ),
-            (
-                "outside",
-                dict(command="printf x > %s" % (self.root / "outside" / "a.txt")),
-                TARGET_OUTSIDE,
-            ),
         )
-        (self.root / "outside").mkdir()
         for name, kwargs, message in cases:
             with subtests.test(case=name):
                 prepared, warnings = self.prepare("pre_tool", **kwargs)
@@ -229,7 +223,8 @@ class StructureWarningScopeTests(HeredocWarningCase):
                 assert prepared["gap"]
                 assert warnings == []
 
-    def test_multiple_outside_targets_warn_once_per_pre_call(self) -> None:
+    def test_outside_target_is_not_a_gap(self) -> None:
+        """纯仓库外写入不在基线范围内：既不告警，也不算记账缺口。"""
         (self.root / "outside").mkdir()
         command = "printf x > %s; printf y > %s" % (
             self.root / "outside" / "a.txt",
@@ -238,8 +233,27 @@ class StructureWarningScopeTests(HeredocWarningCase):
         prepared, warnings = self.prepare("pre_tool", command=command)
         assert prepared is not None
         assert prepared["entries"] == []
+        assert not prepared["gap"]
+        assert warnings == []
+        prepared, warnings = self.prepare("post_tool", command=command)
+        assert prepared is not None
+        assert prepared["entries"] == []
+        assert not prepared["gap"]
+        assert warnings == []
+
+    def test_mixed_outside_target_keeps_gap_reason(self) -> None:
+        """仓库内 + 仓库外混合写入：仓库内目标仍按不完整处理，原因可追溯。"""
+        (self.root / "outside").mkdir()
+        command = "printf y > src/app.py; printf x > %s" % (
+            self.root / "outside" / "a.txt",
+        )
+        prepared, warnings = self.prepare("pre_tool", command=command, cwd=str(self.repo))
+        assert prepared is not None
+        assert [item["relative"] for item in prepared["entries"]] == ["src/app.py"]
         assert prepared["gap"]
-        assert warnings.count(TARGET_OUTSIDE) == 1, warnings
+        assert prepared["gap_reason"] == "outside"
+        # 仓库外目标的 pre 原句已取消；缺口交给 post 的记账告警按原因披露。
+        assert warnings == []
 
 class ReviewerStructureWarningTests(HeredocWarningCase):
     """reviewer 的明确写仍是 reviewer_command_write；未知结构告警仅 pre。"""
@@ -282,7 +296,7 @@ class ReviewerStructureWarningTests(HeredocWarningCase):
 class PreOnlyInformationLossTests(HeredocWarningCase):
     """B3–B5：pre-only 是事件作用域，不是“已经披露过”；三种信息损失逐格断言。
 
-    五类基线结构原句只按事件披露，既不验证 pre 是否运行，也不比较 pre/post 参数；
+    基线结构原句只按事件披露，既不验证 pre 是否运行，也不比较 pre/post 参数；
     因此下列三种情形下具体结构原因都不会被补报，post 自身的记账缺口也不能恢复它。
     """
 
