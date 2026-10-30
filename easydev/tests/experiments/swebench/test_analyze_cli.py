@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 
 
@@ -82,10 +81,12 @@ def turn(usage=None) -> dict:
     return {"type": "turn.completed", "usage": usage or {}}
 
 
-class AnalyzeEventsCliTest(unittest.TestCase):
-    def setUp(self) -> None:
+class AnalyzeEventsCliTest:
+    def setup_method(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="easydev-analyze-cli-"))
-        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def teardown_method(self) -> None:
+        shutil.rmtree(self.root, True)
 
     def write_run(
         self,
@@ -133,7 +134,7 @@ class AnalyzeEventsCliTest(unittest.TestCase):
 
     def payload(self, experiment: Path) -> dict:
         completed = self.analyze(experiment, "--format", "json")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def run_by_task(self, payload: dict, task: str) -> dict:
@@ -155,17 +156,14 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         )
         payload = self.payload(experiment)
         run = self.run_by_task(payload, "route")
-        self.assertEqual(run["declared_initial_path"], "quick")
-        self.assertEqual(run["declared_final_path"], "full")
-        self.assertTrue(run["upgraded_to_full"])
-        self.assertEqual(run["reviewer_instances"], 1)
-        self.assertEqual(run["reviewer_completed_instances"], 1)
-        self.assertEqual(run["reviewer_reports"], 1)
-        self.assertEqual(
-            run["findings"],
-            [{"severity": "P1", "title": "权限绕过 app/orders.py:7"}],
-        )
-        self.assertEqual(payload["summary"]["reviewer_finding_count"], 1)
+        assert run["declared_initial_path"] == "quick"
+        assert run["declared_final_path"] == "full"
+        assert run["upgraded_to_full"]
+        assert run["reviewer_instances"] == 1
+        assert run["reviewer_completed_instances"] == 1
+        assert run["reviewer_reports"] == 1
+        assert run["findings"] == [{"severity": "P1", "title": "权限绕过 app/orders.py:7"}]
+        assert payload["summary"]["reviewer_finding_count"] == 1
 
     def test_reviewer_finding_scan_ignores_quoted_format_template(self) -> None:
         # 交接/报告里复述「**[P0]/[P1]/[P2]/[P3] 简短标题**」不是发现。
@@ -184,8 +182,8 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             ],
         )
         payload = self.payload(experiment)
-        self.assertEqual(self.run_by_task(payload, "quoted")["findings"], [])
-        self.assertEqual(payload["summary"]["reviewer_finding_count"], 0)
+        assert self.run_by_task(payload, "quoted")["findings"] == []
+        assert payload["summary"]["reviewer_finding_count"] == 0
 
     def test_access_attribution_counts_observed_paths_only(self) -> None:
         experiment = self.root / "access"
@@ -201,9 +199,9 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             ],
         )
         run = self.run_by_task(self.payload(experiment), "access")
-        self.assertIn("app/orders.py", run["file_access"])
-        self.assertIn("references/review.md", run["module_access"])
-        self.assertNotIn("app/admin.py", run["file_access"])
+        assert "app/orders.py" in run["file_access"]
+        assert "references/review.md" in run["module_access"]
+        assert "app/admin.py" not in run["file_access"]
 
     def test_usage_cache_rate_and_wall_time_keep_unknown_values(self) -> None:
         experiment = self.root / "usage"
@@ -229,13 +227,13 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         payload = self.payload(experiment)
         measured = self.run_by_task(payload, "measured")
         unmeasured = self.run_by_task(payload, "unmeasured")
-        self.assertEqual(measured["input_tokens"], 1000)
-        self.assertEqual(measured["cached_input_tokens"], 250)
-        self.assertEqual(measured["cache_rate"], 0.25)
-        self.assertEqual(measured["wall_seconds"], 12.5)
-        self.assertEqual(unmeasured["input_tokens"], 0)
-        self.assertIsNone(unmeasured["cache_rate"])
-        self.assertEqual(payload["aggregate"][0]["mean_cache_rate"], 0.25)
+        assert measured["input_tokens"] == 1000
+        assert measured["cached_input_tokens"] == 250
+        assert measured["cache_rate"] == 0.25
+        assert measured["wall_seconds"] == 12.5
+        assert unmeasured["input_tokens"] == 0
+        assert unmeasured["cache_rate"] is None
+        assert payload["aggregate"][0]["mean_cache_rate"] == 0.25
 
     def test_zero_findings_requires_an_explicit_statement(self) -> None:
         experiment = self.root / "zero-findings"
@@ -250,10 +248,8 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             [spawn(), reviewer_state("限制：未检查并发写入路径。"), turn()],
         )
         payload = self.payload(experiment)
-        self.assertTrue(self.run_by_task(payload, "clean")["reviewer_zero_findings"])
-        self.assertFalse(
-            self.run_by_task(payload, "limited")["reviewer_zero_findings"]
-        )
+        assert self.run_by_task(payload, "clean")["reviewer_zero_findings"]
+        assert not self.run_by_task(payload, "limited")["reviewer_zero_findings"]
 
     def test_malformed_event_lines_are_counted_without_crashing(self) -> None:
         experiment = self.root / "malformed"
@@ -266,10 +262,10 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             events.write("{not-json\n")
         payload = self.payload(experiment)
         run = self.run_by_task(payload, "malformed")
-        self.assertEqual(run["malformed_event_lines"], 1)
-        self.assertGreaterEqual(run["event_count"], 2)
-        self.assertFalse(run["event_stream_valid"])
-        self.assertEqual(payload["summary"]["malformed_event_lines"], 1)
+        assert run["malformed_event_lines"] == 1
+        assert run["event_count"] >= 2
+        assert not run["event_stream_valid"]
+        assert payload["summary"]["malformed_event_lines"] == 1
 
     def test_null_receiver_ids_are_missing_not_crashing(self) -> None:
         # The protocol accepts "receiver_thread_ids": null as a nullable field, so
@@ -296,39 +292,34 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             ],
         )
         markdown = self.analyze(experiment)
-        self.assertEqual(markdown.returncode, 0, markdown.stderr)
+        assert markdown.returncode == 0, markdown.stderr
         report = experiment / "report.md"
         written = self.analyze(experiment, output=report)
-        self.assertEqual(written.returncode, 0, written.stderr)
-        self.assertIn("Reviewer", report.read_text(encoding="utf-8"))
+        assert written.returncode == 0, written.stderr
+        assert "Reviewer" in report.read_text(encoding="utf-8")
 
         run = self.run_by_task(self.payload(experiment), "null-ids")
-        self.assertEqual(run["malformed_event_lines"], 0)
-        self.assertEqual(run["reviewer_instances"], 1)
-        self.assertEqual(run["reviewer_completed_instances"], 1)
-        self.assertEqual(run["reviewer_reports"], 1)
-        self.assertEqual(
-            run["findings"],
-            [{"severity": "P2", "title": "边界未覆盖 app/orders.py:3"}],
-        )
+        assert run["malformed_event_lines"] == 0
+        assert run["reviewer_instances"] == 1
+        assert run["reviewer_completed_instances"] == 1
+        assert run["reviewer_reports"] == 1
+        assert run["findings"] == [{"severity": "P2", "title": "边界未覆盖 app/orders.py:3"}]
 
     def test_output_file_matches_stdout(self) -> None:
         experiment = self.root / "output"
         self.write_run(experiment, "output", [agent_message(0, "完成。"), turn()])
         printed = self.analyze(experiment, "--format", "json")
-        self.assertEqual(printed.returncode, 0, printed.stderr)
+        assert printed.returncode == 0, printed.stderr
         output = experiment / "analysis.json"
         completed = self.analyze(
             experiment, "--format", "json", output=output
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout, "")
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == ""
         written = output.read_text(encoding="utf-8")
-        self.assertEqual(written, printed.stdout)
-        self.assertEqual(json.loads(written), json.loads(printed.stdout))
-        self.assertEqual(
-            json.loads(written)["experiment"], str(experiment.resolve())
-        )
+        assert written == printed.stdout
+        assert json.loads(written) == json.loads(printed.stdout)
+        assert json.loads(written)["experiment"] == str(experiment.resolve())
 
 
 
@@ -457,11 +448,10 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             )
         payload = self.payload(experiment)
         for index, (label, _messages, initial, final, upgraded) in enumerate(cases):
-            with self.subTest(case=label):
-                run = self.run_by_task(payload, f"route-{index}")
-                self.assertEqual(run["declared_initial_path"], initial)
-                self.assertEqual(run["declared_final_path"], final)
-                self.assertEqual(run["upgraded_to_full"], upgraded)
+            run = self.run_by_task(payload, f"route-{index}")
+            assert run["declared_initial_path"] == initial
+            assert run["declared_final_path"] == final
+            assert run["upgraded_to_full"] == upgraded
 
     def test_reviewer_completion_requires_completed_nonempty_report(self) -> None:
         short_role_spawn = spawn()
@@ -507,11 +497,10 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             self.write_run(experiment, f"reviewer-{index}", events + [turn()])
         payload = self.payload(experiment)
         for index, (label, _events, completed, reports) in enumerate(cases):
-            with self.subTest(case=label):
-                run = self.run_by_task(payload, f"reviewer-{index}")
-                self.assertEqual(run["reviewer_instances"], 1)
-                self.assertEqual(run["reviewer_completed_instances"], completed)
-                self.assertEqual(run["reviewer_reports"], reports)
+            run = self.run_by_task(payload, f"reviewer-{index}")
+            assert run["reviewer_instances"] == 1
+            assert run["reviewer_completed_instances"] == completed
+            assert run["reviewer_reports"] == reports
 
     def test_reviewer_prompt_requires_positive_intent_without_developer_handoff(
         self,
@@ -588,10 +577,9 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             )
         payload = self.payload(experiment)
         for index, (label, _prompt, expected) in enumerate(cases):
-            with self.subTest(case=label):
-                run = self.run_by_task(payload, f"reviewer-{index}")
-                self.assertEqual(run["reviewer_instances"], expected)
-                self.assertEqual(run["reviewer_completed_instances"], expected)
+            run = self.run_by_task(payload, f"reviewer-{index}")
+            assert run["reviewer_instances"] == expected
+            assert run["reviewer_completed_instances"] == expected
 
     # -- access attribution --------------------------------------------
     def test_access_attribution_separates_reads_from_status_queries(self) -> None:
@@ -611,12 +599,12 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             ],
         )
         run = self.run_by_task(self.payload(experiment), "access")
-        self.assertIn("app/orders.py", run["file_access"])
-        self.assertIn("app/admin.py", run["file_access"])
-        self.assertIn("app/", run["file_access"])
-        self.assertNotIn("HEAD:app/orders.py", run["file_access"])
-        self.assertIn("dataset.json", run["benchmark_metadata_access"])
-        self.assertIn("solution.patch", run["benchmark_metadata_access"])
+        assert "app/orders.py" in run["file_access"]
+        assert "app/admin.py" in run["file_access"]
+        assert "app/" in run["file_access"]
+        assert "HEAD:app/orders.py" not in run["file_access"]
+        assert "dataset.json" in run["benchmark_metadata_access"]
+        assert "solution.patch" in run["benchmark_metadata_access"]
 
     # -- current-protocol contracts ------------------------------------
     def write_contracts(
@@ -687,14 +675,14 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             result=self.valid_result(),
         )
         payload = self.payload(experiment)
-        self.assertTrue(payload["runs"][0]["result_valid"])
+        assert payload["runs"][0]["result_valid"]
 
         missing_dataset = self.root / "contract-missing-dataset"
         shutil.copytree(experiment, missing_dataset)
         (missing_dataset / "dataset.json").unlink()
         run = self.payload(missing_dataset)["runs"][0]
-        self.assertFalse(run["result_valid"])
-        self.assertIn("dataset", run["result_validation_error"])
+        assert not run["result_valid"]
+        assert "dataset" in run["result_validation_error"]
 
         bad_baseline = self.root / "contract-bad-baseline"
         shutil.copytree(experiment, bad_baseline)
@@ -703,14 +691,14 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         value["eligible_p2p"] = []
         path.write_text(json.dumps(value), encoding="utf-8")
         run = self.payload(bad_baseline)["runs"][0]
-        self.assertFalse(run["result_valid"])
-        self.assertIn("baseline", run["result_validation_error"])
+        assert not run["result_valid"]
+        assert "baseline" in run["result_validation_error"]
 
         wrong_contract = self.root / "contract-wrong-f2p"
         shutil.copytree(experiment, wrong_contract)
         self.write_contracts(wrong_contract, f2p="tests/test_f2p.py::test_other")
         run = self.payload(wrong_contract)["runs"][0]
-        self.assertFalse(run["result_valid"])
+        assert not run["result_valid"]
 
     def test_behavior_protocol_is_not_counted_as_historical_swe_result(self) -> None:
         experiment = self.root / "behavior"
@@ -725,8 +713,8 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             result=result,
         )
         run = self.payload(experiment)["runs"][0]
-        self.assertFalse(run["result_valid"])
-        self.assertIsNone(run["historical_resolved"])
+        assert not run["result_valid"]
+        assert run["historical_resolved"] is None
 
     def test_nested_agent_usage_and_wall_seconds_are_read(self) -> None:
         experiment = self.root / "nested"
@@ -746,9 +734,9 @@ class AnalyzeEventsCliTest(unittest.TestCase):
             },
         )
         run = self.run_by_task(self.payload(experiment), "task")
-        self.assertEqual(run["input_tokens"], 800)
-        self.assertEqual(run["cache_rate"], 0.25)
-        self.assertEqual(run["wall_seconds"], 7.5)
+        assert run["input_tokens"] == 800
+        assert run["cache_rate"] == 0.25
+        assert run["wall_seconds"] == 7.5
 
     # -- usage semantics (characterization) ----------------------------
     def test_usage_source_matrix_documents_known_limit(self) -> None:
@@ -791,15 +779,15 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         missing = self.run_by_task(payload, "missing")
         real_zero = self.run_by_task(payload, "real-zero")
         # Known limitation: the event stream usage is not aggregated.
-        self.assertEqual(result_only["input_tokens"], 1000)
-        self.assertEqual(result_only["cache_rate"], 0.25)
-        self.assertEqual(event_only["input_tokens"], 0)
-        self.assertIsNone(event_only["cache_rate"])
-        self.assertEqual(missing["input_tokens"], 0)
-        self.assertIsNone(missing["cache_rate"])
+        assert result_only["input_tokens"] == 1000
+        assert result_only["cache_rate"] == 0.25
+        assert event_only["input_tokens"] == 0
+        assert event_only["cache_rate"] is None
+        assert missing["input_tokens"] == 0
+        assert missing["cache_rate"] is None
         # Token 0 cannot distinguish "unknown" from a measured zero.
-        self.assertEqual(real_zero["input_tokens"], 0)
-        self.assertIsNone(real_zero["cache_rate"])
+        assert real_zero["input_tokens"] == 0
+        assert real_zero["cache_rate"] is None
 
     def test_structurally_invalid_events_are_counted_not_crashing(self) -> None:
         experiment = self.root / "invalid-structures"
@@ -822,10 +810,6 @@ class AnalyzeEventsCliTest(unittest.TestCase):
         with (run_dir / "events.jsonl").open("a", encoding="utf-8") as events:
             events.write("{not-json\n")
         run = self.run_by_task(self.payload(experiment), "invalid")
-        self.assertEqual(run["malformed_event_lines"], 4)
-        self.assertEqual(run["event_count"], 1)
-        self.assertFalse(run["event_stream_valid"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert run["malformed_event_lines"] == 4
+        assert run["event_count"] == 1
+        assert not run["event_stream_valid"]

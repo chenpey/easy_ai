@@ -13,9 +13,10 @@ X03：`consumed_read_ids` 跨 epoch 保存停用前见过的调用 ID 且不做�
 
 from __future__ import annotations
 
+import pytest
+
 import subprocess
 import sys
-import unittest
 
 from support import HOOKS_ROOT, HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states, task_states
@@ -55,8 +56,8 @@ class X01CommentLexicalStateTests(HookCase):
         "# note # '\"` $user\nprintf x >\\\n&1.txt",
     )
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         for name in self.SENTINELS:
             (self.repo / name).write_text("USER-SENTINEL\n", encoding="utf-8")
 
@@ -70,9 +71,7 @@ class X01CommentLexicalStateTests(HookCase):
 
     def assert_sentinels_intact(self) -> None:
         for name in self.SENTINELS:
-            self.assertEqual(
-                (self.repo / name).read_text(encoding="utf-8"), "USER-SENTINEL\n", name
-            )
+            assert (self.repo / name).read_text(encoding="utf-8") == "USER-SENTINEL\n", name
 
     def dispatch_command(self, session: str, command: str, tool_id: str) -> dict:
         """经 CLI 判定；只有 allow 才在临时 Bash 里执行原命令（负例绝不执行）。"""
@@ -93,11 +92,10 @@ class X01CommentLexicalStateTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.redirect_deny_cases()):
-            with self.subTest(command=command):
-                value = self.dispatch_command("dev", command, "x01-dev-%d" % index)
-                # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
-                self.assertTrue(self.is_denied(value), value)
-                self.assertIn("baseline/1.txt", self.reason(value))
+            value = self.dispatch_command("dev", command, "x01-dev-%d" % index)
+            # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
+            assert self.is_denied(value), value
+            assert "baseline/1.txt" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_comment_quotes_do_not_unhide_dangerous_git(self) -> None:
@@ -106,60 +104,53 @@ class X01CommentLexicalStateTests(HookCase):
             self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT + self.COMMENT_TRAILING_BACKSLASH[:1]
         )
         for index, command in enumerate(git_cases):
-            with self.subTest(command=command):
-                # 危险 Git 只作为字符串投递，绝不执行。
-                reason = self.deny(self.shell("dev", command, tool_id="x01-git-%d" % index))
-                self.assertIn("Git", reason)
+            # 危险 Git 只作为字符串投递，绝不执行。
+            reason = self.deny(self.shell("dev", command, tool_id="x01-git-%d" % index))
+            assert "Git" in reason
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_the_same_forms(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.redirect_deny_cases()):
-            with self.subTest(command=command):
-                value = self.dispatch_command("rev", command, "x01-rev-%d" % index)
-                self.assertTrue(self.is_denied(value), value)
-                self.assertIn("只读", self.reason(value))
-                # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
-                violation = shell.reviewer_violation(command)
-                self.assertEqual(violation.get("targets"), ["1.txt"], violation)
+            value = self.dispatch_command("rev", command, "x01-rev-%d" % index)
+            assert self.is_denied(value), value
+            assert "只读" in self.reason(value)
+            # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
+            violation = shell.reviewer_violation(command)
+            assert violation.get("targets") == ["1.txt"], violation
         for index, command in enumerate(self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT):
-            with self.subTest(command=command):
-                value = self.run_core(self.shell("rev", command, tool_id="x01-rev-git-%d" % index))[1]
-                self.assertTrue(self.is_denied(value), value)
+            value = self.run_core(self.shell("rev", command, tool_id="x01-rev-git-%d" % index))[1]
+            assert self.is_denied(value), value
         self.assert_sentinels_intact()
 
     def test_lexical_state_is_shared_across_comment_quote_and_operator(self) -> None:
         for command in self.redirect_deny_cases():
-            with self.subTest(command=command):
-                analysis = shell.analyze(command)
-                self.assertFalse(analysis.opaque, analysis.as_dict())
-                self.assertEqual([item.get("target") for item in analysis.writes], ["1.txt"])
-                self.assertEqual(analysis.commands, [["printf", "x"]])
+            analysis = shell.analyze(command)
+            assert not analysis.opaque, analysis.as_dict()
+            assert [item.get("target") for item in analysis.writes] == ["1.txt"]
+            assert analysis.commands == [["printf", "x"]]
         for command in self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT:
-            with self.subTest(command=command):
-                self.assertEqual(shell.analyze(command).commands, [["git", "reset", "--hard"]])
+            assert shell.analyze(command).commands == [["git", "reset", "--hard"]]
         # 注释行尾的反斜杠不续行：下一物理行是真实命令。
-        self.assertEqual(
-            shell.analyze("# note \\\ngit reset --hard").commands, [["git", "reset", "--hard"]]
-        )
+        assert shell.analyze("# note \\\ngit reset --hard").commands == [["git", "reset", "--hard"]]
 
     def test_single_quote_hash_and_fd_controls_unchanged(self) -> None:
         self.use_manual_baseline()
         self.activate("dev")
         # 单引号内的 `\`+换行是数据，不是续接：目标是那个字面文件名。
         quoted = shell.analyze("printf x >&'1\\\n.txt'")
-        self.assertEqual([item.get("target") for item in quoted.writes], ["1\\\n.txt"])
+        assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]
         value = self.run_core(self.shell("dev", "printf x >&'1\\\n.txt'", tool_id="x01-literal"))[1]
-        self.assertTrue(self.is_denied(value), value)
-        self.assertIn("baseline/1\\\n.txt", self.reason(value))
+        assert self.is_denied(value), value
+        assert "baseline/1\\\n.txt" in self.reason(value)
         self.assert_sentinels_intact()
         # 词中 `#` 不是注释开始；引号内的 `#` 也不是。
-        self.assertEqual(shell.analyze("echo foo#bar").commands, [["echo", "foo#bar"]])
-        self.assertEqual(shell.analyze("echo '#note'").commands, [["echo", "#note"]])
+        assert shell.analyze("echo foo#bar").commands == [["echo", "foo#bar"]]
+        assert shell.analyze("echo '#note'").commands == [["echo", "#note"]]
         # fd 复制/关闭没有文件目标，注释修复不得影响它们。
         for index, command in enumerate(("printf x >&1", "printf x 2>&1", "printf x >&-")):
             value = self.dispatch_command("dev", command, "x01-fd-%d" % index)
-            self.assertFalse(self.is_denied(value), value)
+            assert not self.is_denied(value), value
         self.assert_sentinels_intact()
 
 
@@ -212,43 +203,43 @@ class SkillReadReplayCase(object):
         for item in root_states(self.state):
             if item.get("root_actor_id") == root_actor:
                 return item
-        self.fail("root not found for %s" % session)
+        pytest.fail("root not found for %s" % session)
 
     def first_read_activation(self, session: str = "P") -> None:
         """旧任务：直接成功读取 SKILL.md 激活 epoch1，再完成一次真实成功写入。"""
         self.allow(self.skill_read_payload(session, "old-read"))
         root = self.root_for(session)
-        self.assertTrue(root.get("active"))
-        self.assertEqual(int(root["epoch"]), 1)
+        assert root.get("active")
+        assert int(root["epoch"]) == 1
         self.write_path(session, "w1")
 
     def deactivate(self, session: str = "P") -> None:
         _code, value, _stderr = self.run_core(
             self.input_payload(session, machine_block(active=False))
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(self.actor_state(session)["activation_scope"], "inactive")
+        assert not self.is_denied(value), value
+        assert self.actor_state(session)["activation_scope"] == "inactive"
         root = self.root_for(session)
-        self.assertFalse(root.get("active"))
+        assert not root.get("active")
 
     def assert_inactive(self, session: str = "P", epoch: int = 1) -> None:
         root = self.root_for(session)
-        self.assertFalse(root.get("active"), root)
-        self.assertEqual(int(root["epoch"]), epoch)
+        assert not root.get("active"), root
+        assert int(root["epoch"]) == epoch
         actor = self.actor_state(session)
-        self.assertEqual(actor["activation_scope"], "inactive")
-        self.assertEqual(int(actor["epoch"]), epoch)
+        assert actor["activation_scope"] == "inactive"
+        assert int(actor["epoch"]) == epoch
 
     def assert_restored(self, session: str = "P", epoch: int = 2) -> None:
         root = self.root_for(session)
-        self.assertTrue(root.get("active"), root)
-        self.assertEqual(int(root["epoch"]), epoch)
+        assert root.get("active"), root
+        assert int(root["epoch"]) == epoch
         actor = self.actor_state(session)
-        self.assertEqual(actor["activation_scope"], "task_active")
-        self.assertEqual(int(actor["epoch"]), epoch)
+        assert actor["activation_scope"] == "task_active"
+        assert int(actor["epoch"]) == epoch
 
 
-class X02ConsumedIdConflictTests(SkillReadReplayCase):
+class X02ConsumedIdConflictMixin(SkillReadReplayCase):
     def test_equivalent_path_with_same_id_does_not_restore(self) -> None:
         self.first_read_activation()
         self.deactivate()
@@ -256,7 +247,7 @@ class X02ConsumedIdConflictTests(SkillReadReplayCase):
         equivalent = str(self.skill) + "/./SKILL.md"
         _code, _value, stderr = self.run_core(self.skill_read_payload("P", "old-read", equivalent))
         self.assert_inactive()
-        self.assertIn("已消费", stderr)
+        assert "已消费" in stderr
         # 交替重投原摘要/新摘要：两次都不得恢复。
         for _attempt in range(3):
             self.allow(self.skill_read_payload("P", "old-read"))
@@ -265,8 +256,8 @@ class X02ConsumedIdConflictTests(SkillReadReplayCase):
             self.assert_inactive()
         # 该调用 ID 的观测已失效，不是新的成功调用。
         actor = self.actor_state("P")
-        self.assertEqual(actor["consumed_read_ids"].get("old-read"), 1)
-        self.assertIs(actor["consumed_reads"]["old-read"].get("invalid"), True)
+        assert actor["consumed_read_ids"].get("old-read") == 1
+        assert actor["consumed_reads"]["old-read"].get("invalid") is True
         # 普通工具继续放行。
         self.allow(self.shell("P", "git status --short", tool_id="x02-plain-git"))
         self.allow(self.write_tool("P", "docs/guide.md", tool_id="x02-plain-write"))
@@ -287,26 +278,26 @@ class X02ConsumedIdConflictTests(SkillReadReplayCase):
         self.deny(self.shell("P", "git reset --hard", tool_id="x02-restored-git"))
 
 
-class X02PiConsumedIdConflictTests(X02ConsumedIdConflictTests, StateHelpers, HookCase):
+class X02PiConsumedIdConflictTests(X02ConsumedIdConflictMixin, StateHelpers, HookCase):
     host = "pi"
 
 
-class X02CodexConsumedIdConflictTests(X02ConsumedIdConflictTests, StateHelpers, HookCase):
+class X02CodexConsumedIdConflictTests(X02ConsumedIdConflictMixin, StateHelpers, HookCase):
     host = "codex"
 
 
-class X02AntigravityConsumedIdConflictTests(X02ConsumedIdConflictTests, StateHelpers, HookCase):
+class X02AntigravityConsumedIdConflictTests(X02ConsumedIdConflictMixin, StateHelpers, HookCase):
     host = "antigravity"
 
 
-class X03ConsumedIdRetentionTests(SkillReadReplayCase):
+class X03ConsumedIdRetentionMixin(SkillReadReplayCase):
     def test_consumed_id_stays_inactive_across_epochs(self) -> None:
         self.first_read_activation()
         self.deactivate()
         for attempt in range(3):
             self.allow(self.skill_read_payload("P", "old-read"))
             self.assert_inactive(epoch=1)
-            self.assertTrue(int(self.task_for_epoch(1)["write_seq"]) == 1, attempt)
+            assert (int(self.task_for_epoch(1)["write_seq"]) == 1), attempt
         # 普通工具 allow，不因停用变成增强态。
         self.allow(self.shell("P", "git status --short", tool_id="x03-plain-git"))
         self.allow(self.write_tool("P", "docs/guide.md", tool_id="x03-plain-write"))
@@ -336,22 +327,22 @@ class X03ConsumedIdRetentionTests(SkillReadReplayCase):
         self.assert_inactive("A")
         # 去重证据保存在 actor 作用域，不进入会随 epoch 清空的 task 缓存。
         for item in task_states(self.state):
-            self.assertNotIn("consumed_read_ids", item)
+            assert "consumed_read_ids" not in item
 
 
-class X03PiConsumedIdRetentionTests(X03ConsumedIdRetentionTests, StateHelpers, HookCase):
+class X03PiConsumedIdRetentionTests(X03ConsumedIdRetentionMixin, StateHelpers, HookCase):
     host = "pi"
 
 
-class X03CodexConsumedIdRetentionTests(X03ConsumedIdRetentionTests, StateHelpers, HookCase):
+class X03CodexConsumedIdRetentionTests(X03ConsumedIdRetentionMixin, StateHelpers, HookCase):
     host = "codex"
 
 
-class X03AntigravityConsumedIdRetentionTests(X03ConsumedIdRetentionTests, StateHelpers, HookCase):
+class X03AntigravityConsumedIdRetentionTests(X03ConsumedIdRetentionMixin, StateHelpers, HookCase):
     host = "antigravity"
 
 
-class X03EvictedConsumedIdTests(SkillReadReplayCase):
+class X03EvictedConsumedIdMixin(SkillReadReplayCase):
     """近期摘要索引裁剪后的旧 ID 仍具备不可重新激活的持久证据。
 
     只在 pi envelope 上跑 >100 个不同调用 ID：淘汰逻辑是宿主无关的 core 状态，
@@ -365,29 +356,25 @@ class X03EvictedConsumedIdTests(SkillReadReplayCase):
         self.first_read_activation()
         for index in range(self.FILLER):
             self.allow(self.skill_read_payload("P", "filler-%03d" % index))
-        self.assertEqual(int(self.root_for("P")["epoch"]), 1)
+        assert int(self.root_for("P")["epoch"]) == 1
         actor = self.actor_state("P")
         # 前提：近期摘要索引已裁掉这个最早的 ID（判定不能只看它）。
-        self.assertNotIn(self.EVICTED, actor.get("consumed_reads") or {})
+        assert self.EVICTED not in (actor.get("consumed_reads") or {})
         retained = (actor.get("consumed_read_ids") or {}).get(self.EVICTED)
         self.deactivate()
         # 同一旧成功 post 完整重投多次：仍保持 inactive/epoch1。
         for attempt in range(3):
             self.allow(self.skill_read_payload("P", self.EVICTED))
             self.assert_inactive(epoch=1)
-            self.assertTrue(int(self.task_for_epoch(1)["write_seq"]) == 1, attempt)
+            assert (int(self.task_for_epoch(1)["write_seq"]) == 1), attempt
         self.allow(self.shell("P", "git status --short", tool_id="x03-evicted-plain-git"))
         # 新 ID 的成功读取仍正常恢复 epoch2。
         self.allow(self.skill_read_payload("P", "epoch2-read"))
         self.assert_restored(epoch=2)
         self.deny(self.shell("P", "git reset --hard", tool_id="x03-evicted-restored-git"))
         # 持久证据是“停用前见过这个 ID”：只存 ID 与首次 epoch，不含内容。
-        self.assertEqual(retained, 1)
+        assert retained == 1
 
 
-class X03PiEvictedConsumedIdTests(X03EvictedConsumedIdTests, StateHelpers, HookCase):
+class X03PiEvictedConsumedIdTests(X03EvictedConsumedIdMixin, StateHelpers, HookCase):
     host = "pi"
-
-
-if __name__ == "__main__":
-    unittest.main()

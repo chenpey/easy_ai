@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import time
-import unittest
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -34,27 +33,27 @@ class InactiveShortCircuitMixin(object):
                 env=env,
             )
             samples.append((time.monotonic() - started) * 1000.0)
-            self.assertEqual(value.get("reason", ""), "")
+            assert value.get("reason", "") == ""
         average = sum(samples) / len(samples)
         # 无 Git 子进程、无写入预取、无新锁文件。
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
+        assert calls.read_text(encoding="utf-8") == ""
         after = sorted(path.name for path in (self.state / "locks").glob("*.lock"))
-        self.assertEqual(after, before)
-        self.assertLess(average, 5.0, samples)
+        assert after == before
+        assert average < 5.0, samples
 
     def test_post_tool_is_short_circuited_without_warnings(self) -> None:
         self.warm_inactive()
         _code, value, stderr = self.run_core(
             self.write_tool("inactive", "src/app.py", tool_id="post-1", event="post_tool")
         )
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         # 未激活 post 不再刷“缺少可信成功结果/未找到配对 pre”告警。
-        self.assertEqual(stderr, "")
+        assert stderr == ""
 
     def test_settle_and_child_done_are_allowed(self) -> None:
         self.warm_inactive()
         _code, value, _stderr = self.run_core(self.settle_payload("inactive"))
-        self.assertFalse(self.is_continued(value), value)
+        assert not self.is_continued(value), value
 
     def test_short_circuit_allow_shape_is_host_specific(self) -> None:
         self.warm_inactive()
@@ -62,11 +61,11 @@ class InactiveShortCircuitMixin(object):
             self.write_tool("inactive", "src/app.py", tool_id="shape-1")
         )
         if self.host == "antigravity":
-            self.assertEqual(value, {"decision": "allow"})
+            assert value == {"decision": "allow"}
         elif self.host == "dsh":
-            self.assertEqual(value, {"permissionDecision": "allow"})
+            assert value == {"permissionDecision": "allow"}
         else:
-            self.assertEqual(value, {})
+            assert value == {}
 
     def test_explicit_invocation_still_activates_after_short_circuit(self) -> None:
         self.warm_inactive()
@@ -92,7 +91,7 @@ class InactiveShortCircuitMixin(object):
         # 停用后的状态已写回该分区：后续写事件同样短路放行。
         calls, env = self.write_git_wrapper()
         self.allow(self.write_tool("toggle", "src/app.py", tool_id="off-write"), env=env)
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
+        assert calls.read_text(encoding="utf-8") == ""
 
 
 class PiInactiveShortCircuitTests(InactiveShortCircuitMixin, HookCase):
@@ -110,7 +109,7 @@ class AntigravityInactiveShortCircuitTests(InactiveShortCircuitMixin, HookCase):
         }
         self.allow(self.tool_payload("cli-inactive", "write_file", {"Path": str(self.repo / "src" / "app.py")}, tool_id="w"), event="PreToolUse")
         _code, value, _stderr = self.run_core(payload, event="PreToolUse")
-        self.assertEqual(value, {"decision": "allow"})
+        assert value == {"decision": "allow"}
 
 
 class CodexInactiveShortCircuitTests(InactiveShortCircuitMixin, HookCase):
@@ -128,8 +127,8 @@ class CrossRepoPartitionMixin(object):
     的激活状态覆盖成 inactive，也不能留下可由下次事件复用的陈旧全局索引。
     """
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         self.other = self.root / "other-repo"
         shutil.copytree(self._template_repo(), str(self.other), symlinks=True)
         self.state_home = self.root / "tmpdir"
@@ -151,12 +150,12 @@ class CrossRepoPartitionMixin(object):
 
     def cli_deny(self, payload, **kwargs) -> str:
         _code, value, stderr = self.cli(payload, **kwargs)
-        self.assertTrue(self.is_denied(value), (value, stderr))
+        assert self.is_denied(value), (value, stderr)
         return self.reason(value)
 
     def cli_allow(self, payload, **kwargs) -> str:
         _code, value, stderr = self.cli(payload, **kwargs)
-        self.assertFalse(self.is_denied(value), (value, stderr))
+        assert not self.is_denied(value), (value, stderr)
         return stderr
 
     def other_shell(self, session: str, command: str, tool_id: str = "other-1") -> Dict[str, Any]:
@@ -231,10 +230,10 @@ class CrossRepoPartitionMixin(object):
                 self.write_tool("toggle", "src/app.py", tool_id="off-%d" % index, **self.project_extra()),
                 env=env,
             )
-            self.assertEqual(stderr, "")
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
+            assert stderr == ""
+        assert calls.read_text(encoding="utf-8") == ""
         # 稳态短路也不写状态、不建新锁。
-        self.assertEqual(self.state_files(), before)
+        assert self.state_files() == before
 
     def state_files(self) -> list:
         return sorted(str(path) for path in Path(os.path.realpath(str(self.state_home))).rglob("*"))
@@ -244,7 +243,7 @@ class CrossRepoPartitionMixin(object):
         self.cli_allow(self.other_shell("dev", "git status --short", tool_id="b1"))
         self.cli_allow(self.write_tool("plain", "src/app.py", tool_id="w1"))
         base = Path(os.path.realpath(str(self.state_home)))
-        self.assertEqual([str(path) for path in base.rglob("sessions")], [])
+        assert [str(path) for path in base.rglob("sessions")] == []
 
     def test_subdirectory_cwd_resolves_the_same_partition(self) -> None:
         self.cli(self.input_payload("dev", "使用 easydev，完成这个改动"))
@@ -253,10 +252,10 @@ class CrossRepoPartitionMixin(object):
         calls, env = self.write_git_wrapper()
         before = self.state_files()
         stderr = self.cli_allow(self.subdir_write("dev", tool_id="sub-1"), env=env)
-        self.assertEqual(stderr, "")
+        assert stderr == ""
         # 从子目录向上找到的仓库根与 Git 结论一致：仍然命中同一分区，不调 Git。
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
-        self.assertEqual(self.state_files(), before)
+        assert calls.read_text(encoding="utf-8") == ""
+        assert self.state_files() == before
 
     def test_missing_cwd_and_context_root_skips_write_prefetch(self) -> None:
         """无 cwd 且无上下文仓库根：未激活会话不得进入写预取（不计 Git、不告警）。"""
@@ -266,8 +265,8 @@ class CrossRepoPartitionMixin(object):
         stderr = self.cli_allow(
             self.strip_cwd(self.write_tool("plain", "src/app.py", tool_id="w1")), env=env
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
+        assert stderr == ""
+        assert calls.read_text(encoding="utf-8") == ""
 
     def test_missing_cwd_inactive_events_do_not_warn(self) -> None:
         """无可信 cwd 时退回完整判定，但未激活会话仍不做写预取、不刷 post 告警。"""
@@ -275,11 +274,11 @@ class CrossRepoPartitionMixin(object):
         stderr = self.cli_allow(
             self.strip_cwd(self.write_tool("plain", "src/app.py", tool_id="w1"))
         )
-        self.assertEqual(stderr, "")
+        assert stderr == ""
         post = self.strip_cwd(
             self.write_tool("plain", "src/app.py", tool_id="w1", event="post_tool", outcome="success")
         )
-        self.assertEqual(self.cli_allow(post), "")
+        assert self.cli_allow(post) == ""
 
     def test_missing_cwd_is_never_short_circuited(self) -> None:
         self.cli(self.input_payload("dev", "使用 easydev，完成这个改动"))
@@ -289,7 +288,7 @@ class CrossRepoPartitionMixin(object):
         # 无法定位分区时不短路：完整判定给这个新会话写下未激活锚点（入口短路不写状态）。
         added = [path for path in self.state_files() if path not in before]
         anchors = [path for path in added if os.sep + "actors" + os.sep in path]
-        self.assertEqual(len(anchors), 1, added)
+        assert len(anchors) == 1, added
 
     def test_missing_cwd_still_honours_context_repo_partition(self) -> None:
         self.cli(self.input_payload("dev", "使用 easydev，完成这个改动"))
@@ -299,14 +298,14 @@ class CrossRepoPartitionMixin(object):
     def test_unreadable_partition_state_fails_open_with_warning(self) -> None:
         self.cli_allow(self.write_tool("plain", "src/app.py", tool_id="warm"))
         actors = self.partition() / "actors"
-        self.assertTrue(actors.is_dir(), actors)
+        assert actors.is_dir(), actors
         for path in actors.glob("*.json"):
             target = path.with_suffix(".bak")
             path.rename(target)
             path.symlink_to(target.name)
         stderr = self.cli_allow(self.write_tool("plain", "src/app.py", tool_id="w2"))
         # 状态不可读：按既有 fail-open 告警放行，不得当成“已验证未激活”静默短路。
-        self.assertIn("私有状态不可用", stderr)
+        assert "私有状态不可用" in stderr
 
 
 class PiCrossRepoPartitionTests(CrossRepoPartitionMixin, HookCase):
@@ -339,7 +338,7 @@ class TranscriptInactiveAnchorMixin(object):
     def actor_state(self, session: str) -> dict:
         key = state.identity_key("actor", self.host, session, session)
         path = self.state / "actors" / (key + ".json")
-        self.assertTrue(path.exists(), path)
+        assert path.exists(), path
         return json.loads(path.read_text(encoding="utf-8"))
 
     def meta_entries(self, session: str) -> list:
@@ -383,7 +382,7 @@ class TranscriptInactiveAnchorMixin(object):
     def test_unactivated_turn_with_transcript_writes_inactive_anchor(self) -> None:
         path = self.write_transcript("plain.jsonl", "t1", "把文档里的错别字改一下")
         self.allow(self.input_with_transcript("t1", path))
-        self.assertEqual(self.actor_state("t1").get("activation_scope"), "inactive")
+        assert self.actor_state("t1").get("activation_scope") == "inactive"
 
     def test_following_tool_events_need_no_git_lock_or_warning(self) -> None:
         path = self.write_transcript("plain2.jsonl", "t2", "把文档里的错别字改一下")
@@ -394,16 +393,16 @@ class TranscriptInactiveAnchorMixin(object):
         _code, value, stderr = self.run_core(
             self.write_tool("t2", "src/app.py", tool_id="w1"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
+        assert not self.is_denied(value), value
+        assert stderr == ""
         _code, _value, stderr = self.run_core(
             self.write_tool("t2", "src/app.py", tool_id="w1", event="post_tool", outcome="success"),
             env=env,
         )
-        self.assertEqual(stderr, "")
+        assert stderr == ""
         # 未激活的 pre/post 都不启动 Git、不建锁、不写状态。
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
-        self.assertEqual(sorted(item.name for item in locks.glob("*.lock")), before)
+        assert calls.read_text(encoding="utf-8") == ""
+        assert sorted(item.name for item in locks.glob("*.lock")) == before
 
     def test_deactivated_transcript_turn_stays_inactive(self) -> None:
         block = '```easydev-hook\n{"version": 1, "active": false}\n```'
@@ -412,7 +411,7 @@ class TranscriptInactiveAnchorMixin(object):
         self.deny(self.shell("t3", "git reset --hard", tool_id="on"))
         off = self.write_transcript("off.jsonl", "t3", block)
         self.allow(self.input_with_transcript("t3", off))
-        self.assertEqual(self.actor_state("t3").get("activation_scope"), "inactive")
+        assert self.actor_state("t3").get("activation_scope") == "inactive"
         self.allow(self.shell("t3", "git reset --hard", tool_id="off"))
 
 
@@ -447,7 +446,7 @@ class ChildSkillReadHostMixin(object):
     def child_actor_state(self) -> dict:
         key = state.identity_key("actor", self.host, self.child_session(), "child-a")
         path = self.state / "actors" / (key + ".json")
-        self.assertTrue(path.exists(), path)
+        assert path.exists(), path
         return json.loads(path.read_text(encoding="utf-8"))
 
     def run_child(
@@ -461,12 +460,12 @@ class ChildSkillReadHostMixin(object):
 
     def allow_child(self, payload: Dict[str, Any], **kwargs: Any) -> Tuple[Dict[str, Any], str]:
         _code, value, stderr = self.run_child(payload, **kwargs)
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         return value, stderr
 
     def deny_child(self, payload: Dict[str, Any], **kwargs: Any) -> Tuple[Dict[str, Any], str]:
         _code, value, stderr = self.run_child(payload, **kwargs)
-        self.assertTrue(self.is_denied(value), value)
+        assert self.is_denied(value), value
         return value, stderr
 
     def child_read(
@@ -504,7 +503,7 @@ class ChildSkillReadHostMixin(object):
     def warm_child(self) -> None:
         """第一次事件付一次完整判定并写下 inactive 锚点，与真实会话一致。"""
         _value, stderr = self.allow_child(self.child_read(str(self.repo / "docs" / "guide.md"), tool_id="warm"))
-        self.assertEqual(stderr, "")
+        assert stderr == ""
 
 class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
     """未激活 child 成功读取精确 `SKILL.md` 后必须启用本 actor 的禁嵌套约束。
@@ -516,15 +515,15 @@ class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
     def test_successful_child_skill_read_denies_nested_dispatch(self) -> None:
         skill_md = str(self.skill / "SKILL.md")
         self.warm_child()
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         self.allow_child(self.child_read(skill_md, tool_id="read-pre"))
         _value, stderr = self.allow_child(
             self.child_read(skill_md, tool_id="read-pre", event="post_tool", outcome="success")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "task_active")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "task_active"
         value, _stderr = self.deny_child(self.child_dispatch(self.developer_handoff()))
-        self.assertIn("不能再派生", self.reason(value))
+        assert "不能再派生" in self.reason(value)
         # 查询状态/等待结果不是新分派：激活后仍必须放行。
         self.allow_child(self.child_status())
 
@@ -537,15 +536,15 @@ class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
         )
         actor = self.child_actor_state()
         # 局部激活不凭空建立父任务绑定，也不开新 epoch。
-        self.assertNotIn("dispatch_id", actor)
-        self.assertNotIn("task_identity", actor)
-        self.assertEqual(actor.get("role_source"), "skill_read")
-        self.assertEqual(actor.get("root_actor_id"), "child-a")
+        assert "dispatch_id" not in actor
+        assert "task_identity" not in actor
+        assert actor.get("role_source") == "skill_read"
+        assert actor.get("root_actor_id") == "child-a"
         # 父 root 状态（host + 父 session + 父 actor）没有被这次局部激活创建。
         parent_root = self.state / "roots" / (
             state.identity_key("root", self.host, "P", "P") + ".json"
         )
-        self.assertFalse(parent_root.exists(), parent_root)
+        assert not parent_root.exists(), parent_root
 
     def test_failed_child_skill_read_stays_inactive(self) -> None:
         skill_md = str(self.skill / "SKILL.md")
@@ -554,10 +553,10 @@ class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_read(skill_md, tool_id="read-fail", event="post_tool", outcome="error")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         _value, stderr = self.allow_child(self.child_dispatch(self.developer_handoff()))
-        self.assertEqual(stderr, "")
+        assert stderr == ""
 
     def test_other_skill_path_does_not_activate(self) -> None:
         other = self.root / "other-skill" / "SKILL.md"
@@ -568,8 +567,8 @@ class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_read(str(other), tool_id="read-other", event="post_tool", outcome="success")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         self.allow_child(self.child_dispatch(self.developer_handoff()))
 
     def test_ordinary_child_post_is_still_short_circuited(self) -> None:
@@ -579,8 +578,8 @@ class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
                 self.child_session(), "src/app.py", tool_id="post-1", event="post_tool", outcome="success"
             )
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "inactive"
 
     def test_root_inactive_session_keeps_zero_git_short_circuit(self) -> None:
         """同一状态分区里 child 已激活，普通根会话仍走零 Git 稳态短路。"""
@@ -597,10 +596,10 @@ class ChildSkillReadActivationMixin(ChildSkillReadHostMixin):
         _code, value, stderr = self.run_core(
             self.write_tool("root-plain", "src/app.py", tool_id="root-w"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
-        self.assertEqual(calls.read_text(encoding="utf-8"), "")
-        self.assertEqual(sorted(item.name for item in locks.glob("*.lock")), before)
+        assert not self.is_denied(value), value
+        assert stderr == ""
+        assert calls.read_text(encoding="utf-8") == ""
+        assert sorted(item.name for item in locks.glob("*.lock")) == before
 
 
 class ChildSkillReadUnknownOutcomeMixin(ChildSkillReadActivationMixin):
@@ -617,8 +616,8 @@ class ChildSkillReadUnknownOutcomeMixin(ChildSkillReadActivationMixin):
         _value, stderr = self.allow_child(
             self.child_read(skill_md, tool_id="read-unknown", event="post_tool")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         self.allow_child(self.child_dispatch(self.developer_handoff()))
 
 
@@ -670,43 +669,43 @@ class ChildSkillReadDeactivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_skill_read(tool_id, event="post_tool", outcome="success")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "task_active")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "task_active"
 
     def deactivate_child(self) -> None:
         _value, stderr = self.allow_child(
             self.input_payload(self.child_session(), self.DEACTIVATE)
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "inactive"
 
     def nested_allowed(self, tool_id: str) -> None:
         _value, stderr = self.allow_child(
             self.child_dispatch(self.developer_handoff(), tool_id=tool_id)
         )
-        self.assertEqual(stderr, "")
+        assert stderr == ""
 
     def test_activation_records_child_read_consumption(self) -> None:
         self.activate_child_local()
         actor = self.child_actor_state()
         # 消费证据只落在本 actor：不建父任务/任务缓存，也不开 epoch。
-        self.assertEqual(actor.get("consumed_read_ids"), {"read-old": 0})
+        assert actor.get("consumed_read_ids") == {"read-old": 0}
         entry = (actor.get("consumed_reads") or {}).get("read-old") or {}
-        self.assertEqual(entry.get("epoch"), 0)
-        self.assertEqual(len(str(entry.get("digest") or "")), 32)
-        self.assertNotIn("task_identity", actor)
-        self.assertEqual(actor.get("role_source"), "skill_read")
-        self.assertFalse(list((self.state / "tasks").glob("*.json")))
+        assert entry.get("epoch") == 0
+        assert len(str(entry.get("digest") or "")) == 32
+        assert "task_identity" not in actor
+        assert actor.get("role_source") == "skill_read"
+        assert not list((self.state / "tasks").glob("*.json"))
 
     def test_active_child_read_also_records_consumption(self) -> None:
         """已激活 child 的成功读取同样要留消费证据（停用后重投不再激活）。"""
         self.warm_child()
         self.activate_child_local()
-        self.assertNotIn("read-again", self.child_actor_state().get("consumed_read_ids") or {})
+        assert "read-again" not in (self.child_actor_state().get("consumed_read_ids") or {})
         self.allow_child(self.child_skill_read("read-again", event="post_tool", outcome="success"))
         actor = self.child_actor_state()
-        self.assertIn("read-again", actor.get("consumed_read_ids") or {})
-        self.assertEqual(actor.get("activation_scope"), "task_active")
+        assert "read-again" in (actor.get("consumed_read_ids") or {})
+        assert actor.get("activation_scope") == "task_active"
 
     def test_replayed_consumed_read_keeps_deactivation(self) -> None:
         self.activate_child_local()
@@ -716,8 +715,8 @@ class ChildSkillReadDeactivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_skill_read("read-old", event="post_tool", outcome="success")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         self.nested_allowed("nested-replay")
 
     def test_replayed_consumed_read_with_changed_payload_keeps_deactivation(self) -> None:
@@ -727,13 +726,13 @@ class ChildSkillReadDeactivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_skill_read("read-old", event="post_tool", outcome="success", offset=5)
         )
-        self.assertIn("该调用观测作废", stderr)
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert "该调用观测作废" in stderr
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         # success ↔ completed 拼写变化同样不恢复。
         self.allow_child(
             self.child_skill_read("read-old", event="post_tool", outcome="completed")
         )
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "inactive")
+        assert self.child_actor_state().get("activation_scope") == "inactive"
         self.nested_allowed("nested-changed")
 
     def test_new_tool_id_read_reactivates_local_scope(self) -> None:
@@ -744,17 +743,17 @@ class ChildSkillReadDeactivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_skill_read("read-new", event="post_tool", outcome="success")
         )
-        self.assertEqual(stderr, "")
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "task_active")
+        assert stderr == ""
+        assert self.child_actor_state().get("activation_scope") == "task_active"
         value, _stderr = self.deny_child(
             self.child_dispatch(self.developer_handoff(), tool_id="nested-new")
         )
-        self.assertIn("不能再派生", self.reason(value))
+        assert "不能再派生" in self.reason(value)
         # 重新激活仍只动本 actor：不建父 root/task。
         parent_root = self.state / "roots" / (
             state.identity_key("root", self.host, "P", "P") + ".json"
         )
-        self.assertFalse(parent_root.exists(), parent_root)
+        assert not parent_root.exists(), parent_root
 
     def test_failed_and_ordinary_child_events_do_not_consume_reads(self) -> None:
         self.warm_child()
@@ -762,7 +761,7 @@ class ChildSkillReadDeactivationMixin(ChildSkillReadHostMixin):
         _value, stderr = self.allow_child(
             self.child_skill_read("read-fail", event="post_tool", outcome="error")
         )
-        self.assertEqual(stderr, "")
+        assert stderr == ""
         _value, stderr = self.allow_child(
             self.write_tool(
                 self.child_session(),
@@ -772,13 +771,13 @@ class ChildSkillReadDeactivationMixin(ChildSkillReadHostMixin):
                 outcome="success",
             )
         )
-        self.assertEqual(stderr, "")
+        assert stderr == ""
         actor = self.child_actor_state()
-        self.assertEqual(actor.get("activation_scope"), "inactive")
-        self.assertFalse(actor.get("consumed_read_ids") or {})
+        assert actor.get("activation_scope") == "inactive"
+        assert not (actor.get("consumed_read_ids") or {})
         # 失败读取没有消费该 ID：同一 ID 之后的成功读取仍是激活证据。
         self.allow_child(self.child_skill_read("read-fail", event="post_tool", outcome="success"))
-        self.assertEqual(self.child_actor_state().get("activation_scope"), "task_active")
+        assert self.child_actor_state().get("activation_scope") == "task_active"
 
 
 class PiChildSkillReadDeactivationTests(ChildSkillReadDeactivationMixin, HookCase):
@@ -812,25 +811,25 @@ class PiChildSkillReadCliTests(HookCase):
         _code, value, stderr = self.run_core_cli(
             self.input_payload(session, "把文档里的错别字改一下"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         _code, value, _stderr = self.run_core_cli(
             self.tool_payload(session, "read", {"path": skill_md}, tool_id="read-pre"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         _code, value, stderr = self.run_core_cli(
             self.tool_payload(
                 session, "read", {"path": skill_md}, tool_id="read-pre", event="post_tool", outcome="success"
             ),
             env=env,
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
+        assert not self.is_denied(value), value
+        assert stderr == ""
         _code, value, _stderr = self.run_core_cli(
             self.dispatch_payload(session, self.developer_handoff(), role="developer", tool_id="nested"),
             env=env,
         )
-        self.assertTrue(self.is_denied(value), value)
-        self.assertIn("不能再派生", self.reason(value))
+        assert self.is_denied(value), value
+        assert "不能再派生" in self.reason(value)
 
     def test_env_child_consumed_read_replay_keeps_deactivation(self) -> None:
         skill_md = str(self.skill / "SKILL.md")
@@ -850,7 +849,7 @@ class PiChildSkillReadCliTests(HookCase):
                 ),
                 env=env,
             )
-            self.assertEqual(stderr, "")
+            assert stderr == ""
             return self.is_denied(value)
 
         self.run_core_cli(self.input_payload(session, "把文档里的错别字改一下"), env=env)
@@ -858,28 +857,28 @@ class PiChildSkillReadCliTests(HookCase):
         _code, value, stderr = self.run_core_cli(
             read("read-old", "post_tool", "success"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
-        self.assertTrue(nested("nested-on"))
+        assert not self.is_denied(value), value
+        assert stderr == ""
+        assert nested("nested-on")
         # 显式停用后嵌套放行。
         _code, value, _stderr = self.run_core_cli(self.input_payload(session, block), env=env)
-        self.assertFalse(self.is_denied(value), value)
-        self.assertFalse(nested("nested-off"))
+        assert not self.is_denied(value), value
+        assert not nested("nested-off")
         # 原样重投停用前的成功读取不撤销停用。
         _code, value, stderr = self.run_core_cli(
             read("read-old", "post_tool", "success"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
-        self.assertFalse(nested("nested-replay"))
+        assert not self.is_denied(value), value
+        assert stderr == ""
+        assert not nested("nested-replay")
         # 新的调用 ID 的成功读取仍可局部激活。
         self.run_core_cli(read("read-new"), env=env)
         _code, value, stderr = self.run_core_cli(
             read("read-new", "post_tool", "success"), env=env
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
-        self.assertTrue(nested("nested-new"))
+        assert not self.is_denied(value), value
+        assert stderr == ""
+        assert nested("nested-new")
 
     def test_env_child_failed_read_keeps_nested_allowed(self) -> None:
         skill_md = str(self.skill / "SKILL.md")
@@ -895,14 +894,14 @@ class PiChildSkillReadCliTests(HookCase):
             ),
             env=env,
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
+        assert not self.is_denied(value), value
+        assert stderr == ""
         _code, value, stderr = self.run_core_cli(
             self.dispatch_payload(session, self.developer_handoff(), role="developer", tool_id="nested"),
             env=env,
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
+        assert not self.is_denied(value), value
+        assert stderr == ""
 
 
 class AntigravitySameTurnSkillReadTests(HookCase):
@@ -918,7 +917,7 @@ class AntigravitySameTurnSkillReadTests(HookCase):
     def actor_state(self, session: str) -> dict:
         key = state.identity_key("actor", self.host, session, session)
         path = self.state / "actors" / (key + ".json")
-        self.assertTrue(path.exists(), path)
+        assert path.exists(), path
         return json.loads(path.read_text(encoding="utf-8"))
 
     def invocation(self, session: str, path: str, number: int) -> Dict[str, Any]:
@@ -938,7 +937,7 @@ class AntigravitySameTurnSkillReadTests(HookCase):
         )
         # #1：同回合第一次模型调用，transcript 里还没有 SKILL 读取。
         self.allow(self.invocation("ag1", str(transcript), 1), event="PreInvocation")
-        self.assertEqual(self.actor_state("ag1").get("activation_scope"), "inactive")
+        assert self.actor_state("ag1").get("activation_scope") == "inactive"
         # 模型在本回合读了 SKILL.md：transcript 追加 planner 行与结果行。
         with transcript.open("a", encoding="utf-8") as handle:
             handle.write(
@@ -967,7 +966,7 @@ class AntigravitySameTurnSkillReadTests(HookCase):
             )
         # #2：同一用户回合（transcript 记录键未变）仍必须完成激活。
         self.allow(self.invocation("ag1", str(transcript), 2), event="PreInvocation")
-        self.assertEqual(self.actor_state("ag1").get("activation_scope"), "task_active")
+        assert self.actor_state("ag1").get("activation_scope") == "task_active"
         self.deny(self.shell("ag1", "git reset --hard", tool_id="after-skill"))
 
     def test_full_turn_post_tool_use_then_second_invocation(self) -> None:
@@ -983,7 +982,7 @@ class AntigravitySameTurnSkillReadTests(HookCase):
             encoding="utf-8",
         )
         self.allow(self.invocation("ag3", str(transcript), 1), event="PreInvocation")
-        self.assertEqual(self.actor_state("ag3").get("activation_scope"), "inactive")
+        assert self.actor_state("ag3").get("activation_scope") == "inactive"
         with transcript.open("a", encoding="utf-8") as handle:
             handle.write(
                 json.dumps(
@@ -1017,11 +1016,11 @@ class AntigravitySameTurnSkillReadTests(HookCase):
         }
         self.allow(skill_post, event="PostToolUse")
         first = self.actor_state("ag3")
-        self.assertEqual(first.get("activation_scope"), "task_active")
+        assert first.get("activation_scope") == "task_active"
         self.allow(self.invocation("ag3", str(transcript), 2), event="PreInvocation")
         second = self.actor_state("ag3")
-        self.assertEqual(second.get("activation_scope"), "task_active")
-        self.assertEqual(first.get("epoch"), second.get("epoch"))
+        assert second.get("activation_scope") == "task_active"
+        assert first.get("epoch") == second.get("epoch")
         self.deny(self.shell("ag3", "git reset --hard", tool_id="after-full-turn"))
 
     def test_activated_turn_keeps_the_same_record_dedupe(self) -> None:
@@ -1035,9 +1034,5 @@ class AntigravitySameTurnSkillReadTests(HookCase):
         first = self.actor_state("ag2")
         self.allow(self.invocation("ag2", str(transcript), 2), event="PreInvocation")
         second = self.actor_state("ag2")
-        self.assertEqual(first.get("epoch"), second.get("epoch"))
-        self.assertEqual(first.get("user_generation"), second.get("user_generation"))
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert first.get("epoch") == second.get("epoch")
+        assert first.get("user_generation") == second.get("user_generation")

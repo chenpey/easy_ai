@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import fcntl
 import json
 import os
@@ -13,7 +15,6 @@ import stat
 import subprocess
 import sys
 import time
-import unittest
 from pathlib import Path
 
 from support import HOOKS_ROOT, HookCase
@@ -56,7 +57,7 @@ class StateHelpers(object):
         for item in task_states(self.state):
             if int(item.get("task_epoch") or 0) == epoch:
                 return item
-        self.fail("epoch %d task not found" % epoch)
+        pytest.fail("epoch %d task not found" % epoch)
 
 
 class R4Case(StateHelpers, HookCase):
@@ -76,7 +77,7 @@ class S01OldChildDoubleRestartTests(StateHelpers, HookCase):
                 "retired_parent_epoch",
             }:
                 return item
-        self.fail("child actor not found")
+        pytest.fail("child actor not found")
 
     def restart(self, dispatch_id: str = ""):
         payload = {
@@ -95,7 +96,7 @@ class S01OldChildDoubleRestartTests(StateHelpers, HookCase):
         handoff = self.developer_handoff()
         self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D1"))
         self.allow(self.child_start_payload("agent-dev", dispatch_id="D1"))
-        self.assertEqual(self.child_actor()["dispatch_id"], "D1")
+        assert self.child_actor()["dispatch_id"] == "D1"
         # 父切到 B 并分派唯一 D2。
         self.allow(
             {
@@ -111,20 +112,20 @@ class S01OldChildDoubleRestartTests(StateHelpers, HookCase):
         # 连续两次 start 重投：第一次退役，第二次不能再被 unique fallback 绑到 D2。
         for attempt in range(2):
             _code, value, stderr = self.restart()
-            self.assertFalse(self.is_denied(value), value)
-            self.assertIn("未能匹配", stderr, attempt)
+            assert not self.is_denied(value), value
+            assert "未能匹配" in stderr, attempt
             actor = self.child_actor()
-            self.assertEqual(actor["activation_scope"], "role_only", attempt)
-            self.assertEqual(actor["dispatch_id"], "D1", attempt)
-            self.assertNotIn("task_identity", actor, attempt)
-            self.assertEqual(actor["retired_binding"]["dispatch_id"], "D1")
+            assert actor["activation_scope"] == "role_only", attempt
+            assert actor["dispatch_id"] == "D1", attempt
+            assert "task_identity" not in actor, attempt
+            assert actor["retired_binding"]["dispatch_id"] == "D1"
         # 退役后 input/start 交错仍不得回到 task_active。
         self.allow(self.child_input_payload_for("agent-dev", handoff))
         self.allow(self.child_input_payload_for("agent-dev", handoff))
         self.restart()
         actor = self.child_actor()
-        self.assertEqual(actor["activation_scope"], "role_only")
-        self.assertIn(actor.get("role_source"), {"retired_parent_epoch", "unlinked_child_handoff"})
+        assert actor["activation_scope"] == "role_only"
+        assert actor.get("role_source") in {"retired_parent_epoch", "unlinked_child_handoff"}
         # 旧 child 的写与完成都不进入 B。
         self.allow(
             self.write_tool("P", "src/app.py", tool_id="cw", agent_id="agent-dev", is_child=True)
@@ -143,9 +144,9 @@ class S01OldChildDoubleRestartTests(StateHelpers, HookCase):
         )
         self.allow(self.child_done_payload("P", report="**[P1] 证据**\n", agent="agent-dev"))
         after = self.task_for_epoch(2)
-        self.assertEqual(after["write_seq"], before["write_seq"])
-        self.assertEqual(after["review_checkpoint"], before["review_checkpoint"])
-        self.assertFalse(after["has_completed_code_review"])
+        assert after["write_seq"] == before["write_seq"]
+        assert after["review_checkpoint"] == before["review_checkpoint"]
+        assert not after["has_completed_code_review"]
 
 
 # ---------------------------------------------------------------------------
@@ -160,28 +161,27 @@ class S02StateCorruptionTests(R4Case):
         for kind in ("roots", "tasks"):
             for path in (self.state / kind).glob("*.json"):
                 backups[path] = path.read_bytes()
-        self.assertTrue(backups)
+        assert backups
         try:
             for kind in ("roots", "tasks"):
                 files = sorted((self.state / kind).glob("*.json"))
-                self.assertTrue(files, "no %s state file" % kind)
+                assert files, "no %s state file" % kind
                 for label, payload in (
                     ("坏 JSON", b"{not-json"),
                     ("坏 UTF-8", b"\xff\xfe\x00garbage"),
                     ("schema 错误", b'{"schema_version": 99}'),
                 ):
-                    with self.subTest(kind=kind, case=label):
-                        target = files[0]
-                        target.write_bytes(payload)
+                    target = files[0]
+                    target.write_bytes(payload)
+                    os.chmod(target, 0o600)
+                    try:
+                        reason = self.deny(
+                            self.shell("s1", "git reset --hard", tool_id="bad-" + kind)
+                        )
+                        assert "Git" in reason
+                    finally:
+                        target.write_bytes(backups[target])
                         os.chmod(target, 0o600)
-                        try:
-                            reason = self.deny(
-                                self.shell("s1", "git reset --hard", tool_id="bad-" + kind)
-                            )
-                            self.assertIn("Git", reason)
-                        finally:
-                            target.write_bytes(backups[target])
-                            os.chmod(target, 0o600)
         finally:
             for path, data in backups.items():
                 path.write_bytes(data)
@@ -189,7 +189,7 @@ class S02StateCorruptionTests(R4Case):
 
     def corrupt(self, kind: str, payload: bytes) -> Path:
         files = sorted((self.state / kind).glob("*.json"))
-        self.assertTrue(files, "no %s state file" % kind)
+        assert files, "no %s state file" % kind
         target = files[0]
         target.write_bytes(payload)
         os.chmod(target, 0o600)
@@ -204,13 +204,13 @@ class S02StateCorruptionTests(R4Case):
         for path in sorted((self.state / "actors").glob("*.json")):
             if json.loads(path.read_text(encoding="utf-8")).get("activation_scope") == "inactive":
                 target = path
-        self.assertIsNotNone(target, "未找到 plain 的未激活锚点")
+        assert target is not None, "未找到 plain 的未激活锚点"
         target.write_bytes(b"{not-json")
         os.chmod(target, 0o600)
         _code, value, stderr = self.run_core(self.shell("plain", "git reset --hard", tool_id="plain"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
-        self.assertIn("私有状态不可用", stderr)
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
+        assert "私有状态不可用" in stderr
 
 
 # ---------------------------------------------------------------------------
@@ -219,8 +219,8 @@ class S02StateCorruptionTests(R4Case):
 class S03BareRedirectTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         self.touch_dirty("src/app.py", "USER CONTENT\n")
         self.sub = self.repo / "src"
         (self.repo / "notes.txt").write_text("USER NOTES\n", encoding="utf-8")
@@ -229,20 +229,19 @@ class S03BareRedirectTests(HookCase):
         self.use_manual_baseline()
         self.activate("s1")
         for index, command in enumerate(("> src/app.py", ">> src/app.py", "<> src/app.py")):
-            with self.subTest(command=command):
-                reason = self.deny(self.shell("s1", command, tool_id="red-%d" % index))
-                self.assertIn("baseline", reason)
-        self.assertEqual((self.repo / "src" / "app.py").read_text(encoding="utf-8"), "USER CONTENT\n")
+            reason = self.deny(self.shell("s1", command, tool_id="red-%d" % index))
+            assert "baseline" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER CONTENT\n"
         # 未跟踪文件不因“没有命令名”被跳过。
         self.deny(self.shell("s1", "> notes.txt", tool_id="red-untracked"))
-        self.assertEqual((self.repo / "notes.txt").read_text(encoding="utf-8"), "USER NOTES\n")
+        assert (self.repo / "notes.txt").read_text(encoding="utf-8") == "USER NOTES\n"
 
     def test_redirect_after_cd_uses_that_cwd(self) -> None:
         self.use_manual_baseline()
         self.activate("s1")
         reason = self.deny(self.shell("s1", "cd src; > app.py", tool_id="red-cd"))
-        self.assertIn("baseline", reason)
-        self.assertEqual((self.repo / "src" / "app.py").read_text(encoding="utf-8"), "USER CONTENT\n")
+        assert "baseline" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER CONTENT\n"
 
     def test_redirect_to_dev_null_and_clean_target_are_allowed(self) -> None:
         self.activate("s1")
@@ -255,8 +254,8 @@ class S03BareRedirectTests(HookCase):
     def test_reviewer_bare_redirect_is_denied(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         reason = self.deny(self.shell("rev", "> src/app.py", tool_id="red-rev"))
-        self.assertIn("只读", reason)
-        self.assertEqual((self.repo / "src" / "app.py").read_text(encoding="utf-8"), "USER CONTENT\n")
+        assert "只读" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER CONTENT\n"
 
 
 # ---------------------------------------------------------------------------
@@ -265,8 +264,8 @@ class S03BareRedirectTests(HookCase):
 class S04RelativeEnvChdirTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         sub = self.repo / "sub"
         sub.mkdir()
         (sub / "app.py").write_text("sub = 1\n", encoding="utf-8")
@@ -279,10 +278,8 @@ class S04RelativeEnvChdirTests(HookCase):
         self.activate("s1")
         command = "env -C sub sh -c 'printf x >> app.py'"
         reason = self.deny(self.shell("s1", command, tool_id="env-rel"))
-        self.assertIn("baseline", reason)
-        self.assertEqual(
-            (self.repo / "sub" / "app.py").read_text(encoding="utf-8"), "SUB USER CONTENT\n"
-        )
+        assert "baseline" in reason
+        assert (self.repo / "sub" / "app.py").read_text(encoding="utf-8") == "SUB USER CONTENT\n"
         # 仓库根的 app.py 干净：同一命令形式指向它时放行，证明检查的是真实目标。
         self.allow(self.shell("s1", "env -C . sh -c 'printf x >> app.py'", tool_id="env-dot"))
 
@@ -290,7 +287,7 @@ class S04RelativeEnvChdirTests(HookCase):
         self.use_manual_baseline()
         self.activate("s1")
         absolute = "env -C %s sh -c 'printf x >> app.py'" % (self.repo / "sub")
-        self.assertIn("baseline", self.deny(self.shell("s1", absolute, tool_id="env-abs")))
+        assert "baseline" in self.deny(self.shell("s1", absolute, tool_id="env-abs"))
         task_root = self.make_task_root()
         self.save_baseline(task_root, "sub/app.py", "SUB USER CONTENT\n")
         self.write_context(task_root=str(task_root))
@@ -302,7 +299,7 @@ class S04RelativeEnvChdirTests(HookCase):
         self.activate("s1")
         command = "env -C sub bash -lc \"env -C . sh -c 'printf x >> app.py'\""
         reason = self.deny(self.shell("s1", command, tool_id="env-multi"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +308,8 @@ class S04RelativeEnvChdirTests(HookCase):
 class S05CopyDirectoryTargetTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         sub = self.repo / "sub"
         sub.mkdir()
         (sub / "app.py").write_text("sub = 1\n", encoding="utf-8")
@@ -324,14 +321,12 @@ class S05CopyDirectoryTargetTests(HookCase):
         self.use_manual_baseline()
         self.activate("s1")
         reason = self.deny(self.shell("s1", "cp src/app.py sub", tool_id="cp-dir"))
-        self.assertIn("baseline", reason)
-        self.assertEqual(
-            (self.repo / "sub" / "app.py").read_text(encoding="utf-8"), "SUB USER CONTENT\n"
-        )
+        assert "baseline" in reason
+        assert (self.repo / "sub" / "app.py").read_text(encoding="utf-8") == "SUB USER CONTENT\n"
         reason = self.deny(self.shell("s1", "cp -t sub src/app.py", tool_id="cp-t"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
         reason = self.deny(self.shell("s1", "install -m 644 src/app.py sub", tool_id="inst-dir"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
 
     def test_cp_directory_target_after_baseline_is_allowed(self) -> None:
         self.activate("s1")
@@ -347,8 +342,8 @@ class S05CopyDirectoryTargetTests(HookCase):
         self.allow(self.shell("s1", "cp src/app.py copied.py", tool_id="cp-file"))
         # 多源 + 非目录目的无法给出完整目标：不得声称完整，必须降级披露。
         _code, value, stderr = self.run_core(self.shell("s1", "cp a.py b.py missing", tool_id="cp-multi"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("写入目标不完整", stderr)
+        assert not self.is_denied(value), value
+        assert "写入目标不完整" in stderr
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +352,8 @@ class S05CopyDirectoryTargetTests(HookCase):
 class S06SymlinkToOtherRepoTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         self.other = self.root / "outside-repo"
         self.other.mkdir()
         subprocess.run(
@@ -381,10 +376,8 @@ class S06SymlinkToOtherRepoTests(HookCase):
     def test_link_into_other_git_repo_is_denied(self) -> None:
         self.activate("s1")
         reason = self.deny(self.write_tool("s1", "link/app.py", tool_id="link-w"))
-        self.assertIn("符号链接", reason)
-        self.assertEqual(
-            (self.other / "app.py").read_text(encoding="utf-8"), "OUTSIDE USER CONTENT\n"
-        )
+        assert "符号链接" in reason
+        assert (self.other / "app.py").read_text(encoding="utf-8") == "OUTSIDE USER CONTENT\n"
 
     def test_link_to_nested_git_repo_inside_invoking_repo_is_denied(self) -> None:
         nested = self.repo / "nested-repo"
@@ -399,15 +392,15 @@ class S06SymlinkToOtherRepoTests(HookCase):
         (self.repo / "nested-link").symlink_to(nested)
         self.activate("s1")
         reason = self.deny(self.write_tool("s1", "nested-link/app.py", tool_id="nested-w"))
-        self.assertIn("符号链接", reason)
-        self.assertEqual((nested / "app.py").read_text(encoding="utf-8"), "nested = 1\n")
+        assert "符号链接" in reason
+        assert (nested / "app.py").read_text(encoding="utf-8") == "nested = 1\n"
 
     def test_explicit_other_repo_path_still_follows_baseline_rules(self) -> None:
         self.use_manual_baseline()
         self.activate("s1")
         target = str(self.other / "app.py")
         reason = self.deny(self.write_tool("s1", target, tool_id="other-w"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
         task_root = self.make_task_root()
         self.save_baseline(task_root, "app.py", "OUTSIDE USER CONTENT\n")
         self.write_context(task_root=str(task_root))
@@ -450,24 +443,22 @@ class S08LongTranscriptTests(StateHelpers, HookCase):
     def test_new_task_beyond_200_lines_opens_new_epoch(self) -> None:
         entries = [{"type": "user", "role": "user", "message": "使用 easydev，改这个文件"}]
         entries.extend(self.filler())
-        self.assertEqual(len(entries), 201)
+        assert len(entries) == 201
         path = self.write_transcript(entries)
         self.run_core(self.invocation(path, 1))
         # 第 202 行才追加真正的当前任务：必须在 200 行之后仍被取到并开新 epoch。
         self.append(path, {"type": "user", "role": "user", "message": "使用 easydev，新任务 B"})
         self.write_path("P", "w1", content="value = 2\n")
-        self.assertEqual(self.task_for_epoch(1)["write_seq"], 1)
+        assert self.task_for_epoch(1)["write_seq"] == 1
         self.touch_dirty("src/app.py", "USER B CONTENT\n")
         # 新 epoch 的首写仍走手工基线核对：脏目标必须缺基线拒绝。
         self.use_manual_baseline()
         self.run_core(self.invocation(path, 2))
         epochs = {int(item.get("task_epoch") or 0) for item in task_states(self.state)}
-        self.assertIn(2, epochs)
+        assert 2 in epochs
         reason = self.deny(self.write_tool("P", "src/app.py", tool_id="b-first"))
-        self.assertIn("baseline", reason)
-        self.assertEqual(
-            (self.repo / "src" / "app.py").read_text(encoding="utf-8"), "USER B CONTENT\n"
-        )
+        assert "baseline" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER B CONTENT\n"
 
     def test_plain_follow_up_is_deduped_across_repeated_invocations(self) -> None:
         path = self.write_transcript(
@@ -479,15 +470,15 @@ class S08LongTranscriptTests(StateHelpers, HookCase):
         self.append(path, {"type": "user", "role": "user", "message": "继续修复"})
         self.run_core(self.invocation(path, 2))
         once = int(self.task_for_epoch(1)["user_generation"])
-        self.assertEqual(once, baseline + 1)
+        assert once == (baseline + 1)
         # 同一 user 记录重复投递三次不得继续放大 generation。
         for execution in (3, 4, 5):
             self.run_core(self.invocation(path, execution))
-        self.assertEqual(int(self.task_for_epoch(1)["user_generation"]), once)
+        assert int(self.task_for_epoch(1)["user_generation"]) == once
         # 真正的新跟进仍然推进一次。
         self.append(path, {"type": "user", "role": "user", "message": "继续实现"})
         self.run_core(self.invocation(path, 6))
-        self.assertEqual(int(self.task_for_epoch(1)["user_generation"]), once + 1)
+        assert int(self.task_for_epoch(1)["user_generation"]) == (once + 1)
 
     def test_latest_record_is_found_past_the_two_megabyte_boundary(self) -> None:
         filler = "x" * 900
@@ -504,10 +495,10 @@ class S08LongTranscriptTests(StateHelpers, HookCase):
                 + "\n"
             )
         path = str(self.root / "big-transcript.jsonl")
-        self.assertGreater(os.path.getsize(path), 2 * 1024 * 1024)
+        assert os.path.getsize(path) > (2 * 1024 * 1024)
         _code, value, stderr = self.run_core(self.invocation(path, 1))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertNotIn("无法从 transcript 取得最新用户记录", stderr)
+        assert not self.is_denied(value), value
+        assert "无法从 transcript 取得最新用户记录" not in stderr
         self.deny(self.shell("P", "git reset --hard", tool_id="big-git"))
 
     def test_unreadable_latest_record_is_disclosed_instead_of_reusing_old(self) -> None:
@@ -518,8 +509,8 @@ class S08LongTranscriptTests(StateHelpers, HookCase):
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps({"type": "assistant", "content": "x" * (3 * 1024 * 1024)}) + "\n")
         _code, value, stderr = self.run_core(self.invocation(path, 7))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("无法从 transcript 取得最新用户记录", stderr)
+        assert not self.is_denied(value), value
+        assert "无法从 transcript 取得最新用户记录" in stderr
         self.allow(self.shell("P", "git reset --hard", tool_id="unread-latest"))
 
 
@@ -529,8 +520,8 @@ class S08LongTranscriptTests(StateHelpers, HookCase):
 class S10CrossRepoPairingTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         # 两个用例都围绕“脏目标先要手工基线”展开：显式打开手工核对路径。
         self.use_manual_baseline()
         self.other = self.root / "repo2"
@@ -571,7 +562,7 @@ class S10CrossRepoPairingTests(HookCase):
         )
         # B 仓库：脏文件先要基线，之后同一套配对照常生效。
         other_target = str(self.other / "lib" / "util.py")
-        self.assertIn("baseline", self.deny(self.write_tool("P", other_target, tool_id="ok-b")))
+        assert "baseline" in self.deny(self.write_tool("P", other_target, tool_id="ok-b"))
         task_root = self.make_task_root()
         self.save_baseline(task_root, "lib/util.py", "OTHER UTIL CONTENT\n")
         self.write_context(task_root=str(task_root))
@@ -587,8 +578,8 @@ class S10CrossRepoPairingTests(HookCase):
         successes = []
         for task in task_states(self.state):
             successes.extend((task.get("last_success") or {}).keys())
-        self.assertTrue(any(key.endswith("::src/app.py") for key in successes), successes)
-        self.assertTrue(any(key.endswith("::lib/util.py") for key in successes), successes)
+        assert any(key.endswith("::src/app.py") for key in successes), successes
+        assert any(key.endswith("::lib/util.py") for key in successes), successes
         # 同一仓库再次写入未变更的内容不再被误判为外部修改。
         self.allow(self.write_tool("P", other_target, tool_id="ok-b2"))
 
@@ -606,14 +597,14 @@ class S10CrossRepoPairingTests(HookCase):
                 outcome="success",
             )
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("不一致", stderr)
+        assert not self.is_denied(value), value
+        assert "不一致" in stderr
         # B 仓库仍缺基线：错误 post 不能建立成功豁免。
         reason = self.deny(self.write_tool("P", str(self.other / "src" / "app.py"), tool_id="pair-2"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
         for task in task_states(self.state):
             for key in (task.get("last_success") or {}):
-                self.assertNotIn("src/app.py", key.split("::")[-1], "other repo 不应有成功指纹")
+                assert "src/app.py" not in key.split("::")[-1], "other repo 不应有成功指纹"
 
 
 # ---------------------------------------------------------------------------
@@ -626,13 +617,13 @@ class S11DispatchConflictTests(HookCase):
         for item in task_states(self.state):
             if item.get("reviews"):
                 return item["reviews"]
-        self.fail("reviews not found")
+        pytest.fail("reviews not found")
 
     def task(self) -> dict:
         for item in task_states(self.state):
             if item.get("reviews"):
                 return item
-        self.fail("task not found")
+        pytest.fail("task not found")
 
     def test_changed_prompt_invalidates_segment_and_completion(self) -> None:
         self.activate("P")
@@ -646,26 +637,26 @@ class S11DispatchConflictTests(HookCase):
             )
         )
         entry = self.reviews()["R1"]
-        self.assertEqual(entry["status"], "invalid")
-        self.assertEqual(int(entry["start_write_seq"]), 0)
+        assert entry["status"] == "invalid"
+        assert int(entry["start_write_seq"]) == 0
         # 旧 child 完成不得抬高 checkpoint。
         self.allow(self.child_done_payload("P", report="**[P1] 证据**\n", agent="agent-1"))
         task = self.task()
-        self.assertFalse(task["has_completed_code_review"])
-        self.assertEqual(int(task["review_checkpoint"]), 0)
+        assert not task["has_completed_code_review"]
+        assert int(task["review_checkpoint"]) == 0
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
+        assert not self.is_continued(value), value
 
     def test_role_change_with_same_id_invalidates_segment(self) -> None:
         self.activate("P")
         self.allow(self.dispatch_payload("P", self.reviewer_handoff(), tool_id="R9"))
-        self.assertEqual(self.reviews()["R9"]["status"], "started")
+        assert self.reviews()["R9"]["status"] == "started"
         # 同一 ID 改成 developer：审查段必须失效，不能被旧观察继续引用。
         self.allow(
             self.dispatch_payload("P", self.developer_handoff(), role="developer", tool_id="R9")
         )
-        self.assertEqual(self.reviews()["R9"]["status"], "invalid")
-        self.assertFalse(self.reviews()["R9"]["code_review"])
+        assert self.reviews()["R9"]["status"] == "invalid"
+        assert not self.reviews()["R9"]["code_review"]
 
     def test_a_b_a_conflict_stays_invalid_and_same_content_is_idempotent(self) -> None:
         self.activate("P")
@@ -673,14 +664,14 @@ class S11DispatchConflictTests(HookCase):
         second = self.reviewer_handoff("补充要求：性能\n")
         self.allow(self.dispatch_payload("P", first, tool_id="R2"))
         self.allow(self.dispatch_payload("P", second, tool_id="R2"))
-        self.assertEqual(self.reviews()["R2"]["status"], "invalid")
+        assert self.reviews()["R2"]["status"] == "invalid"
         self.allow(self.dispatch_payload("P", first, tool_id="R2"))
-        self.assertEqual(self.reviews()["R2"]["status"], "invalid")
+        assert self.reviews()["R2"]["status"] == "invalid"
         # 合法新分派用新 ID：独立取样并保持 started。
         self.allow(self.dispatch_payload("P", first, tool_id="R3"))
-        self.assertEqual(self.reviews()["R3"]["status"], "started")
+        assert self.reviews()["R3"]["status"] == "started"
         self.allow(self.dispatch_payload("P", first, tool_id="R3"))
-        self.assertEqual(self.reviews()["R3"]["status"], "started")
+        assert self.reviews()["R3"]["status"] == "started"
 
 
 # ---------------------------------------------------------------------------
@@ -694,28 +685,27 @@ class S12ExecOutcomeTests(HookCase):
         path.write_text(json.dumps(valid_models()), encoding="utf-8")
         return path
 
-    def test_codex_command_execution_exit_code_wins(self) -> None:
-        for exit_code, confirmed in ((2, False), (1, False), (0, True)):
-            with self.subTest(exit_code=exit_code):
-                path = self.root / ("exec-%s.jsonl" % exit_code)
-                entries = [
-                    {
-                        "type": "item.completed",
-                        "item": {
-                            "type": "command_execution",
-                            "id": "c1",
-                            "command": "cat /w/a.py",
-                            "exit_code": exit_code,
-                            "status": "completed",
-                        },
-                    }
-                ]
-                path.write_text(
-                    "\n".join(json.dumps(entry) for entry in entries) + "\n", encoding="utf-8"
-                )
-                records, _warnings = transcripts.codex_records(str(path))
-                self.assertEqual(len(records), 1)
-                self.assertEqual(bool(records[0]["confirmed"]), confirmed, exit_code)
+    @pytest.mark.parametrize("exit_code, confirmed", [(2, False), (1, False), (0, True)])
+    def test_codex_command_execution_exit_code_wins(self, exit_code, confirmed) -> None:
+        path = self.root / ("exec-%s.jsonl" % exit_code)
+        entries = [
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "id": "c1",
+                    "command": "cat /w/a.py",
+                    "exit_code": exit_code,
+                    "status": "completed",
+                },
+            }
+        ]
+        path.write_text(
+            "\n".join(json.dumps(entry) for entry in entries) + "\n", encoding="utf-8"
+        )
+        records, _warnings = transcripts.codex_records(str(path))
+        assert len(records) == 1
+        assert bool(records[0]["confirmed"]) == confirmed, exit_code
 
     def test_codex_command_execution_without_success_flag_is_not_confirmed(self) -> None:
         path = self.root / "exec-nofield.jsonl"
@@ -730,8 +720,8 @@ class S12ExecOutcomeTests(HookCase):
             encoding="utf-8",
         )
         records, _warnings = transcripts.codex_records(str(path))
-        self.assertEqual(len(records), 1)
-        self.assertFalse(records[0]["confirmed"])
+        assert len(records) == 1
+        assert not records[0]["confirmed"]
 
     def test_antigravity_success_status_cannot_override_is_error(self) -> None:
         path = self.root / "ag-conflict.jsonl"
@@ -750,8 +740,8 @@ class S12ExecOutcomeTests(HookCase):
             "\n".join(json.dumps(entry) for entry in entries) + "\n", encoding="utf-8"
         )
         records, _warnings = transcripts.antigravity_records(str(path))
-        self.assertEqual(len(records), 1)
-        self.assertFalse(records[0]["confirmed"])
+        assert len(records) == 1
+        assert not records[0]["confirmed"]
 
     def test_failed_exec_does_not_activate_via_skill_read(self) -> None:
         transcript = self.root / "exec-skill.jsonl"
@@ -856,8 +846,8 @@ class S13TranscriptSessionIdentityTests(HookCase):
     def test_missing_identity_is_disclosed(self) -> None:
         path = self.write_transcript(self.read_entries(), "anon.jsonl")
         _code, value, stderr = self.run_core(self.input_payload_with("t4", path))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("缺原生会话身份", stderr)
+        assert not self.is_denied(value), value
+        assert "缺原生会话身份" in stderr
         self.deny(self.shell("t4", "git reset --hard", tool_id="anon-git"))
 
     def test_wrong_install_tree_does_not_activate(self) -> None:
@@ -912,9 +902,9 @@ class S14TranscriptCwdTests(HookCase):
     def test_codex_shell_read_uses_parser_cwd(self) -> None:
         path = self.codex_cd_transcript()
         records, _warnings = transcripts.codex_records(path)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["paths"], ["/w/sub/a.py"])
-        self.assertTrue(records[0]["confirmed"])
+        assert len(records) == 1
+        assert records[0]["paths"] == ["/w/sub/a.py"]
+        assert records[0]["confirmed"]
 
     def test_antigravity_shell_read_uses_parser_cwd(self) -> None:
         path = self.write_transcript(
@@ -935,8 +925,8 @@ class S14TranscriptCwdTests(HookCase):
             ]
         )
         records, _warnings = transcripts.antigravity_records(path)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["paths"], ["/w/sub/a.py"])
+        assert len(records) == 1
+        assert records[0]["paths"] == ["/w/sub/a.py"]
 
     def test_wrapper_chdir_is_resolved_for_each_read(self) -> None:
         path = self.write_transcript(
@@ -963,8 +953,8 @@ class S14TranscriptCwdTests(HookCase):
             ]
         )
         records, _warnings = transcripts.codex_records(path)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["paths"], ["/w/sub/a.py"])
+        assert len(records) == 1
+        assert records[0]["paths"] == ["/w/sub/a.py"]
 
     def test_antigravity_uses_each_calls_own_cwd(self) -> None:
         path = self.write_transcript(
@@ -1003,8 +993,8 @@ class S14TranscriptCwdTests(HookCase):
             ]
         )
         records, _warnings = transcripts.antigravity_records(path)
-        self.assertEqual(len(records), 2)
-        self.assertEqual([record["paths"] for record in records], [["/w/other/a.py"], ["/w/a.py"]])
+        assert len(records) == 2
+        assert [record["paths"] for record in records] == [["/w/other/a.py"], ["/w/a.py"]]
 
     def test_role_metric_respects_transcript_cwd_unless_explicit(self) -> None:
         experiments = HOOKS_ROOT / "tests" / "experiments"
@@ -1017,12 +1007,12 @@ class S14TranscriptCwdTests(HookCase):
             "codex", Path(path), [], [], {}, None
         )
         paths = [item["path"] for item in rows[0]["file_access"]]
-        self.assertEqual(paths, ["/w/sub/a.py"])
+        assert paths == ["/w/sub/a.py"]
         # 显式 --cwd 只作为相对路径基准，不能覆盖 parser 给出的绝对目标。
         rows, _warnings = role_metric.collect_transcripts(
             "codex", Path(path), [], [], {}, Path("/elsewhere")
         )
-        self.assertEqual([item["path"] for item in rows[0]["file_access"]], ["/w/sub/a.py"])
+        assert [item["path"] for item in rows[0]["file_access"]] == ["/w/sub/a.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -1048,13 +1038,13 @@ class S15ProbeLockBusyTests(R4Case):
         try:
             for label, payload in (("git", git_command), ("readonly", readonly_command)):
                 _code, value, stderr = self.run_core(payload, mode="probe")
-                self.assertFalse(self.is_denied(value), (label, value))
-                self.assertIn("warning", stderr, label)
+                assert not self.is_denied(value), (label, value)
+                assert "warning" in stderr, label
         finally:
             for handle in held:
                 handle.close()
-        self.assertIn("Git", self.deny(git_command))
-        self.assertIn("只读", self.deny(readonly_command))
+        assert "Git" in self.deny(git_command)
+        assert "只读" in self.deny(readonly_command)
 
 
     def test_probe_allows_when_state_is_unavailable(self) -> None:
@@ -1065,8 +1055,8 @@ class S15ProbeLockBusyTests(R4Case):
         _code, value, stderr = self.run_core(
             self.shell("s1", "git reset --hard", tool_id="probe-state"), mode="probe"
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
 
 
 # ---------------------------------------------------------------------------
@@ -1100,7 +1090,7 @@ class S16InactiveChildNestedTests(HookCase):
             self.dispatch_payload("child-ro", self.reviewer_handoff(), tool_id="ro-nest"),
             env=child_env,
         )
-        self.assertIn("子代理", reason)
+        assert "子代理" in reason
 
     def test_task_active_child_is_denied_but_status_and_wait_are_allowed(self) -> None:
         self.activate("P")
@@ -1108,7 +1098,7 @@ class S16InactiveChildNestedTests(HookCase):
         self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D1"))
         self.allow(self.child_input_payload("C", handoff, parent="P"))
         reason = self.deny(self.dispatch_payload("C", self.developer_handoff(), tool_id="nest-1"))
-        self.assertIn("子代理", reason)
+        assert "子代理" in reason
         for index, action in enumerate(("status", "wait")):
             payload = self.tool_payload("C", "subagent", {"action": action, "id": "x"}, tool_id="st-%d" % index)
             self.allow(payload)
@@ -1120,8 +1110,8 @@ class S16InactiveChildNestedTests(HookCase):
 class S17MislabeledConfigTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         (self.repo / "deploy.conf").write_text("mode = 1\n", encoding="utf-8")
         (self.repo / "reports").mkdir()
         (self.repo / "reports" / "other.conf").write_text("k = 1\n", encoding="utf-8")
@@ -1132,7 +1122,7 @@ class S17MislabeledConfigTests(HookCase):
         for item in task_states(self.state):
             if item.get("task_identity"):
                 return int(item.get("last_code_write_seq") or 0)
-        self.fail("task state not found")
+        pytest.fail("task state not found")
 
     def test_mislabeled_configs_still_count_as_code_writes(self) -> None:
         self.write_context(
@@ -1141,12 +1131,12 @@ class S17MislabeledConfigTests(HookCase):
         )
         self.activate("P")
         self.write_path("P", "conf", "deploy.conf", "mode = 2\n")
-        self.assertEqual(self.code_write_seq(), 1)
+        assert self.code_write_seq() == 1
         self.write_path("P", "rconf", "reports/other.conf", "k = 2\n")
-        self.assertEqual(self.code_write_seq(), 2)
+        assert self.code_write_seq() == 2
         # 纯文档路径仍按文档排除。
         self.write_path("P", "doc", "docs/guide.md", "guide v2\n")
-        self.assertEqual(self.code_write_seq(), 2)
+        assert self.code_write_seq() == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1181,7 +1171,7 @@ class S18DispatchLockScopeTests(StateHelpers, HookCase):
         models.parent.mkdir()
         models.write_text(json.dumps(valid_models()), encoding="utf-8")
         task_lock = self.state / "locks" / ("task-" + self.task_lock_key() + ".lock")
-        self.assertTrue(task_lock.is_file(), task_lock)
+        assert task_lock.is_file(), task_lock
         env, counter = self.slow_git_env()
         return env, counter, task_lock
 
@@ -1251,13 +1241,13 @@ class S18DispatchLockScopeTests(StateHelpers, HookCase):
             time.sleep(0.005)
         elapsed = time.monotonic() - started
         stdout, stderr = self.finish(process)
-        self.assertEqual(process.returncode, 0, stderr)
-        self.assertEqual(json.loads(stdout), {}, stderr)
-        self.assertNotIn("状态锁不可用", stderr)
+        assert process.returncode == 0, stderr
+        assert json.loads(stdout) == {}, stderr
+        assert "状态锁不可用" not in stderr
         # 慢 Git 确实执行过（说明窗口存在），但只应在锁外查一次。
-        self.assertEqual(counter.read_text(encoding="utf-8"), "x", stderr)
-        self.assertGreater(elapsed, 0.15)
-        self.assertLess(longest, 0.15, "共享 task 锁在慢 Git 期间被长期占用")
+        assert counter.read_text(encoding="utf-8") == "x", stderr
+        assert elapsed > 0.15
+        assert longest < 0.15, "共享 task 锁在慢 Git 期间被长期占用"
 
     def test_concurrent_write_during_slow_git_is_not_lock_starved(self) -> None:
         env, _counter, _task_lock = self.prepare()
@@ -1268,11 +1258,11 @@ class S18DispatchLockScopeTests(StateHelpers, HookCase):
             self.write_tool("s1", "src/app.py", tool_id="concurrent"), env=env
         )
         stdout, stderr = self.finish(process)
-        self.assertEqual(process.returncode, 0, stderr)
-        self.assertEqual(json.loads(stdout), {}, stderr)
-        self.assertFalse(self.is_denied(concurrent), concurrent)
-        self.assertNotIn("状态锁不可用", concurrent_stderr)
-        self.assertNotIn("锁", concurrent_stderr)
+        assert process.returncode == 0, stderr
+        assert json.loads(stdout) == {}, stderr
+        assert not self.is_denied(concurrent), concurrent
+        assert "状态锁不可用" not in concurrent_stderr
+        assert "锁" not in concurrent_stderr
 
 
 # ---------------------------------------------------------------------------
@@ -1281,8 +1271,8 @@ class S18DispatchLockScopeTests(StateHelpers, HookCase):
 class S19HomeIsolationTests(HookCase):
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         # 模拟“调用者 HOME”：含无效用户配置的 sentinel 目录。
         self.caller_home = self.root / "caller-home"
         (self.caller_home / ".config" / "easydev").mkdir(parents=True)
@@ -1292,9 +1282,9 @@ class S19HomeIsolationTests(HookCase):
 
     def test_default_environment_points_at_fixture_home(self) -> None:
         env = self.environment()
-        self.assertEqual(env["HOME"], str(self.home))
-        self.assertEqual(env["XDG_CONFIG_HOME"], str(self.home / ".config"))
-        self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
+        assert env["HOME"] == str(self.home)
+        assert env["XDG_CONFIG_HOME"] == str(self.home / ".config")
+        assert env["GIT_CONFIG_GLOBAL"] == os.devnull
         completed = subprocess.run(
             ["git", "config", "--global", "--list"],
             env=self.environment(),
@@ -1302,8 +1292,8 @@ class S19HomeIsolationTests(HookCase):
             text=True,
             timeout=30,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout.strip(), "")
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip() == ""
 
     def test_normal_case_ignores_caller_home(self) -> None:
         models = self.repo / ".easydev" / "models.json"
@@ -1336,7 +1326,3 @@ class S19HomeIsolationTests(HookCase):
             self.dispatch_payload("s1", self.developer_handoff(), tool_id="iso-3"),
             env={"HOME": str(self.caller_home)},
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

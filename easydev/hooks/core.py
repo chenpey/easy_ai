@@ -1017,14 +1017,18 @@ def _merge_write_entries(
     状态。两条普通条目的写入前指纹不同，说明目标在分析期间被外部改写；保留条目
     带 `unstable` 标记，由 `_check_baseline` 在 pre 直接拒绝，而不是只记 post 缺口。
     指纹取证超时（`deadline`）是预算耗尽的降级而不是状态变化：保留真实指纹并标
-    `deadline`，交给 `_check_baseline` 告警降级。软链仍优先于普通条目（两个都软链
-    保留首个）。
+    `deadline`，交给 `_check_baseline` 告警降级。只有超时、没有真实指纹的单条目标
+    同样标 `deadline`。软链仍优先于普通条目（两个都软链保留首个）。
     """
     merged: Dict[str, Dict[str, Any]] = {}
     unstable = False
     for entry in entries:
         kept = merged.get(entry["origin_key"])
         if kept is None:
+            if entry.get("fingerprint") == "deadline":
+                # 单条目标没走合并分支：只有超时、没有可信指纹同样是取证降级，
+                # 与合并后的条目一样标记，让目标集按不完整记账。
+                entry["deadline"] = True
             merged[entry["origin_key"]] = entry
             continue
         if entry.get("symlink") and not kept.get("symlink"):
@@ -2074,8 +2078,17 @@ class Engine(object):
         # 取证超时仍算目标集不完整（post 不建立成功豁免），但不因此 pre 拒绝。
         degraded = any(item.get("deadline") for item in entries)
         gap = outside or unstable or unparsed or degraded
+        # 只有「缺口原因恰好只有执行型 stdin 未解析」才进入按任务去重的提醒；
+        # 同时存在仓库外目标、预取不一致或取证超时时，仍每次披露。
+        gap_stdin_only = unparsed and not (outside or unstable or degraded)
         if not entries:
-            return {"repo": repo, "entries": [], "gap": gap, "task_key": None}
+            return {
+                "repo": repo,
+                "entries": [],
+                "gap": gap,
+                "gap_stdin_only": gap_stdin_only,
+                "task_key": None,
+            }
         if classify and record.activation_scope == "task_active" and not self._manual_task_root_for(root_key, task_key):
             for entry in entries:
                 if entry.get("snapshot") is not None or entry.get("symlink"):
@@ -2086,7 +2099,13 @@ class Engine(object):
                 if entry.get("origin") not in {"dirty", "untracked", "unreconstructible"}:
                     continue
                 entry["snapshot"] = self._save_snapshot(entry, task_key)
-        return {"repo": repo, "entries": entries, "gap": gap, "task_key": None}
+        return {
+            "repo": repo,
+            "entries": entries,
+            "gap": gap,
+            "gap_stdin_only": gap_stdin_only,
+            "task_key": None,
+        }
 
     def _manual_task_root_for(self, root_key: Optional[str], task_key: Optional[str]) -> bool:
         """是否已有显式手工任务根：本次上下文/环境，或已存进状态的任务/机器上下文。
@@ -3101,6 +3120,9 @@ class Engine(object):
                 == len([item for item in entries if not item.get("symlink")])
             ),
             "gap": gap,
+            # 缺口是否只来自「执行型 stdin 正文未解析」：post 据此把同一任务里重复的
+            # 同一句提醒去重，记账本身仍按不完整处理。
+            "gap_stdin_only": bool((prepared or {}).get("gap_stdin_only")),
         }
         if len(pending) > 200:
             for key in list(pending)[:100]:
@@ -3191,8 +3213,13 @@ class Engine(object):
         if any(item.get("symlink") for item in entries):
             self.warnings.append("post 目标含符号链接，未建立成功豁免")
             return
+        if any(item.get("fingerprint") in UNSAFE_FINGERPRINTS for item in entries):
+            # pre 与 post 之间目标变成目录/FIFO/设备、超过上限或不可读：没有可信的
+            # 写入后指纹，不得把它写成成功指纹（否则下一次 pre 会误报外部修改）。
+            self.warnings.append("post 目标指纹不可信，未建立成功豁免")
+            return
         if gap or not entry.get("complete"):
-            self.warnings.append("post 写入目标不完整，写序列记覆盖缺口")
+            self._warn_accounting_gap(task, entry, prepared)
             return
         # 完整目标集合按仓库身份 + 规范相对路径比较：不能只看相对路径。
         targets = sorted(
@@ -3221,6 +3248,31 @@ class Engine(object):
         if changed:
             task["write_seq"] = int(task.get("write_seq") or 0) + 1
             task["last_code_write_seq"] = task["write_seq"]
+
+    def _warn_accounting_gap(
+        self,
+        task: Dict[str, Any],
+        entry: Dict[str, Any],
+        prepared: Optional[Dict[str, Any]],
+    ) -> None:
+        """写序列缺口披露：执行型 stdin 正文按任务提醒一次，其余原因每次提醒。
+
+        去重只作用于「pre 与 post 的缺口原因都只有执行型 stdin 未解析」这一种：同一任务
+        里反复跑 `python3 - <<'PY'` 这类命令时，重复的同一句提醒没有新信息。记账不变——
+        pending 仍是不完整、不建立成功豁免；换 epoch（新任务）重新提醒一次。缺口还含其它
+        原因（仓库外目标、预取不一致、取证超时、pre 缺失等）时每次仍披露，避免把不同原因
+        静默合并。
+        """
+        stdin_only = bool(entry.get("gap_stdin_only")) and bool(
+            (prepared or {}).get("gap_stdin_only")
+        )
+        notices = task.setdefault("gap_notices", {}) if stdin_only else {}
+        epoch = int(task.get("task_epoch") or 0)
+        if stdin_only:
+            if notices.get("stdin_unparsed") == epoch:
+                return
+            notices["stdin_unparsed"] = epoch
+        self.warnings.append("post 写入目标不完整，写序列记覆盖缺口")
 
     def _is_code_write(self, relative: str, task: Dict[str, Any], repo: str) -> bool:
         """先识别运行规则/配置/测试，再应用精确文档/报告路径排除。"""

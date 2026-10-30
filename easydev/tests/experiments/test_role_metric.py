@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 import contextlib
 import io
 import json
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 
 EXPERIMENTS_ROOT = Path(__file__).resolve().parent
@@ -76,10 +77,9 @@ def write_child(
     )
 
 
-class RoleMetricTests(unittest.TestCase):
-    def setUp(self) -> None:
+class RoleMetricTests:
+    def setup_method(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
         self.session = Path(self.tmp.name)
         write_main_session(
             self.session,
@@ -124,31 +124,34 @@ class RoleMetricTests(unittest.TestCase):
             parent=SESSION_B,
         )
 
+    def teardown_method(self) -> None:
+        self.tmp.cleanup()
+
     def test_roles_are_separated_and_scoped_to_one_session(self) -> None:
         rows = role_metric.collect(self.session, [], selector=SESSION_A)
         roles = [row["role"] for row in rows]
-        self.assertEqual(roles, ["main", "reviewer"])
+        assert roles == ["main", "reviewer"]
         main, reviewer = rows
-        self.assertEqual(main["references"], ["routing.md"])
-        self.assertEqual(reviewer["references"], ["reviewer-role.md"])
-        self.assertEqual(reviewer["model"], "provider/model-a:high")
-        self.assertEqual(reviewer["tokens"]["input"], 100)
+        assert main["references"] == ["routing.md"]
+        assert reviewer["references"] == ["reviewer-role.md"]
+        assert reviewer["model"] == "provider/model-a:high"
+        assert reviewer["tokens"]["input"] == 100
 
     def test_handoff_prompt_is_not_counted_as_main_reading(self) -> None:
         rows = role_metric.collect(self.session, [], selector=SESSION_A)
         # 交接待办 prompt 里提到 review.md，但不能算主代理读取。
-        self.assertNotIn("review.md", rows[0]["references"])
+        assert "review.md" not in rows[0]["references"]
 
     def test_other_session_artifacts_are_excluded(self) -> None:
         rows = role_metric.collect(self.session, [], selector=SESSION_A)
         models = [row["model"] for row in rows]
-        self.assertNotIn("provider/model-b:low", models)
-        self.assertEqual(len(rows), 2)
+        assert "provider/model-b:low" not in models
+        assert len(rows) == 2
 
     def test_newest_session_is_selected_by_default(self) -> None:
         rows = role_metric.collect(self.session, [], cwd=Path("/repo"))
-        self.assertEqual(len(rows), 2)
-        self.assertTrue(rows[0]["source"].endswith(f"{SESSION_B}.jsonl"))
+        assert len(rows) == 2
+        assert rows[0]["source"].endswith(f"{SESSION_B}.jsonl")
 
     def test_path_filter_answers_who_read_the_caller(self) -> None:
         rows = role_metric.collect(
@@ -158,8 +161,8 @@ class RoleMetricTests(unittest.TestCase):
             cwd=Path("/repo"),
         )
         main, reviewer = rows
-        self.assertEqual(reviewer.get("matched_paths"), {"src/cart.py": 1})
-        self.assertEqual(main.get("matched_paths"), {"references/routing.md": 1})
+        assert reviewer.get("matched_paths") == {"src/cart.py": 1}
+        assert main.get("matched_paths") == {"references/routing.md": 1}
 
     def test_absolute_query_matches_relative_payload(self) -> None:
         write_child(
@@ -177,7 +180,7 @@ class RoleMetricTests(unittest.TestCase):
             cwd=Path("/repo"),
         )
         worker = [row for row in rows if row["role"] == "worker"][0]
-        self.assertEqual(worker.get("matched_paths"), {"/repo/easydev/references/execution.md": 1})
+        assert worker.get("matched_paths") == {"/repo/easydev/references/execution.md": 1}
 
     def test_no_visible_read_hint_for_external_delegation(self) -> None:
         # 外部委派工具的参数里没有路径键：读取不在事件层，只能提示，不能当作没读。
@@ -192,19 +195,19 @@ class RoleMetricTests(unittest.TestCase):
         )
         collected = role_metric.collect(self.session, [], selector=SESSION_A)
         opaque = [row for row in collected if not row["visible_reads"]]
-        self.assertEqual(len(opaque), 1)
-        self.assertEqual(opaque[0]["tools"], {"antigravity": 1})
+        assert len(opaque) == 1
+        assert opaque[0]["tools"] == {"antigravity": 1}
 
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             role_metric.main(["--session-dir", str(self.session), "--session", SESSION_A])
-        self.assertIn("读取可能发生在事件层看不见的地方", err.getvalue())
+        assert "读取可能发生在事件层看不见的地方" in err.getvalue()
 
     def test_no_hint_when_reads_are_visible(self) -> None:
         err = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             role_metric.main(["--session-dir", str(self.session), "--session", SESSION_A])
-        self.assertEqual(err.getvalue(), "")
+        assert err.getvalue() == ""
 
     def test_non_object_meta_does_not_crash(self) -> None:
         artifacts = self.session / "subagent-artifacts"
@@ -214,7 +217,7 @@ class RoleMetricTests(unittest.TestCase):
         )
         (artifacts / "run-bad_reviewer_0_meta.json").write_text('["not", "an", "object"]', encoding="utf-8")
         rows = role_metric.collect(self.session, [], selector=SESSION_A)
-        self.assertTrue(any(row["role"] == "unknown" for row in rows) is False)
+        assert (any(row["role"] == "unknown" for row in rows) is False)
 
     def test_json_output_is_machine_readable(self) -> None:
         buffer = io.StringIO()
@@ -222,10 +225,10 @@ class RoleMetricTests(unittest.TestCase):
             code = role_metric.main(
                 ["--session-dir", str(self.session), "--session", SESSION_A, "--json"]
             )
-        self.assertEqual(code, 0)
+        assert code == 0
         parsed = json.loads(buffer.getvalue())
-        self.assertEqual([row["role"] for row in parsed], ["main", "reviewer"])
-        self.assertIn("tool_calls", parsed[0])
+        assert [row["role"] for row in parsed] == ["main", "reviewer"]
+        assert "tool_calls" in parsed[0]
 
     def test_antigravity_transcript_attributes_reads_only(self) -> None:
         transcript = Path(self.tmp.name) / "antigravity.jsonl"
@@ -274,17 +277,15 @@ class RoleMetricTests(unittest.TestCase):
         rows, warnings = role_metric.collect_transcripts(
             "antigravity", transcript, [], [], {}, Path("/repo")
         )
-        self.assertEqual(warnings, [])
+        assert warnings == []
         main = rows[0]
-        self.assertEqual(
-            main["references"], ["execution.md", "review.md", "routing.md"]
-        )
-        self.assertNotIn("verification.md", main["references"])
-        self.assertNotIn("debugging.md", main["references"])
-        self.assertEqual(main["attribution_status"], "partial")
+        assert main["references"] == ["execution.md", "review.md", "routing.md"]
+        assert "verification.md" not in main["references"]
+        assert "debugging.md" not in main["references"]
+        assert main["attribution_status"] == "partial"
         confirmed = {entry["path"] for entry in main["file_access"] if entry["confirmed"]}
-        self.assertIn("/repo/easydev/references/routing.md", confirmed)
-        self.assertNotIn("/repo/easydev/references/execution.md", confirmed)
+        assert "/repo/easydev/references/routing.md" in confirmed
+        assert "/repo/easydev/references/execution.md" not in confirmed
 
     def test_antigravity_requested_without_results_is_not_confirmed(self) -> None:
         transcript = Path(self.tmp.name) / "antigravity-pending.jsonl"
@@ -301,8 +302,8 @@ class RoleMetricTests(unittest.TestCase):
             encoding="utf-8",
         )
         rows, _ = role_metric.collect_transcripts("antigravity", transcript, [], [], {}, Path("/repo"))
-        self.assertEqual(rows[0]["attribution_status"], "requested")
-        self.assertEqual(rows[0]["references"], ["routing.md"])
+        assert rows[0]["attribution_status"] == "requested"
+        assert rows[0]["references"] == ["routing.md"]
 
     def test_codex_rollout_dedupes_completed_and_ignores_patch_paths(self) -> None:
         transcript = Path(self.tmp.name) / "rollout.jsonl"
@@ -358,12 +359,12 @@ class RoleMetricTests(unittest.TestCase):
         transcript.write_text("\n".join(json.dumps(e) if not isinstance(e, str) else e for e in events) + "\n", encoding="utf-8")
         rows, warnings = role_metric.collect_transcripts("codex", transcript, [], [], {}, Path("/repo"))
         main = rows[0]
-        self.assertEqual(main["references"], ["routing.md"])
-        self.assertNotIn("review.md", main["references"])
-        self.assertNotIn("execution.md", main["references"])
-        self.assertEqual(main["tools"].get("read_file"), 1)
-        self.assertEqual(main["attribution_status"], "partial")
-        self.assertTrue(any("跳过" in warning for warning in warnings))
+        assert main["references"] == ["routing.md"]
+        assert "review.md" not in main["references"]
+        assert "execution.md" not in main["references"]
+        assert main["tools"].get("read_file") == 1
+        assert main["attribution_status"] == "partial"
+        assert any("跳过" in warning for warning in warnings)
 
     def test_codex_exec_dedupes_same_item_id(self) -> None:
         transcript = Path(self.tmp.name) / "exec.jsonl"
@@ -398,11 +399,11 @@ class RoleMetricTests(unittest.TestCase):
         transcript.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
         rows, _ = role_metric.collect_transcripts("codex", transcript, [], [], {}, Path("/repo"))
         main = rows[0]
-        self.assertEqual(main["references"], ["code-quality.md", "review.md"])
-        self.assertEqual(main["tools"].get("exec_command"), 2)
+        assert main["references"] == ["code-quality.md", "review.md"]
+        assert main["tools"].get("exec_command") == 2
         statuses = {(entry["path"], entry["confirmed"]) for entry in main["file_access"]}
-        self.assertIn(("/repo/easydev/references/code-quality.md", True), statuses)
-        self.assertIn(("/repo/easydev/references/review.md", False), statuses)
+        assert ("/repo/easydev/references/code-quality.md", True) in statuses
+        assert ("/repo/easydev/references/review.md", False) in statuses
 
     def test_child_transcript_and_role_map(self) -> None:
         parent = Path(self.tmp.name) / "parent.jsonl"
@@ -437,14 +438,14 @@ class RoleMetricTests(unittest.TestCase):
             {child.name: {"role": "reviewer", "parent": parent.name}},
             Path("/repo"),
         )
-        self.assertEqual([row["role"] for row in rows], ["main", "reviewer"])
-        self.assertTrue(rows[1]["child"])
-        self.assertEqual(rows[1]["parent"], parent.name)
-        self.assertEqual(rows[1]["references"], ["reviewer-role.md"])
+        assert [row["role"] for row in rows] == ["main", "reviewer"]
+        assert rows[1]["child"]
+        assert rows[1]["parent"] == parent.name
+        assert rows[1]["references"] == ["reviewer-role.md"]
 
     def test_host_cli_requires_explicit_transcript(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
+            with pytest.raises(SystemExit):
                 role_metric.main(["--host", "codex"])
 
     def test_cli_role_map_labels_child_transcript(self) -> None:
@@ -474,9 +475,9 @@ class RoleMetricTests(unittest.TestCase):
                     "--json",
                 ]
             )
-        self.assertEqual(code, 0)
+        assert code == 0
         rows = json.loads(buffer.getvalue())
-        self.assertEqual([row["role"] for row in rows], ["main", "reviewer"])
+        assert [row["role"] for row in rows] == ["main", "reviewer"]
 
     def test_codex_cli_outputs_json_rows(self) -> None:
         transcript = Path(self.tmp.name) / "cli.jsonl"
@@ -498,11 +499,7 @@ class RoleMetricTests(unittest.TestCase):
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
             code = role_metric.main(["--host", "codex", "--transcript", str(transcript), "--json"])
-        self.assertEqual(code, 0)
+        assert code == 0
         parsed = json.loads(buffer.getvalue())
-        self.assertEqual(parsed[0]["references"], ["planning.md"])
-        self.assertEqual(parsed[0]["attribution_status"], "requested")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert parsed[0]["references"] == ["planning.md"]
+        assert parsed[0]["attribution_status"] == "requested"

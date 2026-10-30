@@ -10,9 +10,10 @@ V02：停用后通过正常 read 工具对精确安装路径 `SKILL.md` 的**新
 
 from __future__ import annotations
 
+import pytest
+
 import subprocess
 import sys
-import unittest
 
 from support import HOOKS_ROOT, HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states
@@ -55,16 +56,14 @@ class V01LineContinuationTests(HookCase):
     # 纯数字普通重定向是文件目标（T02 既有修复不得退回）。
     NUMERIC_CASES = ("printf x > 1", "printf x >> 1", "printf x 2> 1")
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         for name in self.SENTINELS:
             (self.repo / name).write_text("USER-SENTINEL\n", encoding="utf-8")
 
     def assert_sentinels_intact(self) -> None:
         for name in self.SENTINELS:
-            self.assertEqual(
-                (self.repo / name).read_text(encoding="utf-8"), "USER-SENTINEL\n", name
-            )
+            assert (self.repo / name).read_text(encoding="utf-8") == "USER-SENTINEL\n", name
 
     def dispatch_command(self, session: str, command: str, tool_id: str) -> dict:
         """经 CLI 判定；只有 allow 才在临时 Bash 里执行原命令（负例绝不执行）。
@@ -89,60 +88,54 @@ class V01LineContinuationTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.REDIRECT_CASES):
-            with self.subTest(command=command):
-                value = self.dispatch_command("dev", command, "v01-dev-%d" % index)
-                # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
-                self.assertTrue(self.is_denied(value), value)
-                self.assertIn("baseline/1.txt", self.reason(value))
+            value = self.dispatch_command("dev", command, "v01-dev-%d" % index)
+            # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
+            assert self.is_denied(value), value
+            assert "baseline/1.txt" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_continuation_redirects(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.REDIRECT_CASES):
-            with self.subTest(command=command):
-                value = self.dispatch_command("rev", command, "v01-rev-%d" % index)
-                self.assertTrue(self.is_denied(value), value)
-                self.assertIn("只读", self.reason(value))
+            value = self.dispatch_command("rev", command, "v01-rev-%d" % index)
+            assert self.is_denied(value), value
+            assert "只读" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_git_continuation_variants_are_denied(self) -> None:
         self.activate("dev")
         for index, command in enumerate(self.GIT_CASES):
-            with self.subTest(command=command):
-                reason = self.deny(self.shell("dev", command, tool_id="v01-git-%d" % index))
-                self.assertIn("Git", reason)
+            reason = self.deny(self.shell("dev", command, tool_id="v01-git-%d" % index))
+            assert "Git" in reason
 
     def test_fd_duplication_and_numeric_targets_regress(self) -> None:
         self.use_manual_baseline()
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
-            with self.subTest(command=command):
-                value = self.dispatch_command("rev", command, "v01-fd-%d" % index)
-                self.assertFalse(self.is_denied(value), value)
+            value = self.dispatch_command("rev", command, "v01-fd-%d" % index)
+            assert not self.is_denied(value), value
         self.activate("dev")
         for index, command in enumerate(self.NUMERIC_CASES):
-            with self.subTest(command=command):
-                value = self.dispatch_command("dev", command, "v01-num-%d" % index)
-                self.assertTrue(self.is_denied(value), value)
-                self.assertIn("baseline/1", self.reason(value))
+            value = self.dispatch_command("dev", command, "v01-num-%d" % index)
+            assert self.is_denied(value), value
+            assert "baseline/1" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_continuation_is_removed_from_redirect_words_and_git_argv(self) -> None:
         # 单引号内保持字面：`\`+换行是数据，不是续接。
         quoted = shell.analyze("printf x >&'1\\\n.txt'")
-        self.assertEqual([item.get("target") for item in quoted.writes], ["1\\\n.txt"])
+        assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]
         # 单引号外（含双引号内）消除续接。
         for command in ("printf x >&1\\\n.txt", 'printf x >&"1\\\n.txt"'):
-            with self.subTest(command=command):
-                analysis = shell.analyze(command)
-                self.assertEqual([item.get("target") for item in analysis.writes], ["1.txt"])
-        self.assertEqual(shell.argv_of("g\\\nit reset --hard"), [["git", "reset", "--hard"]])
-        self.assertEqual(shell.argv_of('echo "a\\\nb"'), [["echo", "ab"]])
-        self.assertEqual(shell.argv_of("echo 'a\\\nb'"), [["echo", "a\\\nb"]])
+            analysis = shell.analyze(command)
+            assert [item.get("target") for item in analysis.writes] == ["1.txt"]
+        assert shell.argv_of("g\\\nit reset --hard") == [["git", "reset", "--hard"]]
+        assert shell.argv_of('echo "a\\\nb"') == [["echo", "ab"]]
+        assert shell.argv_of("echo 'a\\\nb'") == [["echo", "a\\\nb"]]
         # 普通重定向与 cwd 分析使用同一份修复后的词法结果。
         analysis = shell.analyze("cd su\\\nb && printf x > 1\\\n.txt", cwd="/tmp/base")
-        self.assertEqual(analysis.writes[-1]["cwd"], "/tmp/base/sub")
-        self.assertEqual(analysis.writes[-1]["target"], "1.txt")
+        assert analysis.writes[-1]["cwd"] == "/tmp/base/sub"
+        assert analysis.writes[-1]["target"] == "1.txt"
 
 
 class V01CodexLineContinuationTests(V01LineContinuationTests):
@@ -154,7 +147,7 @@ class V01CodexLineContinuationTests(V01LineContinuationTests):
 # ---------------------------------------------------------------------------
 # V02：停用后直接成功读取 SKILL.md 的恢复
 # ---------------------------------------------------------------------------
-class V02DirectSkillReadRestoreTests(object):
+class V02DirectSkillReadRestoreMixin(object):
     FOLLOW_UP = "普通问题：解释这个函数"
 
     def skill_read_payload(
@@ -190,7 +183,7 @@ class V02DirectSkillReadRestoreTests(object):
         for item in root_states(self.state):
             if item.get("root_actor_id") == root_actor:
                 return item
-        self.fail("root not found for %s" % session)
+        pytest.fail("root not found for %s" % session)
 
     def start_child_and_write(self) -> None:
         """旧任务：激活 → 分派 developer child → 本任务一次成功写入 src/app.py。"""
@@ -201,18 +194,16 @@ class V02DirectSkillReadRestoreTests(object):
         self.allow(self.child_start_payload("agent-dev", dispatch_id="D1"))
         self.write_path("P", "w1")
         task = self.task_for_epoch(1)
-        self.assertTrue(task.get("origins"))
-        self.assertTrue(task.get("last_success"))
-        self.assertEqual(
-            (self.repo / "src" / "app.py").read_text(encoding="utf-8"), "value = w1\n"
-        )
+        assert task.get("origins")
+        assert task.get("last_success")
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "value = w1\n"
 
     def deactivate(self, session: str = "P") -> None:
         _code, value, _stderr = self.run_core(
             self.input_payload(session, machine_block(active=False))
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(self.actor_state(session)["activation_scope"], "inactive")
+        assert not self.is_denied(value), value
+        assert self.actor_state(session)["activation_scope"] == "inactive"
 
     def child_fields(self, agent: str) -> dict:
         """子代理工具事件的宿主字段：各宿主用各自的 child 身份字段。"""
@@ -246,36 +237,32 @@ class V02DirectSkillReadRestoreTests(object):
         self.start_child_and_write()
         before = self.task_for_epoch(1)
         self.deactivate()
-        self.assertFalse(self.root_for("P").get("active"))
+        assert not self.root_for("P").get("active")
         self.allow(self.skill_read_payload("P", "new-read-1"))
         root = self.root_for("P")
-        self.assertTrue(root.get("active"))
-        self.assertEqual(int(root["epoch"]), 2)
+        assert root.get("active")
+        assert int(root["epoch"]) == 2
         actor = self.actor_state("P")
-        self.assertEqual(actor["activation_scope"], "task_active")
-        self.assertEqual(int(actor["epoch"]), 2)
-        self.assertNotIn("deactivated", actor)
+        assert actor["activation_scope"] == "task_active"
+        assert int(actor["epoch"]) == 2
+        assert "deactivated" not in actor
         restored = self.task_for_epoch(2)
-        self.assertEqual(int(restored["write_seq"]), 0)
-        self.assertEqual(restored.get("last_success"), {})
-        self.assertEqual(restored.get("reviews"), {})
-        self.assertEqual(int(restored["review_checkpoint"]), 0)
+        assert int(restored["write_seq"]) == 0
+        assert restored.get("last_success") == {}
+        assert restored.get("reviews") == {}
+        assert int(restored["review_checkpoint"]) == 0
         # 旧任务缓存留在旧 epoch，不被新任务复用。
-        self.assertEqual(int(before["write_seq"]), 1)
+        assert int(before["write_seq"]) == 1
         # 旧任务结果（现在是 dirty）在新任务里必须重新按当前基线核对，不能复用旧指纹。
         reason = self.deny(self.write_tool("P", "src/app.py", tool_id="w2"))
-        self.assertIn("baseline", reason)
-        self.assertEqual(
-            (self.repo / "src" / "app.py").read_text(encoding="utf-8"), "value = w1\n"
-        )
+        assert "baseline" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "value = w1\n"
         # 旧 child 的写与完成不推进新 epoch。
         self.child_write("w-old-child")
         self.allow(self.child_done_payload("P", agent="agent-dev", report="**[P1] 旧任务**\n"))
         after = self.task_for_epoch(2)
-        self.assertEqual(int(after["write_seq"]), int(restored["write_seq"]))
-        self.assertEqual(
-            int(after["review_checkpoint"]), int(restored["review_checkpoint"])
-        )
+        assert int(after["write_seq"]) == int(restored["write_seq"])
+        assert int(after["review_checkpoint"]) == int(restored["review_checkpoint"])
 
     def test_new_standard_handoff_child_enters_restored_epoch(self) -> None:
         self.start_child_and_write()
@@ -286,14 +273,14 @@ class V02DirectSkillReadRestoreTests(object):
         )
         self.allow(self.child_start_payload("agent-rev", dispatch_id="D2"))
         child = self.actor_state("P", "agent-rev")
-        self.assertEqual(child["activation_scope"], "task_active")
-        self.assertEqual(int(child["epoch"]), 2)
-        self.assertEqual(child.get("role"), "reviewer")
+        assert child["activation_scope"] == "task_active"
+        assert int(child["epoch"]) == 2
+        assert child.get("role") == "reviewer"
         # 新任务的标准 reviewer 在 epoch2 正常生效：只读拒绝。
         reason = self.deny(
             self.write_tool("P", "src/app.py", tool_id="rev-w", **self.child_fields("agent-rev"))
         )
-        self.assertIn("只读", reason)
+        assert "只读" in reason
 
     def test_failed_requested_and_other_path_reads_do_not_restore(self) -> None:
         other = self.root / "other-install" / "SKILL.md"
@@ -305,38 +292,33 @@ class V02DirectSkillReadRestoreTests(object):
             ("other-path", dict(path=str(other))),
         )
         for index, (name, options) in enumerate(cases):
-            with self.subTest(case=name):
-                session = "n%d" % index
-                self.allow(self.input_payload(session, "使用 easydev，完成这个改动"))
-                self.deactivate(session)
-                self.allow(self.skill_read_payload(session, "neg-%d" % index, **options))
-                self.assertEqual(self.actor_state(session)["activation_scope"], "inactive")
-                root = self.root_for(session)
-                self.assertFalse(root.get("active"))
-                self.assertEqual(int(root["epoch"]), 1)
+            session = "n%d" % index
+            self.allow(self.input_payload(session, "使用 easydev，完成这个改动"))
+            self.deactivate(session)
+            self.allow(self.skill_read_payload(session, "neg-%d" % index, **options))
+            assert self.actor_state(session)["activation_scope"] == "inactive"
+            root = self.root_for(session)
+            assert not root.get("active")
+            assert int(root["epoch"]) == 1
 
     def test_first_skill_read_still_activates_in_epoch_one(self) -> None:
         # 对照：从未激活的会话，首次成功读取 SKILL.md 仍是契约允许的激活入口。
         self.allow(self.skill_read_payload("fresh", "first-read"))
         root = self.root_for("fresh")
-        self.assertTrue(root.get("active"))
-        self.assertEqual(int(root["epoch"]), 1)
+        assert root.get("active")
+        assert int(root["epoch"]) == 1
         actor = self.actor_state("fresh")
-        self.assertEqual(actor["activation_scope"], "task_active")
+        assert actor["activation_scope"] == "task_active"
         self.deny(self.shell("fresh", "git reset --hard"))
 
 
-class V02PiTests(V02DirectSkillReadRestoreTests, StateHelpers, HookCase):
+class V02PiTests(V02DirectSkillReadRestoreMixin, StateHelpers, HookCase):
     host = "pi"
 
 
-class V02CodexTests(V02DirectSkillReadRestoreTests, StateHelpers, HookCase):
+class V02CodexTests(V02DirectSkillReadRestoreMixin, StateHelpers, HookCase):
     host = "codex"
 
 
-class V02AntigravityTests(V02DirectSkillReadRestoreTests, StateHelpers, HookCase):
+class V02AntigravityTests(V02DirectSkillReadRestoreMixin, StateHelpers, HookCase):
     host = "antigravity"
-
-
-if __name__ == "__main__":
-    unittest.main()

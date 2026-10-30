@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -193,10 +192,12 @@ def alive(pid: int) -> bool:
     return True
 
 
-class RunnerCliTest(unittest.TestCase):
-    def setUp(self) -> None:
+class RunnerCliTest:
+    def setup_method(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="easydev-runner-cli-"))
-        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def teardown_method(self) -> None:
+        shutil.rmtree(self.root, True)
 
     # -- fixture helpers -------------------------------------------------
     def stub_environment(
@@ -294,9 +295,9 @@ class RunnerCliTest(unittest.TestCase):
     # -- list / prepare --------------------------------------------------
     def test_list_prints_registered_scenario_ids(self) -> None:
         completed = self.cli("list")
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         listed = json.loads(completed.stdout)
-        self.assertEqual(sorted(item["id"] for item in listed), sorted(SCENARIO_IDS))
+        assert sorted(item["id"] for item in listed) == sorted(SCENARIO_IDS)
 
     def test_prepare_creates_runnable_workspace(self) -> None:
         fixture = self.stub_environment("prepare", {})
@@ -310,14 +311,14 @@ class RunnerCliTest(unittest.TestCase):
             fixture.skill,
             env=fixture.env,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         workspace = self.run_dir(fixture, "b01") / "workspace"
-        self.assertTrue((workspace / ".agents" / "skills" / "easydev" / "SKILL.md").is_file())
-        self.assertTrue((workspace / ".git").is_dir())
-        self.assertTrue((workspace / "src" / "ui.py").is_file())
+        assert (workspace / ".agents" / "skills" / "easydev" / "SKILL.md").is_file()
+        assert (workspace / ".git").is_dir()
+        assert (workspace / "src" / "ui.py").is_file()
         prepared = json.loads(completed.stdout)
-        self.assertEqual(prepared["scenario"], "b01")
-        self.assertIn("prompt", prepared)
+        assert prepared["scenario"] == "b01"
+        assert "prompt" in prepared
 
     def test_run_accepts_relative_paths_from_invocation_directory(self) -> None:
         fixture = self.stub_environment("relative-paths", self.b01_plan())
@@ -334,11 +335,11 @@ class RunnerCliTest(unittest.TestCase):
             cwd=fixture.base, env=fixture.env, capture_output=True,
             text=True, timeout=30,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        self.assertTrue(self.result(fixture, "b01")["resolved"])
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert self.result(fixture, "b01")["resolved"]
         auth_link = self.run_dir(fixture, "b01") / "codex-home" / "auth.json"
-        self.assertEqual(auth_link.resolve(), fixture.auth.resolve())
-        self.assertEqual(auth_link.read_text(), "{}\n")
+        assert auth_link.resolve() == fixture.auth.resolve()
+        assert auth_link.read_text() == "{}\n"
 
     def test_bare_executable_uses_path(self) -> None:
         fixture = self.stub_environment("bare-command", self.b01_plan())
@@ -349,22 +350,22 @@ class RunnerCliTest(unittest.TestCase):
              "--codex-auth", str(fixture.auth), "--skill-root", str(fixture.skill)],
             cwd=self.root, env=env, text=True, capture_output=True, timeout=30,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_normal_exit_cleans_background_child(self) -> None:
         pidfile = self.root / "normal-child.pid"
         fixture = self.stub_environment("normal-child", self.b01_plan(
             spawn_child=True, child_pid_file=str(pidfile)))
         result = self.run_scenario(fixture, "b01")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(alive(int(pidfile.read_text())))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not alive(int(pidfile.read_text()))
 
     def test_nested_git_is_observed(self) -> None:
         plan = self.b01_plan()
         plan["mutations"].append({"path": "src/.git", "content": "unrequested"})
         fixture = self.stub_environment("nested-git", plan)
         result = self.run_scenario(fixture, "b01")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        assert result.returncode == 1, result.stdout + result.stderr
 
     def test_prepare_refuses_non_empty_target_unless_overwritten(self) -> None:
         fixture = self.stub_environment("prepare-overwrite", {})
@@ -377,12 +378,12 @@ class RunnerCliTest(unittest.TestCase):
             "--skill-root",
             fixture.skill,
         )
-        self.assertEqual(self.cli(*args, env=fixture.env).returncode, 0)
+        assert self.cli(*args, env=fixture.env).returncode == 0
         refused = self.cli(*args, env=fixture.env)
-        self.assertNotEqual(refused.returncode, 0)
-        self.assertIn("not empty", refused.stderr)
+        assert refused.returncode != 0
+        assert "not empty" in refused.stderr
         overwritten = self.cli(*args, "--overwrite", env=fixture.env)
-        self.assertEqual(overwritten.returncode, 0, overwritten.stderr)
+        assert overwritten.returncode == 0, overwritten.stderr
 
     def test_prepare_reports_missing_public_contract_case(self) -> None:
         fixture = self.stub_environment("prepare-missing-case", {})
@@ -400,8 +401,8 @@ class RunnerCliTest(unittest.TestCase):
             empty_cases,
             env=fixture.env,
         )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("missing public contract case", completed.stderr)
+        assert completed.returncode != 0
+        assert "missing public contract case" in completed.stderr
 
     # -- b01 run contracts ----------------------------------------------
     def b01_plan(self, **overrides: object) -> dict:
@@ -421,43 +422,43 @@ class RunnerCliTest(unittest.TestCase):
     def test_run_b01_accepts_clean_quick_work(self) -> None:
         fixture = self.stub_environment("b01-pass", self.b01_plan())
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         result = self.result(fixture, "b01")
-        self.assertTrue(result["resolved"], result["evaluation"])
-        self.assertTrue(result["evaluation"]["passed"])
-        self.assertEqual(result["changed_paths"], ["src/ui.py"])
+        assert result["resolved"], result["evaluation"]
+        assert result["evaluation"]["passed"]
+        assert result["changed_paths"] == ["src/ui.py"]
         patch = (self.run_dir(fixture, "b01") / "agent.patch").read_text(encoding="utf-8")
-        self.assertTrue(patch.strip())
-        self.assertNotIn(".agents/skills", patch)
+        assert patch.strip()
+        assert ".agents/skills" not in patch
 
     def test_run_b01_allows_routing_reference(self) -> None:
         fixture = self.stub_environment(
             "b01-routing", self.b01_plan(commands=["cat references/routing.md"])
         )
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
-        self.assertTrue(self.result(fixture, "b01")["resolved"])
+        assert completed.returncode == 0, completed.stderr + completed.stdout
+        assert self.result(fixture, "b01")["resolved"]
 
     def test_run_b01_rejects_other_references(self) -> None:
         fixture = self.stub_environment(
             "b01-execution", self.b01_plan(commands=["cat references/execution.md"])
         )
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        assert completed.returncode == 1, completed.stderr + completed.stdout
         result = self.result(fixture, "b01")
-        self.assertIn("quick loaded no other references", self.failed_checks(result))
+        assert "quick loaded no other references" in self.failed_checks(result)
 
     def test_run_b01_rejects_unrequested_file_changes(self) -> None:
         plan = self.b01_plan()
         plan["mutations"].append({"path": "README.md", "content": "# changed\n"})
         fixture = self.stub_environment("b01-readme", plan)
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        assert completed.returncode == 1, completed.stderr + completed.stdout
         result = self.result(fixture, "b01")
-        self.assertIn("only src/ui.py changed", self.failed_checks(result))
-        self.assertIn("README.md", result["changed_paths"])
+        assert "only src/ui.py changed" in self.failed_checks(result)
+        assert "README.md" in result["changed_paths"]
         patch = (self.run_dir(fixture, "b01") / "agent.patch").read_text(encoding="utf-8")
-        self.assertIn("README.md", patch)
+        assert "README.md" in patch
 
     def test_run_b01_judges_the_label_by_runtime_import(self) -> None:
         # The prompt fixes the text, not the quoting or spacing, so only the
@@ -505,39 +506,36 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, content, extra_env, expected in cases:
-            with self.subTest(case=label):
-                plan = self.b01_plan()
-                plan["mutations"] = [{"path": "src/ui.py", "content": content}]
-                fixture = self.stub_environment(
-                    "b01-label-" + label.replace(" ", "-"), plan
-                )
-                fixture.env.update(extra_env)
-                completed = self.run_scenario(fixture, "b01")
-                self.assertEqual(
-                    completed.returncode, expected, completed.stdout + completed.stderr
-                )
-                result = self.result(fixture, "b01")
-                if expected:
-                    self.assertIn("runtime import passes", self.failed_checks(result))
+            plan = self.b01_plan()
+            plan["mutations"] = [{"path": "src/ui.py", "content": content}]
+            fixture = self.stub_environment(
+                "b01-label-" + label.replace(" ", "-"), plan
+            )
+            fixture.env.update(extra_env)
+            completed = self.run_scenario(fixture, "b01")
+            assert completed.returncode == expected, completed.stdout + completed.stderr
+            result = self.result(fixture, "b01")
+            if expected:
+                assert "runtime import passes" in self.failed_checks(result)
 
     def test_run_b01_detects_runtime_skill_tampering(self) -> None:
         fixture = self.stub_environment(
             "b01-skill-edit", self.b01_plan(runtime_skill_edit=True)
         )
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        assert completed.returncode == 1, completed.stderr + completed.stdout
         result = self.result(fixture, "b01")
-        self.assertTrue(result["runtime_skill_changes"], result)
+        assert result["runtime_skill_changes"], result
         patch = (self.run_dir(fixture, "b01") / "agent.patch").read_text(encoding="utf-8")
-        self.assertNotIn(".agents/skills", patch)
+        assert ".agents/skills" not in patch
 
     def test_run_b01_detects_staged_index_changes(self) -> None:
         fixture = self.stub_environment("b01-stage", self.b01_plan(stage=True))
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        assert completed.returncode == 1, completed.stderr + completed.stdout
         result = self.result(fixture, "b01")
-        self.assertTrue(result["index_changed"], result)
-        self.assertIn("git index stayed unchanged", self.failed_checks(result))
+        assert result["index_changed"], result
+        assert "git index stayed unchanged" in self.failed_checks(result)
 
     def test_run_b01_rejects_incomplete_event_streams(self) -> None:
         cases = (
@@ -545,27 +543,26 @@ class RunnerCliTest(unittest.TestCase):
             ("malformed line", {"invalid_events": "malformed"}, "malformed_event_lines"),
         )
         for label, overrides, field in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b01-events-" + label.replace(" ", "-").replace(".", ""),
-                    self.b01_plan(**overrides),
-                )
-                completed = self.run_scenario(fixture, "b01")
-                self.assertEqual(completed.returncode, 1)
-                result = self.result(fixture, "b01")
-                self.assertFalse(result["valid_invocation"])
-                if field == "turn_completed":
-                    self.assertFalse(result["agent"]["turn_completed"])
-                else:
-                    self.assertGreater(result["agent"]["malformed_event_lines"], 0)
+            fixture = self.stub_environment(
+                "b01-events-" + label.replace(" ", "-").replace(".", ""),
+                self.b01_plan(**overrides),
+            )
+            completed = self.run_scenario(fixture, "b01")
+            assert completed.returncode == 1
+            result = self.result(fixture, "b01")
+            assert not result["valid_invocation"]
+            if field == "turn_completed":
+                assert not result["agent"]["turn_completed"]
+            else:
+                assert result["agent"]["malformed_event_lines"] > 0
 
     def test_run_b01_records_agent_exit_code(self) -> None:
         fixture = self.stub_environment("b01-exit", self.b01_plan(exit_code=7))
         completed = self.run_scenario(fixture, "b01")
-        self.assertEqual(completed.returncode, 1)
+        assert completed.returncode == 1
         result = self.result(fixture, "b01")
-        self.assertFalse(result["valid_invocation"])
-        self.assertEqual(result["agent"]["returncode"], 7)
+        assert not result["valid_invocation"]
+        assert result["agent"]["returncode"] == 7
 
     def test_run_b01_timeout_cleans_up_process_tree(self) -> None:
         child_pid_file = self.root / "timeout-child.pid"
@@ -578,19 +575,19 @@ class RunnerCliTest(unittest.TestCase):
             },
         )
         completed = self.run_scenario(fixture, "b01", agent_timeout=2)
-        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        assert completed.returncode == 1, completed.stderr + completed.stdout
         result = self.result(fixture, "b01")
-        self.assertTrue(result["agent"]["timed_out"])
-        self.assertFalse(result["valid_invocation"])
+        assert result["agent"]["timed_out"]
+        assert not result["valid_invocation"]
         deadline = time.monotonic() + 10
         while not child_pid_file.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertTrue(child_pid_file.exists(), "stub did not record its child pid")
+        assert child_pid_file.exists(), "stub did not record its child pid"
         child_pid = int(child_pid_file.read_text(encoding="utf-8").strip())
         deadline = time.monotonic() + 15
         while alive(child_pid) and time.monotonic() < deadline:
             time.sleep(0.1)
-        self.assertFalse(alive(child_pid), f"child process {child_pid} survived timeout cleanup")
+        assert not alive(child_pid), f"child process {child_pid} survived timeout cleanup"
 
     # -- b02 run contracts ----------------------------------------------
     def test_run_b02_requires_full_route_and_ownership_check(self) -> None:
@@ -622,22 +619,21 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, source, expected_exit, failed in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b02-" + label.replace(" ", "-"),
-                    {
-                        "agent_messages": ["采用 full。", "完成"],
-                        "reviewer": True,
-                        "reviewer_report": "未发现确定缺陷。",
-                        "mutations": [{"path": "src/access.py", "content": source}],
-                    },
-                )
-                completed = self.run_scenario(fixture, "b02")
-                self.assertEqual(completed.returncode, 0 if expected_exit else 1)
-                result = self.result(fixture, "b02")
-                self.assertEqual(result["evaluation"]["passed"], expected_exit)
-                for name in failed:
-                    self.assertIn(name, self.failed_checks(result))
+            fixture = self.stub_environment(
+                "b02-" + label.replace(" ", "-"),
+                {
+                    "agent_messages": ["采用 full。", "完成"],
+                    "reviewer": True,
+                    "reviewer_report": "未发现确定缺陷。",
+                    "mutations": [{"path": "src/access.py", "content": source}],
+                },
+            )
+            completed = self.run_scenario(fixture, "b02")
+            assert completed.returncode == (0 if expected_exit else 1)
+            result = self.result(fixture, "b02")
+            assert result["evaluation"]["passed"] == expected_exit
+            for name in failed:
+                assert name in self.failed_checks(result)
 
     # -- b61 normal review loop ------------------------------------------
     def b61_plan(self, **overrides: object) -> dict:
@@ -658,10 +654,10 @@ class RunnerCliTest(unittest.TestCase):
     def test_run_b61_accepts_normal_review_loop(self) -> None:
         fixture = self.stub_environment("b61-pass", self.b61_plan())
         completed = self.run_scenario(fixture, "b61")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         result = self.result(fixture, "b61")
-        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
-        self.assertEqual(result["evaluation"]["details"]["review_rounds"], 2)
+        assert result["evaluation"]["passed"], result["evaluation"]
+        assert result["evaluation"]["details"]["review_rounds"] == 2
 
     def test_run_b61_accepts_negated_closed_loop_wording(self) -> None:
         # 合规复述「不称 full 闭环」不能判成宣称。
@@ -675,7 +671,7 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         completed = self.run_scenario(fixture, "b61")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
 
     def test_run_b61_accepts_evidence_backed_escalation(self) -> None:
         # behavior.md 第三支：首轮报 P1 即转 full，只要带证据、继承预算就算合规。
@@ -693,13 +689,13 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         completed = self.run_scenario(fixture, "b61")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         result = self.result(fixture, "b61")
-        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
+        assert result["evaluation"]["passed"], result["evaluation"]
         details = result["evaluation"]["details"]
-        self.assertEqual(details["normal_micro_loop"], "escalated")
-        self.assertIn("P1", details["escalation_evidence"])
-        self.assertEqual(details["ledger"]["r"], 1)
+        assert details["normal_micro_loop"] == "escalated"
+        assert "P1" in details["escalation_evidence"]
+        assert details["ledger"]["r"] == 1
 
     def test_run_b61_records_final_ledger_after_escalation(self) -> None:
         # 转 full 的继承值 r=1/5 之后还有终值，取最后一次记账而不是第一次。
@@ -717,9 +713,9 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         completed = self.run_scenario(fixture, "b61")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         details = self.result(fixture, "b61")["evaluation"]["details"]
-        self.assertEqual(details["ledger"]["r"], 2)
+        assert details["ledger"]["r"] == 2
 
     def test_run_b61_accepts_negated_upgrade_wording(self) -> None:
         # 「不升级到 full」是合规复述，不能当成升级。
@@ -733,9 +729,9 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         completed = self.run_scenario(fixture, "b61")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         details = self.result(fixture, "b61")["evaluation"]["details"]
-        self.assertEqual(details["normal_micro_loop"], "delivered")
+        assert details["normal_micro_loop"] == "delivered"
 
     def test_run_b61_records_caller_reads_without_requiring_them(self) -> None:
         fixture = self.stub_environment(
@@ -743,10 +739,10 @@ class RunnerCliTest(unittest.TestCase):
             self.b61_plan(commands=["cat src/invoice.py", "cat src/receipt.py"]),
         )
         completed = self.run_scenario(fixture, "b61")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         details = self.result(fixture, "b61")["evaluation"]["details"]
-        self.assertEqual(details["caller_paths_read"], ["src/invoice.py", "src/receipt.py"])
-        self.assertTrue(details["review_scope_observed"])
+        assert details["caller_paths_read"] == ["src/invoice.py", "src/receipt.py"]
+        assert details["review_scope_observed"]
 
     def test_run_b61_rejects_process_violations(self) -> None:
         cases = (
@@ -865,14 +861,13 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, overrides, failed in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b61-" + label.replace(" ", "-"), self.b61_plan(**overrides)
-                )
-                completed = self.run_scenario(fixture, "b61")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b61")
-                self.assertIn(failed, self.failed_checks(result))
+            fixture = self.stub_environment(
+                "b61-" + label.replace(" ", "-"), self.b61_plan(**overrides)
+            )
+            completed = self.run_scenario(fixture, "b61")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b61")
+            assert failed in self.failed_checks(result)
 
     # -- b16 run contracts ----------------------------------------------
     def test_run_b16_detects_read_only_violation(self) -> None:
@@ -886,9 +881,9 @@ class RunnerCliTest(unittest.TestCase):
             },
         )
         completed = self.run_scenario(fixture, "b16")
-        self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+        assert completed.returncode == 1, completed.stderr + completed.stdout
         result = self.result(fixture, "b16")
-        self.assertIn("audit changed no files", self.failed_checks(result))
+        assert "audit changed no files" in self.failed_checks(result)
 
     def test_run_b16_accepts_read_only_audit_with_findings(self) -> None:
         report = (
@@ -905,15 +900,15 @@ class RunnerCliTest(unittest.TestCase):
             },
         )
         completed = self.run_scenario(fixture, "b16")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         result = self.result(fixture, "b16")
-        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
-        self.assertEqual(result["changed_paths"], [])
+        assert result["evaluation"]["passed"], result["evaluation"]
+        assert result["changed_paths"] == []
         checks = {
             item["name"]: item["passed"] for item in result["evaluation"]["checks"]
         }
-        self.assertTrue(checks["audit inspected src/ledger.py"])
-        self.assertTrue(checks["audit reports a concrete finding"])
+        assert checks["audit inspected src/ledger.py"]
+        assert checks["audit reports a concrete finding"]
 
     def test_run_b01_rejects_route_evidence_and_hidden_changes(self) -> None:
         cases = (
@@ -969,15 +964,14 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, overrides, failed_check in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b01-negative-" + label.replace(" ", "-").replace(".", ""),
-                    self.b01_plan(**overrides),
-                )
-                completed = self.run_scenario(fixture, "b01")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b01")
-                self.assertIn(failed_check, self.failed_checks(result))
+            fixture = self.stub_environment(
+                "b01-negative-" + label.replace(" ", "-").replace(".", ""),
+                self.b01_plan(**overrides),
+            )
+            completed = self.run_scenario(fixture, "b01")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b01")
+            assert failed_check in self.failed_checks(result)
 
     def test_run_b02_rejects_quick_candidate_tiers_and_unfinished_review(self) -> None:
         cases = (
@@ -1002,19 +996,18 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, messages, overrides, failed_check in cases:
-            with self.subTest(case=label):
-                plan = {
-                    "agent_messages": messages,
-                    "mutations": [{"path": "src/access.py", "content": B02_SOLUTION}],
-                }
-                plan.update(overrides)
-                fixture = self.stub_environment(
-                    "b02-negative-" + label.replace(" ", "-"), plan
-                )
-                completed = self.run_scenario(fixture, "b02")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b02")
-                self.assertIn(failed_check, self.failed_checks(result))
+            plan = {
+                "agent_messages": messages,
+                "mutations": [{"path": "src/access.py", "content": B02_SOLUTION}],
+            }
+            plan.update(overrides)
+            fixture = self.stub_environment(
+                "b02-negative-" + label.replace(" ", "-"), plan
+            )
+            completed = self.run_scenario(fixture, "b02")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b02")
+            assert failed_check in self.failed_checks(result)
 
     def test_run_b16_rejects_invalid_findings_reports(self) -> None:
         limits = "限制：未检查并发写入路径。"
@@ -1059,15 +1052,14 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, messages, failed_check in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b16-negative-" + label.replace(" ", "-"),
-                    {"agent_messages": messages},
-                )
-                completed = self.run_scenario(fixture, "b16")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b16")
-                self.assertIn(failed_check, self.failed_checks(result))
+            fixture = self.stub_environment(
+                "b16-negative-" + label.replace(" ", "-"),
+                {"agent_messages": messages},
+            )
+            completed = self.run_scenario(fixture, "b16")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b16")
+            assert failed_check in self.failed_checks(result)
 
     def test_run_public_contract_rejects_reserved_files_and_metadata_access(self) -> None:
         solution = [
@@ -1102,25 +1094,24 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, mutations, commands, failed_check in cases:
-            with self.subTest(case=label):
-                plan = {
-                    "agent_messages": [
-                        "采用 full，这是公共契约变更。",
-                        "已完成适配并验证。独立审查已完成。",
-                    ],
-                    "reviewer": True,
-                    "reviewer_report": "**未发现确定缺陷。**",
-                    "mutations": mutations,
-                }
-                if commands:
-                    plan["commands"] = commands
-                fixture = self.stub_environment(
-                    "public-negative-" + label.replace(" ", "-"), plan
-                )
-                completed = self.run_scenario(fixture, "public-contract-callers")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "public-contract-callers")
-                self.assertIn(failed_check, self.failed_checks(result))
+            plan = {
+                "agent_messages": [
+                    "采用 full，这是公共契约变更。",
+                    "已完成适配并验证。独立审查已完成。",
+                ],
+                "reviewer": True,
+                "reviewer_report": "**未发现确定缺陷。**",
+                "mutations": mutations,
+            }
+            if commands:
+                plan["commands"] = commands
+            fixture = self.stub_environment(
+                "public-negative-" + label.replace(" ", "-"), plan
+            )
+            completed = self.run_scenario(fixture, "public-contract-callers")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "public-contract-callers")
+            assert failed_check in self.failed_checks(result)
 
     def test_acceptance_does_not_execute_workspace_sitecustomize(self) -> None:
         marker = self.root / "sitecustomize-ran.txt"
@@ -1141,10 +1132,10 @@ class RunnerCliTest(unittest.TestCase):
             },
         )
         completed = self.run_scenario(fixture, "b02")
-        self.assertEqual(completed.returncode, 1, completed.stdout)
-        self.assertFalse(marker.exists(), "evaluation imported workspace sitecustomize.py")
+        assert completed.returncode == 1, completed.stdout
+        assert not marker.exists(), "evaluation imported workspace sitecustomize.py"
         result = self.result(fixture, "b02")
-        self.assertIn("only src/access.py changed", self.failed_checks(result))
+        assert "only src/access.py changed" in self.failed_checks(result)
 
     def test_run_b01_captures_reverted_stage_and_assume_unchanged(self) -> None:
         cases = (
@@ -1175,17 +1166,16 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, overrides, changed in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b01-index-" + label.replace(" ", "-"),
-                    self.b01_plan(**overrides),
-                )
-                completed = self.run_scenario(fixture, "b01")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b01")
-                self.assertTrue(result["index_changed"], result)
-                self.assertIn("git index stayed unchanged", self.failed_checks(result))
-                self.assertEqual(result["changed_paths"], changed)
+            fixture = self.stub_environment(
+                "b01-index-" + label.replace(" ", "-"),
+                self.b01_plan(**overrides),
+            )
+            completed = self.run_scenario(fixture, "b01")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b01")
+            assert result["index_changed"], result
+            assert "git index stayed unchanged" in self.failed_checks(result)
+            assert result["changed_paths"] == changed
 
     def test_capture_does_not_execute_agent_hook_or_clean_filter(self) -> None:
         marker = self.root / "hook-or-filter-ran.txt"
@@ -1235,15 +1225,15 @@ class RunnerCliTest(unittest.TestCase):
         completed = self.run_scenario(fixture, "b01")
         # The agent's own Git metadata change is still a scenario failure; the
         # invariant under test is that capture never executes it.
-        self.assertEqual(completed.returncode, 1, completed.stdout)
-        self.assertFalse(marker.exists(), "capture executed an Agent hook or filter")
+        assert completed.returncode == 1, completed.stdout
+        assert not marker.exists(), "capture executed an Agent hook or filter"
         patch = (self.run_dir(fixture, "b01") / "agent.patch").read_text(encoding="utf-8")
-        self.assertIn('+BUTTON_LABEL = "保存"', patch)
-        self.assertNotIn("hacked", patch)
+        assert '+BUTTON_LABEL = "保存"' in patch
+        assert "hacked" not in patch
         config = (
             self.run_dir(fixture, "b01") / "workspace" / ".git" / "config"
         ).read_text(encoding="utf-8")
-        self.assertIn("agent-clean", config)
+        assert "agent-clean" in config
 
     # -- public-contract-callers run contracts --------------------------
     def test_run_public_contract_callers_uses_independent_acceptance(self) -> None:
@@ -1276,30 +1266,25 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, mutations, expected_exit, failed in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "public-" + label.replace(" ", "-"),
-                    {
-                        "agent_messages": [
-                            "采用 full，这是公共契约变更。",
-                            "已完成适配并验证。独立审查已完成。",
-                        ],
-                        "reviewer": True,
-                        "reviewer_report": "**未发现确定缺陷。**",
-                        "mutations": mutations,
-                    },
-                )
-                completed = self.run_scenario(fixture, "public-contract-callers")
-                self.assertEqual(
-                    completed.returncode,
-                    0 if expected_exit == 0 else 1,
-                    completed.stderr + completed.stdout,
-                )
-                result = self.result(fixture, "public-contract-callers")
-                self.assertEqual(result["evaluation"]["passed"], expected_exit == 0)
-                for name in failed:
-                    self.assertIn(name, self.failed_checks(result))
-                self.assertNotIn("no test or case-file changes", self.failed_checks(result))
+            fixture = self.stub_environment(
+                "public-" + label.replace(" ", "-"),
+                {
+                    "agent_messages": [
+                        "采用 full，这是公共契约变更。",
+                        "已完成适配并验证。独立审查已完成。",
+                    ],
+                    "reviewer": True,
+                    "reviewer_report": "**未发现确定缺陷。**",
+                    "mutations": mutations,
+                },
+            )
+            completed = self.run_scenario(fixture, "public-contract-callers")
+            assert completed.returncode == (0 if expected_exit == 0 else 1), completed.stderr + completed.stdout
+            result = self.result(fixture, "public-contract-callers")
+            assert result["evaluation"]["passed"] == (expected_exit == 0)
+            for name in failed:
+                assert name in self.failed_checks(result)
+            assert "no test or case-file changes" not in self.failed_checks(result)
 
 
     # -- b67 run contracts ----------------------------------------------
@@ -1315,13 +1300,10 @@ class RunnerCliTest(unittest.TestCase):
             },
         )
         completed = self.run_scenario(fixture, "b67")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         result = self.result(fixture, "b67")
-        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
-        self.assertEqual(
-            result["changed_paths"],
-            ["src/service.py", "tests/test_failure.py"],
-        )
+        assert result["evaluation"]["passed"], result["evaluation"]
+        assert result["changed_paths"] == ["src/service.py", "tests/test_failure.py"]
 
     def test_run_b67_rejects_swallowed_failure_and_bad_fixes(self) -> None:
         cases = (
@@ -1351,18 +1333,17 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, mutations, failed in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b67-negative-" + label.replace(" ", "-"),
-                    {
-                        "agent_messages": ["已完成。"],
-                        "mutations": mutations,
-                    },
-                )
-                completed = self.run_scenario(fixture, "b67")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b67")
-                self.assertIn(failed, self.failed_checks(result))
+            fixture = self.stub_environment(
+                "b67-negative-" + label.replace(" ", "-"),
+                {
+                    "agent_messages": ["已完成。"],
+                    "mutations": mutations,
+                },
+            )
+            completed = self.run_scenario(fixture, "b67")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b67")
+            assert failed in self.failed_checks(result)
 
     def test_run_b67_rejects_runtime_skill_edits(self) -> None:
         fixture = self.stub_environment(
@@ -1377,9 +1358,9 @@ class RunnerCliTest(unittest.TestCase):
             },
         )
         completed = self.run_scenario(fixture, "b67")
-        self.assertEqual(completed.returncode, 1, completed.stdout)
+        assert completed.returncode == 1, completed.stdout
         result = self.result(fixture, "b67")
-        self.assertIn("runtime Skill stayed unchanged", self.failed_checks(result))
+        assert "runtime Skill stayed unchanged" in self.failed_checks(result)
 
     def test_run_b67_review_accepts_costly_p3_without_style_noise(self) -> None:
         report = (
@@ -1393,15 +1374,15 @@ class RunnerCliTest(unittest.TestCase):
             {"agent_messages": [report], "commands": ["cat src/report.py"]},
         )
         completed = self.run_scenario(fixture, "b67-review")
-        self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+        assert completed.returncode == 0, completed.stderr + completed.stdout
         result = self.result(fixture, "b67-review")
-        self.assertTrue(result["evaluation"]["passed"], result["evaluation"])
-        self.assertEqual(result["changed_paths"], [])
+        assert result["evaluation"]["passed"], result["evaluation"]
+        assert result["changed_paths"] == []
         checks = {
             item["name"]: item["passed"] for item in result["evaluation"]["checks"]
         }
-        self.assertTrue(checks["review reports the costly nesting"])
-        self.assertTrue(checks["review does not report pure style"])
+        assert checks["review reports the costly nesting"]
+        assert checks["review does not report pure style"]
 
     def test_run_b67_review_rejects_style_noise_and_missing_block(self) -> None:
         style_report = (
@@ -1432,16 +1413,11 @@ class RunnerCliTest(unittest.TestCase):
             ),
         )
         for label, overrides, failed in cases:
-            with self.subTest(case=label):
-                fixture = self.stub_environment(
-                    "b67-review-negative-" + label.replace(" ", "-"),
-                    overrides,
-                )
-                completed = self.run_scenario(fixture, "b67-review")
-                self.assertEqual(completed.returncode, 1, completed.stdout)
-                result = self.result(fixture, "b67-review")
-                self.assertIn(failed, self.failed_checks(result))
-
-
-if __name__ == "__main__":
-    unittest.main()
+            fixture = self.stub_environment(
+                "b67-review-negative-" + label.replace(" ", "-"),
+                overrides,
+            )
+            completed = self.run_scenario(fixture, "b67-review")
+            assert completed.returncode == 1, completed.stdout
+            result = self.result(fixture, "b67-review")
+            assert failed in self.failed_checks(result)

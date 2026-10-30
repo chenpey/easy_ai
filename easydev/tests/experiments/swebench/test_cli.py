@@ -23,7 +23,6 @@ import sys
 import tarfile
 import tempfile
 import time
-import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -221,10 +220,12 @@ def wait_until(predicate, timeout: float, interval: float = 0.05) -> bool:
     return predicate()
 
 
-class SwebenchCliTest(unittest.TestCase):
-    def setUp(self) -> None:
+class SwebenchCliTest:
+    def setup_method(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="easydev-swebench-cli-"))
-        self.addCleanup(force_remove, str(self.root))
+
+    def teardown_method(self) -> None:
+        force_remove(str(self.root))
 
     # -- fixture helpers -------------------------------------------------
     def make_stub(self, name: str) -> SimpleNamespace:
@@ -360,7 +361,7 @@ class SwebenchCliTest(unittest.TestCase):
             timeout=60,
             env=os.environ.copy(),
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def write_manifest(self, experiment: Path, tasks) -> None:
@@ -392,7 +393,7 @@ class SwebenchCliTest(unittest.TestCase):
             plan=plan or self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         return assets, experiment, stub
 
     def run_command(
@@ -472,16 +473,13 @@ class SwebenchCliTest(unittest.TestCase):
             ],
             env=os.environ.copy(),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(
-            (experiment / "dataset.json").read_text(encoding="utf-8"),
-            assets.dataset.read_text(encoding="utf-8"),
-        )
+        assert completed.returncode == 0, completed.stdout
+        assert (experiment / "dataset.json").read_text(encoding="utf-8") == assets.dataset.read_text(encoding="utf-8")
         template = experiment / "templates" / f"{TASK['id']}.tar"
         venv = experiment / "venvs" / TASK["id"]
-        self.assertEqual(template.resolve(), (assets.templates / template.name).resolve())
-        self.assertTrue((venv / "bin" / "python").exists())
-        self.assertTrue(template.read_bytes())
+        assert template.resolve() == (assets.templates / template.name).resolve()
+        assert (venv / "bin" / "python").exists()
+        assert template.read_bytes()
 
         write_baseline(experiment, TASK)
         run = self.run_command(
@@ -490,8 +488,8 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(run.returncode, 0, run.stdout)
-        self.assertTrue(self.result(experiment)["resolved"])
+        assert run.returncode == 0, run.stdout
+        assert self.result(experiment)["resolved"]
 
     # -- template extraction security -----------------------------------
     def test_template_extraction_rejects_escape_members(self) -> None:
@@ -534,26 +532,22 @@ class SwebenchCliTest(unittest.TestCase):
             ("chained symlink", chained_symlink, "pwn"),
         )
         for label, writer, escaped_name in cases:
-            with self.subTest(case=label):
-                name = label.replace(" ", "-")
-                assets = self.make_assets(name, template=writer)
-                experiment = self.install_experiment(assets, "experiment")
-                stub = self.make_stub(name + "-stub")
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=self.complete_plan(),
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                )
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                self.assertIn("unsafe tar", completed.stdout)
-                run_path = self.run_path(experiment)
-                self.assertFalse(
-                    (self.root / escaped_name).exists(),
-                    f"{label} created {self.root / escaped_name}",
-                )
-                self.assertFalse((run_path / escaped_name).exists())
-                self.assertFalse((run_path / "repo" / escaped_name).exists())
+            name = label.replace(" ", "-")
+            assets = self.make_assets(name, template=writer)
+            experiment = self.install_experiment(assets, "experiment")
+            stub = self.make_stub(name + "-stub")
+            completed = self.run_command(
+                stub,
+                experiment,
+                plan=self.complete_plan(),
+                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+            )
+            assert completed.returncode != 0, completed.stdout
+            assert "unsafe tar" in completed.stdout
+            run_path = self.run_path(experiment)
+            assert not (self.root / escaped_name).exists(), f"{label} created {self.root / escaped_name}"
+            assert not (run_path / escaped_name).exists()
+            assert not (run_path / "repo" / escaped_name).exists()
 
     def test_read_only_template_directories_stay_usable(self) -> None:
         assets = self.make_assets("read-only", template=read_only_template)
@@ -565,14 +559,14 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         repo = self.run_path(experiment) / "repo"
         package = repo / "pkg"
         nested = package / "nested"
-        self.assertEqual((package / "data.txt").read_text(encoding="utf-8"), "readable\n")
-        self.assertEqual((nested / "inner.txt").read_text(encoding="utf-8"), "inner\n")
-        self.assertEqual(stat.S_IMODE(package.stat().st_mode), 0o555)
-        self.assertEqual(stat.S_IMODE(nested.stat().st_mode), 0o500)
+        assert (package / "data.txt").read_text(encoding="utf-8") == "readable\n"
+        assert (nested / "inner.txt").read_text(encoding="utf-8") == "inner\n"
+        assert stat.S_IMODE(package.stat().st_mode) == 0o555
+        assert stat.S_IMODE(nested.stat().st_mode) == 0o500
 
     # -- protected modes -------------------------------------------------
     def test_protection_refuses_experiment_directory_and_ancestors(self) -> None:
@@ -583,18 +577,17 @@ class SwebenchCliTest(unittest.TestCase):
             ("experiment directory", experiment),
             ("ancestor directory", assets.root),
         ):
-            with self.subTest(case=label):
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=self.complete_plan(),
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                    extra=("--protect-paths", target),
-                )
-                self.assertNotEqual(completed.returncode, 0)
-                self.assertIn("refusing to protect", completed.stdout)
-                self.assertFalse((experiment / "protected-modes.json").exists())
-                self.assertTrue((experiment / "dataset.json").exists())
+            completed = self.run_command(
+                stub,
+                experiment,
+                plan=self.complete_plan(),
+                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                extra=("--protect-paths", target),
+            )
+            assert completed.returncode != 0
+            assert "refusing to protect" in completed.stdout
+            assert not (experiment / "protected-modes.json").exists()
+            assert (experiment / "dataset.json").exists()
 
     def test_protection_locks_during_run_and_restores_afterwards(self) -> None:
         assets = self.make_assets("protect-normal")
@@ -615,10 +608,10 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             extra=("--protect-paths", protected),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(mode_during.read_text(encoding="utf-8").strip(), "0")
-        self.assertEqual(stat.S_IMODE(protected.stat().st_mode), 0o644)
-        self.assertFalse((experiment / "protected-modes.json").exists())
+        assert completed.returncode == 0, completed.stdout
+        assert mode_during.read_text(encoding="utf-8").strip() == "0"
+        assert stat.S_IMODE(protected.stat().st_mode) == 0o644
+        assert not (experiment / "protected-modes.json").exists()
 
     def test_interrupted_run_restores_modes_on_next_start(self) -> None:
         assets = self.make_assets(
@@ -678,18 +671,18 @@ class SwebenchCliTest(unittest.TestCase):
                 and stat.S_IMODE(protected.stat().st_mode) == 0,
                 timeout=20,
             )
-            self.assertTrue(locked, "protected path was never locked")
-            self.assertTrue((experiment / "protected-modes.json").exists())
+            assert locked, "protected path was never locked"
+            assert (experiment / "protected-modes.json").exists()
             process.kill()
             process.wait(timeout=20)
         finally:
             if process.poll() is None:
                 process.kill()
-        self.assertNotEqual(process.returncode, 0)
-        self.assertEqual(stat.S_IMODE(protected.stat().st_mode), 0)
-        self.assertTrue((experiment / "protected-modes.json").exists())
+        assert process.returncode != 0
+        assert stat.S_IMODE(protected.stat().st_mode) == 0
+        assert (experiment / "protected-modes.json").exists()
         stub_pid = int(stub_pid_file.read_text(encoding="utf-8").strip())
-        self.assertTrue(wait_until(lambda: not alive(stub_pid), timeout=20))
+        assert wait_until(lambda: not alive(stub_pid), timeout=20)
 
         completed = self.run_command(
             stub,
@@ -698,10 +691,10 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK2["f2p"]: "PASSED", TASK2["p2p"]: "PASSED"},
             tasks=(TASK2,),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(stat.S_IMODE(protected.stat().st_mode), 0o644)
-        self.assertFalse((experiment / "protected-modes.json").exists())
-        self.assertTrue(self.result(experiment, TASK2)["resolved"])
+        assert completed.returncode == 0, completed.stdout
+        assert stat.S_IMODE(protected.stat().st_mode) == 0o644
+        assert not (experiment / "protected-modes.json").exists()
+        assert self.result(experiment, TASK2)["resolved"]
 
     # -- run grading -----------------------------------------------------
     def test_run_records_resolved_result_and_artifacts(self) -> None:
@@ -714,15 +707,15 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         result = self.result(experiment)
-        self.assertTrue(result["resolved"])
-        self.assertTrue(result["f2p_pass"])
-        self.assertEqual(result["p2p_regressions"], [])
-        self.assertEqual(result["test_statuses"][TASK["p2p"]], "PASSED")
+        assert result["resolved"]
+        assert result["f2p_pass"]
+        assert result["p2p_regressions"] == []
+        assert result["test_statuses"][TASK["p2p"]] == "PASSED"
         run_path = self.run_path(experiment)
-        self.assertTrue((run_path / "grade" / "junit.xml").is_file())
-        self.assertIn("src/mod.py", (run_path / "agent.patch").read_text(encoding="utf-8"))
+        assert (run_path / "grade" / "junit.xml").is_file()
+        assert "src/mod.py" in (run_path / "agent.patch").read_text(encoding="utf-8")
 
     def test_patch_apply_failure_is_a_stored_terminal_result(self) -> None:
         # The Agent can write into pkg/ only after chmod-ing the copy in its own
@@ -746,13 +739,13 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK6["f2p"]: "PASSED", TASK6["p2p"]: "PASSED"},
             tasks=(TASK6,),
         )
-        self.assertEqual(failed.returncode, 0, failed.stdout)
+        assert failed.returncode == 0, failed.stdout
         result = self.result(experiment, TASK6)
-        self.assertFalse(result["patch_applied"])
-        self.assertFalse(result["resolved"])
-        self.assertEqual(result["test_statuses"], {})
-        self.assertEqual(result["f2p_status"], {TASK6["f2p"]: "MISSING"})
-        self.assertEqual(result["p2p_regressions"], [])
+        assert not result["patch_applied"]
+        assert not result["resolved"]
+        assert result["test_statuses"] == {}
+        assert result["f2p_status"] == {TASK6["f2p"]: "MISSING"}
+        assert result["p2p_regressions"] == []
 
         completed = self.run_command(
             stub,
@@ -761,27 +754,25 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             tasks=(TASK,),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertTrue(self.result(experiment, TASK)["resolved"])
+        assert completed.returncode == 0, completed.stdout
+        assert self.result(experiment, TASK)["resolved"]
 
         summarized = self.summarize(experiment)
-        self.assertEqual(summarized.returncode, 0, summarized.stdout)
+        assert summarized.returncode == 0, summarized.stdout
         summary = json.loads(
             (experiment / "summary.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(summary["baseline"]["runs"], 2)
-        self.assertEqual(summary["baseline"]["resolved_rate"], 0.5)
-        self.assertEqual(summary["baseline"]["patch_apply_failures"], 1)
+        assert summary["baseline"]["runs"] == 2
+        assert summary["baseline"]["resolved_rate"] == 0.5
+        assert summary["baseline"]["patch_apply_failures"] == 1
         report = (experiment / "report.md").read_text(encoding="utf-8")
-        self.assertIn("patch apply failures", report)
+        assert "patch apply failures" in report
         baseline_row = next(
             line
             for line in report.splitlines()
             if line.startswith("| baseline |")
         )
-        self.assertTrue(
-            baseline_row.endswith("| 1 |"), f"报告未展示补丁失败数: {baseline_row}"
-        )
+        assert baseline_row.endswith("| 1 |"), f"报告未展示补丁失败数: {baseline_row}"
 
         marker = self.root / "patch-failure-rerun.txt"
         rerun_plan = self.complete_plan()
@@ -793,9 +784,9 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             tasks=(TASK6, TASK),
         )
-        self.assertEqual(rerun.returncode, 0, rerun.stdout)
-        self.assertIn("running 0 jobs", rerun.stdout)
-        self.assertFalse(marker.exists(), "a complete failure result was re-run")
+        assert rerun.returncode == 0, rerun.stdout
+        assert "running 0 jobs" in rerun.stdout
+        assert not marker.exists(), "a complete failure result was re-run"
 
         # Any other shape stays rejected: a failed patch cannot carry test
         # outcomes or claim success.
@@ -815,11 +806,11 @@ class SwebenchCliTest(unittest.TestCase):
         )
         result_path.write_text(json.dumps(value), encoding="utf-8")
         rejected = self.summarize(forged)
-        self.assertEqual(rejected.returncode, 0, rejected.stdout)
+        assert rejected.returncode == 0, rejected.stdout
         forged_summary = json.loads(
             (forged / "summary.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(forged_summary["baseline"]["runs"], 1)
+        assert forged_summary["baseline"]["runs"] == 1
 
     def test_test_patch_failure_is_a_stored_terminal_result(self) -> None:
         # The dataset's test patch cannot apply to the template, so grading stops
@@ -836,20 +827,20 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK7["f2p"]: "PASSED", TASK7["p2p"]: "PASSED"},
             tasks=(TASK7,),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         result = self.result(experiment, TASK7)
-        self.assertFalse(result["patch_applied"])
-        self.assertFalse(result["resolved"])
-        self.assertIn("test patch failed", result["grade_error"])
-        self.assertEqual(result["test_statuses"], {})
-        self.assertEqual(result["f2p_status"], {TASK7["f2p"]: "MISSING"})
+        assert not result["patch_applied"]
+        assert not result["resolved"]
+        assert "test patch failed" in result["grade_error"]
+        assert result["test_statuses"] == {}
+        assert result["f2p_status"] == {TASK7["f2p"]: "MISSING"}
 
         summarized = self.summarize(experiment)
-        self.assertEqual(summarized.returncode, 0, summarized.stdout)
+        assert summarized.returncode == 0, summarized.stdout
         summary = json.loads(
             (experiment / "summary.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(summary["baseline"]["patch_apply_failures"], 1)
+        assert summary["baseline"]["patch_apply_failures"] == 1
 
         marker = self.root / "test-patch-rerun.txt"
         plan["marker_file"] = str(marker)
@@ -860,9 +851,9 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK7["f2p"]: "PASSED", TASK7["p2p"]: "PASSED"},
             tasks=(TASK7,),
         )
-        self.assertEqual(rerun.returncode, 0, rerun.stdout)
-        self.assertIn("running 0 jobs", rerun.stdout)
-        self.assertFalse(marker.exists(), "a complete failure result was re-run")
+        assert rerun.returncode == 0, rerun.stdout
+        assert "running 0 jobs" in rerun.stdout
+        assert not marker.exists(), "a complete failure result was re-run"
 
     def test_failed_test_cannot_be_overwritten_by_stdout(self) -> None:
         assets = self.make_assets("spoof-output")
@@ -874,9 +865,9 @@ class SwebenchCliTest(unittest.TestCase):
         result = self.cli(["run", "--experiment", experiment, "--tasks", TASK["id"],
                            "--arms", "baseline", "--repeats", "1", "--concurrency", "1",
                            "--codex-bin", stub.launcher, "--test-timeout", "10"], env=env)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertFalse(self.result(experiment)["resolved"])
-        self.assertEqual(self.result(experiment)["test_statuses"][TASK["f2p"]], "FAILED")
+        assert result.returncode == 0, result.stdout
+        assert not self.result(experiment)["resolved"]
+        assert self.result(experiment)["test_statuses"][TASK["f2p"]] == "FAILED"
 
     def test_explicit_tool_path_wins_over_path_shadow(self) -> None:
         assets = self.make_assets("explicit-tool")
@@ -893,8 +884,8 @@ class SwebenchCliTest(unittest.TestCase):
                            "--arms", "baseline", "--repeats", "1", "--concurrency", "1",
                            "--codex-bin", "./codex-stub", "--test-timeout", "10"],
                           env=env, cwd=stub.base)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertTrue(self.result(experiment)["resolved"])
+        assert result.returncode == 0, result.stdout
+        assert self.result(experiment)["resolved"]
 
     def test_parameter_colons_preserve_junit_identity(self) -> None:
         task = dict(TASK, f2p=TASK["f2p"] + "[a::b]")
@@ -903,8 +894,8 @@ class SwebenchCliTest(unittest.TestCase):
         stub = self.make_stub("parameter-colons-stub")
         result = self.run_command(stub, experiment, plan=self.complete_plan(), tasks=(task,),
                                   statuses={task["f2p"]: "PASSED", task["p2p"]: "PASSED"})
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertTrue(self.result(experiment)["resolved"])
+        assert result.returncode == 0, result.stdout
+        assert self.result(experiment)["resolved"]
 
     def test_inconsistent_junit_exit_status_fails_closed(self) -> None:
         assets = self.make_assets("inconsistent-junit")
@@ -916,8 +907,8 @@ class SwebenchCliTest(unittest.TestCase):
         result = self.cli(["run", "--experiment", experiment, "--tasks", TASK["id"],
                            "--arms", "baseline", "--repeats", "1", "--concurrency", "1",
                            "--codex-bin", stub.launcher, "--test-timeout", "10"], env=env)
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertEqual(self.result(experiment)["test_statuses"][TASK["f2p"]], "MISSING")
+        assert result.returncode == 0, result.stdout
+        assert self.result(experiment)["test_statuses"][TASK["f2p"]] == "MISSING"
 
     def test_setup_resolves_relative_asset_links(self) -> None:
         assets = self.make_assets("relative-assets")
@@ -926,9 +917,9 @@ class SwebenchCliTest(unittest.TestCase):
                            "--venvs", assets.venvs.relative_to(self.root),
                            "--experiment", "relative-exp", "--tasks", TASK["id"]],
                           cwd=self.root, env=os.environ.copy())
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertTrue((self.root / "relative-exp" / "templates" / (TASK["id"] + ".tar")).is_file())
-        self.assertTrue((self.root / "relative-exp" / "venvs" / TASK["id"] / "bin" / "python").is_file())
+        assert result.returncode == 0, result.stdout
+        assert (self.root / "relative-exp" / "templates" / (TASK["id"] + ".tar")).is_file()
+        assert (self.root / "relative-exp" / "venvs" / TASK["id"] / "bin" / "python").is_file()
 
     def test_run_writes_invalid_result_for_broken_invocations(self) -> None:
         cases = (
@@ -952,28 +943,25 @@ class SwebenchCliTest(unittest.TestCase):
             ),
         )
         for label, plan, reason, agent_timeout in cases:
-            with self.subTest(case=label):
-                name = label.replace(" ", "-").replace(".", "")
-                assets = self.make_assets("invalid-" + name)
-                experiment = self.install_experiment(assets, "experiment")
-                stub = self.make_stub("invalid-" + name + "-stub")
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=plan,
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                    agent_timeout=agent_timeout,
-                )
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                invalid = json.loads(
-                    (
-                        self.run_path(experiment) / "invalid-result.json"
-                    ).read_text(encoding="utf-8")
-                )
-                self.assertIn(reason, invalid["reason"])
-                self.assertFalse(
-                    (self.run_path(experiment) / "result.json").exists()
-                )
+            name = label.replace(" ", "-").replace(".", "")
+            assets = self.make_assets("invalid-" + name)
+            experiment = self.install_experiment(assets, "experiment")
+            stub = self.make_stub("invalid-" + name + "-stub")
+            completed = self.run_command(
+                stub,
+                experiment,
+                plan=plan,
+                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                agent_timeout=agent_timeout,
+            )
+            assert completed.returncode != 0, completed.stdout
+            invalid = json.loads(
+                (
+                    self.run_path(experiment) / "invalid-result.json"
+                ).read_text(encoding="utf-8")
+            )
+            assert reason in invalid["reason"]
+            assert not (self.run_path(experiment) / "result.json").exists()
 
     def test_run_reports_p2p_regressions(self) -> None:
         assets = self.make_assets("run-regression")
@@ -985,10 +973,10 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "FAILED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         result = self.result(experiment)
-        self.assertFalse(result["resolved"])
-        self.assertEqual(result["p2p_regressions"], [TASK["p2p"]])
+        assert not result["resolved"]
+        assert result["p2p_regressions"] == [TASK["p2p"]]
 
     # -- summarize -------------------------------------------------------
     def test_summarize_reports_every_arm_rate_and_sample_count(self) -> None:
@@ -1001,22 +989,22 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(run.returncode, 0, run.stdout)
+        assert run.returncode == 0, run.stdout
         completed = self.cli(
             ["summarize", "--experiment", experiment],
             env=os.environ.copy(),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         report = (experiment / "report.md").read_text(encoding="utf-8")
-        self.assertIn("resolved rate", report)
-        self.assertIn("| baseline | 1 | 1 | 100.0% |", report)
-        self.assertIn("| demo__task-1 | 1/1 |", report)
+        assert "resolved rate" in report
+        assert "| baseline | 1 | 1 | 100.0% |" in report
+        assert "| demo__task-1 | 1/1 |" in report
         summary = json.loads(
             (experiment / "summary.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(summary["baseline"]["runs"], 1)
-        self.assertEqual(summary["baseline"]["resolved_rate"], 1.0)
-        self.assertTrue((experiment / "results.jsonl").is_file())
+        assert summary["baseline"]["runs"] == 1
+        assert summary["baseline"]["resolved_rate"] == 1.0
+        assert (experiment / "results.jsonl").is_file()
 
     def test_summarize_discloses_excluded_p2p_counts_and_reasons(self) -> None:
         # A parametrized node id may contain a pipe; the report must escape it so
@@ -1057,15 +1045,13 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={task["f2p"]: "PASSED", task["p2p"]: "PASSED"},
             tasks=(task,),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         summarized = self.summarize(experiment)
-        self.assertEqual(summarized.returncode, 0, summarized.stdout)
+        assert summarized.returncode == 0, summarized.stdout
         report = (experiment / "report.md").read_text(encoding="utf-8")
-        self.assertIn("## PASS_TO_PASS 排除", report)
+        assert "## PASS_TO_PASS 排除" in report
         escaped = extra_p2p.replace("|", "\\|")
-        self.assertIn(
-            f"| {task['id']} | 1 | 1 | `{escaped}`（MISSING） |", report
-        )
+        assert f"| {task['id']} | 1 | 1 | `{escaped}`（MISSING） |" in report
 
     # -- F1: stored-result and asset rejection ---------------------------
     def test_summarize_and_attribution_reject_corrupt_results(self) -> None:
@@ -1161,47 +1147,46 @@ class SwebenchCliTest(unittest.TestCase):
             ("f2p_pass with failed f2p", f2p_contradiction),
         )
         for label, mutate in cases:
-            with self.subTest(case=label):
-                clone = self.clone_experiment(
-                    experiment, "corrupt-" + label.replace(" ", "-")
+            clone = self.clone_experiment(
+                experiment, "corrupt-" + label.replace(" ", "-")
+            )
+            mutate(clone)
+            completed = self.summarize(clone)
+            assert completed.returncode != 0, completed.stdout
+            assert "no completed runs" in completed.stdout
+            if label == "missing events file":
+                # discover_runs requires events.jsonl, so the attribution
+                # CLI reports the run directory as absent instead of valid.
+                attributed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(SWEBENCH / "analyze_events.py"),
+                        "--experiment",
+                        str(clone),
+                        "--format",
+                        "json",
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    errors="replace",
+                    timeout=60,
+                    env=os.environ.copy(),
                 )
-                mutate(clone)
-                completed = self.summarize(clone)
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                self.assertIn("no completed runs", completed.stdout)
-                if label == "missing events file":
-                    # discover_runs requires events.jsonl, so the attribution
-                    # CLI reports the run directory as absent instead of valid.
-                    attributed = subprocess.run(
-                        [
-                            sys.executable,
-                            "-B",
-                            str(SWEBENCH / "analyze_events.py"),
-                            "--experiment",
-                            str(clone),
-                            "--format",
-                            "json",
-                        ],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        errors="replace",
-                        timeout=60,
-                        env=os.environ.copy(),
-                    )
-                    self.assertNotEqual(attributed.returncode, 0)
-                    self.assertIn("no runs with events.jsonl", attributed.stdout)
-                    continue
-                payload = self.attribution(clone)
-                run = payload["runs"][0]
-                self.assertFalse(run["result_valid"], (label, run))
-                self.assertEqual(run["declared_initial_path"], "quick")
+                assert attributed.returncode != 0
+                assert "no runs with events.jsonl" in attributed.stdout
+                continue
+            payload = self.attribution(clone)
+            run = payload["runs"][0]
+            assert not run["result_valid"], (label, run)
+            assert run["declared_initial_path"] == "quick"
         historical_clone = self.clone_experiment(experiment, "corrupt-historical")
         drop_protocol(historical_clone)
         historical = self.attribution(historical_clone)["runs"][0]
-        self.assertFalse(historical["result_valid"])
-        self.assertTrue(historical["historical_resolved"])
+        assert not historical["result_valid"]
+        assert historical["historical_resolved"]
 
     def test_summarize_fails_closed_on_dataset_and_baseline_damage(self) -> None:
         _, experiment, _ = self.valid_experiment("asset-damage")
@@ -1228,21 +1213,19 @@ class SwebenchCliTest(unittest.TestCase):
             ("inconsistent baseline", inconsistent_baseline),
         )
         for label, mutate in cases:
-            with self.subTest(case=label):
-                clone = self.clone_experiment(
-                    experiment, "damage-" + label.replace(" ", "-")
-                )
-                mutate(clone)
-                completed = self.summarize(clone)
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-        with self.subTest(case="non-contract baseline status"):
-            clone = self.clone_experiment(experiment, "damage-extra-status")
-            path = clone / "task-baselines" / f"{TASK['id']}.json"
-            value = json.loads(path.read_text(encoding="utf-8"))
-            value["statuses"]["tests/test_extra.py::test_extra"] = "PASSED"
-            path.write_text(json.dumps(value), encoding="utf-8")
+            clone = self.clone_experiment(
+                experiment, "damage-" + label.replace(" ", "-")
+            )
+            mutate(clone)
             completed = self.summarize(clone)
-            self.assertEqual(completed.returncode, 0, completed.stdout)
+            assert completed.returncode != 0, completed.stdout
+        clone = self.clone_experiment(experiment, "damage-extra-status")
+        path = clone / "task-baselines" / f"{TASK['id']}.json"
+        value = json.loads(path.read_text(encoding="utf-8"))
+        value["statuses"]["tests/test_extra.py::test_extra"] = "PASSED"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        completed = self.summarize(clone)
+        assert completed.returncode == 0, completed.stdout
 
     def test_manifest_selection_report_counts_and_stray_runs(self) -> None:
         tasks = (TASK, TASK2, TASK3, TASK4, TASK5)
@@ -1262,7 +1245,7 @@ class SwebenchCliTest(unittest.TestCase):
                 statuses={task["f2p"]: "PASSED", task["p2p"]: "PASSED"},
                 tasks=(task,),
             )
-            self.assertEqual(completed.returncode, 0, completed.stdout)
+            assert completed.returncode == 0, completed.stdout
         self.write_manifest(experiment, tasks)
 
         # Dataset rows outside the manifest: one never runs (needs no baseline),
@@ -1289,13 +1272,13 @@ class SwebenchCliTest(unittest.TestCase):
             json.dumps(dataset), encoding="utf-8"
         )
         completed = self.summarize(experiment)
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         report = (experiment / "report.md").read_text(encoding="utf-8")
-        self.assertIn("任务数：2", report)
-        self.assertIn("校准清单：5 个任务", report)
-        self.assertIn(f"| {TASK['id']} | 1/1 |", report)
-        self.assertIn(f"| {TASK2['id']} | 1/1 |", report)
-        self.assertNotIn(TASK3["id"], report)
+        assert "任务数：2" in report
+        assert "校准清单：5 个任务" in report
+        assert f"| {TASK['id']} | 1/1 |" in report
+        assert f"| {TASK2['id']} | 1/1 |" in report
+        assert TASK3["id"] not in report
 
         stray = experiment / "runs" / TASK["id"] / "baseline" / "rfoo"
         stray.mkdir(parents=True)
@@ -1305,9 +1288,9 @@ class SwebenchCliTest(unittest.TestCase):
         )
         (stray / "result.json").write_text("{}", encoding="utf-8")
         completed = self.summarize(experiment)
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         summary = json.loads((experiment / "summary.json").read_text(encoding="utf-8"))
-        self.assertEqual(summary["baseline"]["runs"], 2)
+        assert summary["baseline"]["runs"] == 2
 
         extra = experiment / "runs" / TASK3["id"] / "baseline" / "r1"
         shutil.copytree(experiment / "runs" / TASK["id"] / "baseline" / "r1", extra)
@@ -1315,9 +1298,9 @@ class SwebenchCliTest(unittest.TestCase):
         result.update({"task_id": TASK3["id"]})
         (extra / "result.json").write_text(json.dumps(result), encoding="utf-8")
         completed = self.summarize(experiment)
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         report = (experiment / "report.md").read_text(encoding="utf-8")
-        self.assertIn(f"| {TASK3['id']} | 1/1 |", report)
+        assert f"| {TASK3['id']} | 1/1 |" in report
 
         # A run outside the manifest is still selected and counted, and its
         # baseline contract is still enforced (fail closed).
@@ -1328,17 +1311,17 @@ class SwebenchCliTest(unittest.TestCase):
         result.update({"task_id": extra_task["id"]})
         (outside / "result.json").write_text(json.dumps(result), encoding="utf-8")
         completed = self.summarize(experiment)
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         report = (experiment / "report.md").read_text(encoding="utf-8")
-        self.assertIn(f"| {extra_task['id']} | 1/1 |", report)
-        self.assertIn("任务数：4", report)
+        assert f"| {extra_task['id']} | 1/1 |" in report
+        assert "任务数：4" in report
         summary = json.loads((experiment / "summary.json").read_text(encoding="utf-8"))
-        self.assertEqual(summary["baseline"]["runs"], 4)
+        assert summary["baseline"]["runs"] == 4
 
         (experiment / "task-baselines" / f"{extra_task['id']}.json").unlink()
         completed = self.summarize(experiment)
-        self.assertNotEqual(completed.returncode, 0, completed.stdout)
-        self.assertIn(extra_task["id"], completed.stdout)
+        assert completed.returncode != 0, completed.stdout
+        assert extra_task["id"] in completed.stdout
 
     def test_rerun_skips_valid_result_without_calling_codex(self) -> None:
         marker = self.root / "codex-invocations.txt"
@@ -1354,8 +1337,8 @@ class SwebenchCliTest(unittest.TestCase):
                 plan=plan,
                 statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             )
-            self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(len(marker.read_text(encoding="utf-8").splitlines()), 1)
+            assert completed.returncode == 0, completed.stdout
+        assert len(marker.read_text(encoding="utf-8").splitlines()) == 1
 
     # -- F2: protected mode recovery -------------------------------------
     def test_restart_keeps_a_mode_the_user_tightened(self) -> None:
@@ -1374,8 +1357,8 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o600)
+        assert completed.returncode == 0, completed.stdout
+        assert stat.S_IMODE(sentinel.stat().st_mode) == 0o600
 
         # No record at all: the run must keep the current non-default mode.
         sentinel.chmod(0o640)
@@ -1392,9 +1375,9 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             extra=("--protect-paths", sentinel),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(mode_during.read_text(encoding="utf-8").strip(), "0")
-        self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o640)
+        assert completed.returncode == 0, completed.stdout
+        assert mode_during.read_text(encoding="utf-8").strip() == "0"
+        assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
 
     def test_damaged_or_linked_records_fail_without_chmod(self) -> None:
         cases = (
@@ -1406,125 +1389,114 @@ class SwebenchCliTest(unittest.TestCase):
             ("relative path", json.dumps({"dataset.json": 0o644})),
         )
         for label, payload in cases:
-            with self.subTest(case=label):
-                assets = self.make_assets("record-" + label.replace(" ", "-"))
-                experiment = self.install_experiment(assets, "experiment")
-                stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
-                sentinel = assets.root / "sentinel.txt"
-                sentinel.write_text("keep\n", encoding="utf-8")
-                sentinel.chmod(0o640)
-                record = experiment / "protected-modes.json"
-                record.write_text(payload, encoding="utf-8")
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=self.complete_plan(),
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                )
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                self.assertIn("protected-modes.json", completed.stdout)
-                self.assertIn("chmod", completed.stdout)
-                self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o640)
-                self.assertTrue(record.exists())
-
-        with self.subTest(case="parent component with valid entry first"):
-            assets = self.make_assets("record-parent-component")
+            assets = self.make_assets("record-" + label.replace(" ", "-"))
             experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("record-parent-component-stub")
+            stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
             sentinel = assets.root / "sentinel.txt"
             sentinel.write_text("keep\n", encoding="utf-8")
-            sentinel.chmod(0)
-            padding = assets.root / "pad1" / "pad2"
-            padding.mkdir(parents=True)
-            devious = str(padding / ".." / "..") + "/private"
-            (experiment / "protected-modes.json").write_text(
-                json.dumps({str(sentinel): 0o644, devious: 0o755}),
-                encoding="utf-8",
-            )
+            sentinel.chmod(0o640)
+            record = experiment / "protected-modes.json"
+            record.write_text(payload, encoding="utf-8")
             completed = self.run_command(
                 stub,
                 experiment,
                 plan=self.complete_plan(),
                 statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             )
-            self.assertNotEqual(completed.returncode, 0, completed.stdout)
-            self.assertIn(devious, completed.stdout)
-            self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0)
+            assert completed.returncode != 0, completed.stdout
+            assert "protected-modes.json" in completed.stdout
+            assert "chmod" in completed.stdout
+            assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
+            assert record.exists()
+
+        assets = self.make_assets("record-parent-component")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("record-parent-component-stub")
+        sentinel = assets.root / "sentinel.txt"
+        sentinel.write_text("keep\n", encoding="utf-8")
+        sentinel.chmod(0)
+        padding = assets.root / "pad1" / "pad2"
+        padding.mkdir(parents=True)
+        devious = str(padding / ".." / "..") + "/private"
+        (experiment / "protected-modes.json").write_text(
+            json.dumps({str(sentinel): 0o644, devious: 0o755}),
+            encoding="utf-8",
+        )
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert completed.returncode != 0, completed.stdout
+        assert devious in completed.stdout
+        assert stat.S_IMODE(sentinel.stat().st_mode) == 0
 
         for label, target_payload, dangling in (
             ("valid symlink", "{}", False),
             ("dangling symlink", None, True),
         ):
-            with self.subTest(case=label):
-                assets = self.make_assets("record-" + label.replace(" ", "-"))
-                experiment = self.install_experiment(assets, "experiment")
-                stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
-                sentinel = assets.root / "sentinel.txt"
-                sentinel.write_text("keep\n", encoding="utf-8")
-                sentinel.chmod(0o640)
-                outside = assets.root / "outside-record.json"
-                record = experiment / "protected-modes.json"
-                if dangling:
-                    record.symlink_to(outside)
-                else:
-                    outside.write_text(target_payload, encoding="utf-8")
-                    outside.chmod(0o640)
-                    record.symlink_to(outside)
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=self.complete_plan(),
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                )
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                self.assertIn(str(record), completed.stdout)
-                self.assertIn(
-                    "refusing to use the protected mode record", completed.stdout
-                )
-                self.assertIn("symlink", completed.stdout)
-                self.assertTrue(record.is_symlink())
-                self.assertEqual(os.readlink(record), str(outside))
-                self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o640)
-                if dangling:
-                    self.assertFalse(outside.exists())
-                    self.assertFalse(record.exists())
-                else:
-                    self.assertEqual(
-                        outside.read_text(encoding="utf-8"), target_payload
-                    )
-                    self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o640)
-
-        with self.subTest(case="symlink target listing a mode-0 path"):
-            # Reading the link first would chmod the target's mode-0 path before
-            # the symlink itself is refused, leaving a mode the tool never
-            # promised to restore.
-            assets = self.make_assets("record-symlink-mode-zero")
+            assets = self.make_assets("record-" + label.replace(" ", "-"))
             experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("record-symlink-mode-zero-stub")
+            stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
             sentinel = assets.root / "sentinel.txt"
             sentinel.write_text("keep\n", encoding="utf-8")
-            sentinel.chmod(0)
+            sentinel.chmod(0o640)
             outside = assets.root / "outside-record.json"
-            outside.write_text(
-                json.dumps({str(sentinel): 0o644}), encoding="utf-8"
-            )
             record = experiment / "protected-modes.json"
-            record.symlink_to(outside)
+            if dangling:
+                record.symlink_to(outside)
+            else:
+                outside.write_text(target_payload, encoding="utf-8")
+                outside.chmod(0o640)
+                record.symlink_to(outside)
             completed = self.run_command(
                 stub,
                 experiment,
                 plan=self.complete_plan(),
                 statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             )
-            self.assertNotEqual(completed.returncode, 0, completed.stdout)
-            self.assertIn("refusing to use the protected mode record", completed.stdout)
-            self.assertIn("symlink", completed.stdout)
-            self.assertTrue(record.is_symlink())
-            self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0)
-            self.assertEqual(
-                outside.read_text(encoding="utf-8"),
-                json.dumps({str(sentinel): 0o644}),
-            )
+            assert completed.returncode != 0, completed.stdout
+            assert str(record) in completed.stdout
+            assert "refusing to use the protected mode record" in completed.stdout
+            assert "symlink" in completed.stdout
+            assert record.is_symlink()
+            assert os.readlink(record) == str(outside)
+            assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
+            if dangling:
+                assert not outside.exists()
+                assert not record.exists()
+            else:
+                assert outside.read_text(encoding="utf-8") == target_payload
+                assert stat.S_IMODE(outside.stat().st_mode) == 0o640
+
+            # Reading the link first would chmod the target's mode-0 path before
+            # the symlink itself is refused, leaving a mode the tool never
+            # promised to restore.
+        assets = self.make_assets("record-symlink-mode-zero")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("record-symlink-mode-zero-stub")
+        sentinel = assets.root / "sentinel.txt"
+        sentinel.write_text("keep\n", encoding="utf-8")
+        sentinel.chmod(0)
+        outside = assets.root / "outside-record.json"
+        outside.write_text(
+            json.dumps({str(sentinel): 0o644}), encoding="utf-8"
+        )
+        record = experiment / "protected-modes.json"
+        record.symlink_to(outside)
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert completed.returncode != 0, completed.stdout
+        assert "refusing to use the protected mode record" in completed.stdout
+        assert "symlink" in completed.stdout
+        assert record.is_symlink()
+        assert stat.S_IMODE(sentinel.stat().st_mode) == 0
+        assert outside.read_text(encoding="utf-8") == json.dumps({str(sentinel): 0o644})
 
     def test_restore_order_parent_child_and_merged_protection(self) -> None:
         assets = self.make_assets("restore-order")
@@ -1547,9 +1519,9 @@ class SwebenchCliTest(unittest.TestCase):
             plan=self.complete_plan(),
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o755)
-        self.assertEqual(stat.S_IMODE(nested.stat().st_mode), 0o750)
+        assert completed.returncode == 0, completed.stdout
+        assert stat.S_IMODE(private.stat().st_mode) == 0o755
+        assert stat.S_IMODE(nested.stat().st_mode) == 0o750
 
         shutil.rmtree(experiment / "runs" / TASK["id"])
         observed_record = assets.root / "record-during-run.json"
@@ -1567,7 +1539,7 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             extra=("--protect-paths", private, nested),
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         recorded = json.loads(observed_record.read_text(encoding="utf-8"))
         selected = [
             entry
@@ -1575,10 +1547,10 @@ class SwebenchCliTest(unittest.TestCase):
             if entry == str(private.resolve())
             or entry.startswith(str(private.resolve()) + os.sep)
         ]
-        self.assertEqual(selected, [str(private.resolve())])
-        self.assertEqual(recorded[str(private.resolve())], 0o755)
-        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o755)
-        self.assertEqual(stat.S_IMODE(nested.stat().st_mode), 0o750)
+        assert selected == [str(private.resolve())]
+        assert recorded[str(private.resolve())] == 0o755
+        assert stat.S_IMODE(private.stat().st_mode) == 0o755
+        assert stat.S_IMODE(nested.stat().st_mode) == 0o750
 
     def test_failed_run_restores_modes_and_keeps_record(self) -> None:
         assets = self.make_assets("failed-run")
@@ -1594,9 +1566,9 @@ class SwebenchCliTest(unittest.TestCase):
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
             extra=("--protect-paths", sentinel),
         )
-        self.assertNotEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(stat.S_IMODE(sentinel.stat().st_mode), 0o640)
-        self.assertTrue((experiment / "protected-modes.json").exists())
+        assert completed.returncode != 0, completed.stdout
+        assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
+        assert (experiment / "protected-modes.json").exists()
 
     def test_lock_failure_restores_paths_already_locked(self) -> None:
         # A chmod failure halfway through the lock loop must not leave the paths
@@ -1650,11 +1622,11 @@ class SwebenchCliTest(unittest.TestCase):
             timeout=60,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertIn("error 13", completed.stdout)
-        self.assertIn("first 0o644", completed.stdout)
-        self.assertIn("second 0o640", completed.stdout)
-        self.assertIn("record True", completed.stdout)
+        assert completed.returncode == 0, completed.stdout
+        assert "error 13" in completed.stdout
+        assert "first 0o644" in completed.stdout
+        assert "second 0o640" in completed.stdout
+        assert "record True" in completed.stdout
 
     def test_restart_from_another_cwd_only_restores_recorded_paths(self) -> None:
         assets = self.make_assets("cwd-restart")
@@ -1695,9 +1667,9 @@ class SwebenchCliTest(unittest.TestCase):
             ),
             cwd=decoy_dir,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertEqual(stat.S_IMODE(original.stat().st_mode), 0o644)
-        self.assertEqual(stat.S_IMODE(decoy.stat().st_mode), 0o600)
+        assert completed.returncode == 0, completed.stdout
+        assert stat.S_IMODE(original.stat().st_mode) == 0o644
+        assert stat.S_IMODE(decoy.stat().st_mode) == 0o600
 
     # -- F3: capture does not execute Agent Git config -------------------
     def test_capture_patch_does_not_execute_agent_hook_or_filter(self) -> None:
@@ -1746,15 +1718,15 @@ class SwebenchCliTest(unittest.TestCase):
             plan=plan,
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
-        self.assertFalse(marker.exists(), "capture executed an Agent hook or filter")
+        assert completed.returncode == 0, completed.stdout
+        assert not marker.exists(), "capture executed an Agent hook or filter"
         patch = (self.run_path(experiment) / "agent.patch").read_text(encoding="utf-8")
-        self.assertIn("+VALUE = 2", patch)
-        self.assertNotIn("VALUE = 99", patch)
+        assert "+VALUE = 2" in patch
+        assert "VALUE = 99" not in patch
         config = (self.run_path(experiment) / "repo" / ".git" / "config").read_text(
             encoding="utf-8"
         )
-        self.assertIn("agent-clean", config)
+        assert "agent-clean" in config
 
     # -- matrix: allowed links, attributes and directory escape ----------
     def test_template_allows_inside_links_and_subdirectory_symlink(self) -> None:
@@ -1780,33 +1752,32 @@ class SwebenchCliTest(unittest.TestCase):
             ("subdir relative symlink", subdir_template),
         )
         for label, writer in cases:
-            with self.subTest(case=label):
-                assets = self.make_assets(
-                    "links-" + label.replace(" ", "-"), template=writer
-                )
-                experiment = self.install_experiment(assets, "experiment")
-                stub = self.make_stub("links-" + label.replace(" ", "-") + "-stub")
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=self.complete_plan(),
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                )
-                self.assertEqual(completed.returncode, 0, completed.stdout)
-                repo = self.run_path(experiment) / "repo"
-                if label == "inside symlink":
-                    link = repo / "link.txt"
-                    self.assertTrue(link.is_symlink())
-                    self.assertEqual(link.read_text(encoding="utf-8"), "content\n")
-                elif label == "inside hardlink":
-                    first = repo / "a.txt"
-                    second = repo / "b.txt"
-                    self.assertFalse(second.is_symlink())
-                    self.assertEqual(second.read_text(encoding="utf-8"), "content\n")
-                    self.assertEqual(first.stat().st_ino, second.stat().st_ino)
-                else:
-                    link = repo / "sub" / "link"
-                    self.assertEqual(link.read_text(encoding="utf-8"), "content\n")
+            assets = self.make_assets(
+                "links-" + label.replace(" ", "-"), template=writer
+            )
+            experiment = self.install_experiment(assets, "experiment")
+            stub = self.make_stub("links-" + label.replace(" ", "-") + "-stub")
+            completed = self.run_command(
+                stub,
+                experiment,
+                plan=self.complete_plan(),
+                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+            )
+            assert completed.returncode == 0, completed.stdout
+            repo = self.run_path(experiment) / "repo"
+            if label == "inside symlink":
+                link = repo / "link.txt"
+                assert link.is_symlink()
+                assert link.read_text(encoding="utf-8") == "content\n"
+            elif label == "inside hardlink":
+                first = repo / "a.txt"
+                second = repo / "b.txt"
+                assert not second.is_symlink()
+                assert second.read_text(encoding="utf-8") == "content\n"
+                assert first.stat().st_ino == second.stat().st_ino
+            else:
+                link = repo / "sub" / "link"
+                assert link.read_text(encoding="utf-8") == "content\n"
 
     def test_template_rejects_directory_escape_and_hardlink_escape_keeps_target(self) -> None:
         external = self.root / "external-target.txt"
@@ -1825,22 +1796,21 @@ class SwebenchCliTest(unittest.TestCase):
             ("directory escape", directory_escape),
             ("hardlink escape", hardlink_escape),
         ):
-            with self.subTest(case=label):
-                assets = self.make_assets(
-                    "escape-" + label.replace(" ", "-"), template=writer
-                )
-                experiment = self.install_experiment(assets, "experiment")
-                stub = self.make_stub("escape-" + label.replace(" ", "-") + "-stub")
-                completed = self.run_command(
-                    stub,
-                    experiment,
-                    plan=self.complete_plan(),
-                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                )
-                self.assertNotEqual(completed.returncode, 0, completed.stdout)
-                self.assertIn("unsafe tar", completed.stdout)
-                self.assertFalse((self.run_path(experiment).parent / "evil").exists())
-                self.assertEqual(external.read_text(encoding="utf-8"), "keep\n")
+            assets = self.make_assets(
+                "escape-" + label.replace(" ", "-"), template=writer
+            )
+            experiment = self.install_experiment(assets, "experiment")
+            stub = self.make_stub("escape-" + label.replace(" ", "-") + "-stub")
+            completed = self.run_command(
+                stub,
+                experiment,
+                plan=self.complete_plan(),
+                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+            )
+            assert completed.returncode != 0, completed.stdout
+            assert "unsafe tar" in completed.stdout
+            assert not (self.run_path(experiment).parent / "evil").exists()
+            assert external.read_text(encoding="utf-8") == "keep\n"
 
     def test_template_reversed_chain_and_delayed_directory_attributes(self) -> None:
         def reversed_chain(path: Path) -> None:
@@ -1879,102 +1849,98 @@ class SwebenchCliTest(unittest.TestCase):
                 add_dir(archive, "parent", 0o400)
                 add_file(archive, "parent/child/file.txt", "nested\n")
 
-        with self.subTest(case="reversed member order"):
-            assets = self.make_assets("attrs-reversed", template=reversed_chain)
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("attrs-reversed-stub")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            self.assertNotEqual(completed.returncode, 0, completed.stdout)
-            self.assertIn("unsafe tar", completed.stdout)
-            self.assertFalse((self.run_path(experiment) / "pwn").exists())
+        assets = self.make_assets("attrs-reversed", template=reversed_chain)
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("attrs-reversed-stub")
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert completed.returncode != 0, completed.stdout
+        assert "unsafe tar" in completed.stdout
+        assert not (self.run_path(experiment) / "pwn").exists()
 
-        with self.subTest(case="escaping symlink redirect rejected"):
-            assets = self.make_assets(
-                "attrs-escape-redirect", template=escaping_redirect
-            )
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("attrs-escape-redirect-stub")
-            external = self.root / "escape-sentinel.txt"
-            external.write_text("keep\n", encoding="utf-8")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            self.assertNotEqual(completed.returncode, 0, completed.stdout)
-            # run.py enables filter="data" exactly when tarfile.data_filter
-            # exists (3.12+); the stdlib filter rejects the retarget before
-            # run.py's own member checks, while older Pythons reject the file
-            # member that would be written through the escaped link.
-            expected_reject = (
-                "outside the destination"
-                if hasattr(tarfile, "data_filter")
-                else "unsafe tar"
-            )
-            self.assertIn(expected_reject, completed.stdout)
-            self.assertFalse((self.run_path(experiment) / "evil").exists())
-            self.assertEqual(external.read_text(encoding="utf-8"), "keep\n")
+        assets = self.make_assets(
+            "attrs-escape-redirect", template=escaping_redirect
+        )
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("attrs-escape-redirect-stub")
+        external = self.root / "escape-sentinel.txt"
+        external.write_text("keep\n", encoding="utf-8")
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert completed.returncode != 0, completed.stdout
+        # run.py enables filter="data" exactly when tarfile.data_filter
+        # exists (3.12+); the stdlib filter rejects the retarget before
+        # run.py's own member checks, while older Pythons reject the file
+        # member that would be written through the escaped link.
+        expected_reject = (
+            "outside the destination"
+            if hasattr(tarfile, "data_filter")
+            else "unsafe tar"
+        )
+        assert expected_reject in completed.stdout
+        assert not (self.run_path(experiment) / "evil").exists()
+        assert external.read_text(encoding="utf-8") == "keep\n"
 
-        with self.subTest(case="delayed attributes target the created path"):
-            assets = self.make_assets("attrs-delayed", template=delayed_attributes)
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("attrs-delayed-stub")
-            repo = self.run_path(experiment) / "repo"
-            outside = self.run_path(experiment) / "sub"
-            outside.mkdir(parents=True)
-            outside.chmod(0o750)
-            os.utime(outside, (1_234_567, 1_234_567))
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            self.assertEqual(completed.returncode, 0, completed.stdout)
-            created = repo / "base" / "sub"
-            redirect = repo / "v" / "sub"
-            anchor = repo / "v"
-            try:
-                # The archived 0500 mode lands on the path resolved when the
-                # directory was created, not on the path `u/sub` resolves to
-                # after the later retarget.
-                self.assertEqual(stat.S_IMODE(created.stat().st_mode), 0o500)
-                self.assertEqual(stat.S_IMODE(redirect.stat().st_mode), 0o750)
-                self.assertEqual(int(redirect.stat().st_mtime), 1_900_000_000)
-                self.assertEqual(stat.S_IMODE(anchor.stat().st_mode), 0o750)
-                self.assertEqual(int(anchor.stat().st_mtime), 1_800_000_000)
-                self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o750)
-                self.assertEqual(int(outside.stat().st_mtime), 1_234_567)
-            finally:
-                if created.exists():
-                    created.chmod(0o755)
+        assets = self.make_assets("attrs-delayed", template=delayed_attributes)
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("attrs-delayed-stub")
+        repo = self.run_path(experiment) / "repo"
+        outside = self.run_path(experiment) / "sub"
+        outside.mkdir(parents=True)
+        outside.chmod(0o750)
+        os.utime(outside, (1_234_567, 1_234_567))
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert completed.returncode == 0, completed.stdout
+        created = repo / "base" / "sub"
+        redirect = repo / "v" / "sub"
+        anchor = repo / "v"
+        try:
+            # The archived 0500 mode lands on the path resolved when the
+            # directory was created, not on the path `u/sub` resolves to
+            # after the later retarget.
+            assert stat.S_IMODE(created.stat().st_mode) == 0o500
+            assert stat.S_IMODE(redirect.stat().st_mode) == 0o750
+            assert int(redirect.stat().st_mtime) == 1_900_000_000
+            assert stat.S_IMODE(anchor.stat().st_mode) == 0o750
+            assert int(anchor.stat().st_mtime) == 1_800_000_000
+            assert stat.S_IMODE(outside.stat().st_mode) == 0o750
+            assert int(outside.stat().st_mtime) == 1_234_567
+        finally:
+            if created.exists():
+                created.chmod(0o755)
 
-        with self.subTest(case="child directory attributes before parent"):
-            assets = self.make_assets("attrs-child-first", template=child_before_parent)
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("attrs-child-first-stub")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            # 0400 denies search, so git init fails after extraction; the modes
-            # still prove the attribute order (the artifact under test).
-            self.assertNotEqual(completed.returncode, 0, completed.stdout)
-            parent = self.run_path(experiment) / "repo" / "parent"
-            self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o400)
-            parent.chmod(0o700)
-            child = parent / "child"
-            self.assertEqual(stat.S_IMODE(child.stat().st_mode), 0o500)
-            parent.chmod(0o755)
-            child.chmod(0o755)
+        assets = self.make_assets("attrs-child-first", template=child_before_parent)
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("attrs-child-first-stub")
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        # 0400 denies search, so git init fails after extraction; the modes
+        # still prove the attribute order (the artifact under test).
+        assert completed.returncode != 0, completed.stdout
+        parent = self.run_path(experiment) / "repo" / "parent"
+        assert stat.S_IMODE(parent.stat().st_mode) == 0o400
+        parent.chmod(0o700)
+        child = parent / "child"
+        assert stat.S_IMODE(child.stat().st_mode) == 0o500
+        parent.chmod(0o755)
+        child.chmod(0o755)
 
     # -- matrix: calibrate and report ------------------------------------
     def test_calibrate_keeps_only_eligible_contract_p2p(self) -> None:
@@ -2050,21 +2016,14 @@ class SwebenchCliTest(unittest.TestCase):
             ],
             env=env,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout)
+        assert completed.returncode == 0, completed.stdout
         baseline = json.loads(
             (out / "task-baselines" / f"{TASK['id']}.json").read_text(
                 encoding="utf-8"
             )
         )
-        self.assertEqual(baseline["eligible_p2p"], sorted([p2p_pass, p2p_skip]))
-        self.assertEqual(
-            baseline["excluded_p2p"],
-            [{"nodeid": p2p_fail, "status": "FAILED"}],
-        )
-        self.assertEqual(baseline["statuses"][extra], "PASSED")
-        self.assertEqual(counter.read_text(encoding="utf-8").strip(), "2")
-        self.assertTrue((out / "gold" / f"{TASK['id']}.json").exists())
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert baseline["eligible_p2p"] == sorted([p2p_pass, p2p_skip])
+        assert baseline["excluded_p2p"] == [{"nodeid": p2p_fail, "status": "FAILED"}]
+        assert baseline["statuses"][extra] == "PASSED"
+        assert counter.read_text(encoding="utf-8").strip() == "2"
+        assert (out / "gold" / f"{TASK['id']}.json").exists()

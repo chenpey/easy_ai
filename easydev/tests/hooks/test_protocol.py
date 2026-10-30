@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import unittest
 from unittest import mock
 
 from support import HookCase, core_module
 
 
-class ExplicitInvocationPatternTests(unittest.TestCase):
+class ExplicitInvocationPatternTests:
     """显式调用边界按 ASCII 标识符判定：中文紧邻仍算调用，ASCII 连写不算。"""
 
     def test_chinese_adjacent_invocations(self) -> None:
@@ -19,7 +18,7 @@ class ExplicitInvocationPatternTests(unittest.TestCase):
             "帮我用$easydev",
             "开始使用easydev",
         ):
-            self.assertTrue(core_module.explicit_invocation(prompt), prompt)
+            assert core_module.explicit_invocation(prompt), prompt
 
     def test_ascii_identifier_and_filtered_contexts_do_not_activate(self) -> None:
         for prompt in (
@@ -29,11 +28,11 @@ class ExplicitInvocationPatternTests(unittest.TestCase):
             "```\n请使用 easydev 进行审查\n```",
             "> 帮我用$easydev",
         ):
-            self.assertFalse(core_module.explicit_invocation(prompt), prompt)
+            assert not core_module.explicit_invocation(prompt), prompt
 
     def test_skill_colon_and_english_invocations_still_activate(self) -> None:
         for prompt in ("/skill:easydev", "use easydev", "使用 easydev"):
-            self.assertTrue(core_module.explicit_invocation(prompt), prompt)
+            assert core_module.explicit_invocation(prompt), prompt
 
 
 class ProtocolMixin(object):
@@ -85,9 +84,9 @@ class ProtocolMixin(object):
     def test_input_validates_and_allow_shape(self) -> None:
         value, _stderr = self.activate("shape")
         if self.host == "pi":
-            self.assertEqual(value, {"action": "continue"})
+            assert value == {"action": "continue"}
         else:
-            self.assertEqual(value, {})
+            assert value == {}
 
     def fail_open_shape(self, event: str) -> dict:
         """fail-open 的宿主放行形状：与正常 allow 编码同一张表。"""
@@ -102,26 +101,26 @@ class ProtocolMixin(object):
     def test_malformed_input_fails_open_with_warning(self) -> None:
         expected = self.fail_open_shape("unknown")
         code, value, stderr = self.run_core(None, raw_stdin="{not-json")
-        self.assertEqual(code, 0)
-        self.assertEqual(value, expected)
-        self.assertIn("warning", stderr)
+        assert code == 0
+        assert value == expected
+        assert "warning" in stderr
         code, value, _stderr = self.run_core(None, raw_stdin="[]")
-        self.assertEqual(code, 0)
-        self.assertEqual(value, expected)
+        assert code == 0
+        assert value == expected
 
     def test_fail_open_preserves_host_allow_shape(self) -> None:
         """输入不可读、协议故障与内部异常三个出口都经宿主编码输出单个 JSON。"""
         oversized = "x" * (core_module.MAX_INPUT_BYTES + 2)
         for raw_stdin in ("{not-json", "[]", oversized):
             code, value, stderr = self.run_core(None, raw_stdin=raw_stdin)
-            self.assertEqual(code, 0)
-            self.assertEqual(value, self.fail_open_shape("unknown"), raw_stdin[:16])
-            self.assertIn("warning", stderr)
+            assert code == 0
+            assert value == self.fail_open_shape("unknown"), raw_stdin[:16]
+            assert "warning" in stderr
         # 明确传入事件时按该事件编码，而不是一律退到未知。
         _code, value, _stderr = self.run_core(None, raw_stdin="{not-json", event="PreToolUse")
-        self.assertEqual(value, self.fail_open_shape("pre_tool"))
+        assert value == self.fail_open_shape("pre_tool")
         _code, value, _stderr = self.run_core(None, raw_stdin="{not-json", event="input")
-        self.assertEqual(value, self.fail_open_shape("input"))
+        assert value == self.fail_open_shape("input")
         payload = self.input_payload("fault", "使用 easydev")
         if self.host == "antigravity":
             payload["status"] = []
@@ -131,9 +130,9 @@ class ProtocolMixin(object):
             payload["child"] = "false"
         # 载荷自带的合法事件名优先于 --event：协议故障仍按 input 编码。
         _code, value, stderr = self.run_core(payload, event="PreToolUse")
-        self.assertEqual(value, self.fail_open_shape("input"))
-        self.assertIn("协议", stderr)
-        self.assertNotIn("Traceback", stderr)
+        assert value == self.fail_open_shape("input")
+        assert "协议" in stderr
+        assert "Traceback" not in stderr
 
     def test_internal_error_preserves_normalized_event_allow_shape(self) -> None:
         """内部异常只在 Engine.handle 边界注入：已归一化的事件仍决定放行形状。"""
@@ -147,25 +146,25 @@ class ProtocolMixin(object):
                 core_module.Engine, "handle", side_effect=RuntimeError("boom")
             ):
                 _code, value, stderr = self.run_core(payload)
-            self.assertEqual(value, self.fail_open_shape(normalized), normalized)
-            self.assertIn("内部异常", stderr)
-            self.assertNotIn("Traceback", stderr)
+            assert value == self.fail_open_shape(normalized), normalized
+            assert "内部异常" in stderr
+            assert "Traceback" not in stderr
 
     def test_unknown_event_and_missing_session_are_allowed(self) -> None:
         _code, value, _stderr = self.run_core(
             {"hook_event_name": "SomethingNew", "event": "SomethingNew"}
         )
-        self.assertEqual(value, {})
+        assert value == {}
         _code, value, _stderr = self.run_core(
             self.tool_payload("no-session", "bash", {"command": "git reset --hard"})
         )
-        self.assertFalse(self.is_denied(value))
+        assert not self.is_denied(value)
 
     def test_unknown_host_fields_are_tolerated(self) -> None:
         payload = self.input_payload("extra", "使用 easydev")
         payload["future_field"] = {"nested": True}
         _code, value, _stderr = self.run_core(payload)
-        self.assertFalse(self.is_denied(value))
+        assert not self.is_denied(value)
 
     def test_skill_read_success_activates(self) -> None:
         path = str(self.skill / "SKILL.md")
@@ -212,10 +211,10 @@ class ProtocolMixin(object):
             else {"event": "session_start", "sessionId": "ss"}
         )
         _code, value, stderr = self.run_core(payload)
-        self.assertEqual(value, {})
-        self.assertEqual(stderr, "")
+        assert value == {}
+        assert stderr == ""
         tasks = self.state / "tasks"
-        self.assertFalse(tasks.exists() and any(tasks.iterdir()))
+        assert not (tasks.exists() and any(tasks.iterdir()))
 
     def test_unlinked_reviewer_handoff_is_role_only(self) -> None:
         prompt = self.reviewer_handoff()
@@ -241,16 +240,16 @@ class ProtocolMixin(object):
         )
         # 放行必须按宿主协议编码：Antigravity/DSH 的 PreToolUse 放行是必填字段。
         if self.host == "antigravity":
-            self.assertEqual(value, {"decision": "allow"})
+            assert value == {"decision": "allow"}
         elif self.host == "dsh":
-            self.assertEqual(value, {"permissionDecision": "allow"})
+            assert value == {"permissionDecision": "allow"}
         else:
-            self.assertEqual(value, {})
+            assert value == {}
         probe_file = self.state / "probe" / "events.json"
-        self.assertTrue(probe_file.exists())
+        assert probe_file.exists()
         text = probe_file.read_text(encoding="utf-8")
-        self.assertIn("PreToolUse", text.replace("pre_tool", "PreToolUse"))
-        self.assertNotIn("reset --hard", text)
+        assert "PreToolUse" in text.replace("pre_tool", "PreToolUse")
+        assert "reset --hard" not in text
 
 
 class PiProtocolTests(ProtocolMixin, HookCase):
@@ -272,7 +271,7 @@ class PiProtocolTests(ProtocolMixin, HookCase):
             },
             env=child_env,
         )
-        self.assertFalse(self.is_denied(value), stderr)
+        assert not self.is_denied(value), stderr
         self.deny(
             self.tool_payload("child", "write", {"path": "src/app.py"}, tool_id="cw"),
             env=child_env,
@@ -303,7 +302,7 @@ class PiProtocolTests(ProtocolMixin, HookCase):
         _code, value, _stderr = self.run_core(
             {"event": "settle", "sessionId": "child"}, env=child_env
         )
-        self.assertFalse(self.is_continued(value))
+        assert not self.is_continued(value)
 
 
 class AntigravityProtocolTests(ProtocolMixin, HookCase):
@@ -318,7 +317,7 @@ class AntigravityProtocolTests(ProtocolMixin, HookCase):
             "workspacePaths": [str(self.repo)],
         }
         _code, value, _stderr = self.run_core(payload, event="PreToolUse")
-        self.assertTrue(self.is_denied(value), value)
+        assert self.is_denied(value), value
 
     def test_cli_event_allow_shape(self) -> None:
         payload = {
@@ -327,7 +326,7 @@ class AntigravityProtocolTests(ProtocolMixin, HookCase):
             "workspacePaths": [str(self.repo)],
         }
         _code, value, _stderr = self.run_core(payload, event="PreToolUse")
-        self.assertEqual(value, {"decision": "allow"})
+        assert value == {"decision": "allow"}
 
     def test_stdin_event_wins_over_cli_event(self) -> None:
         self.activate("both-event")
@@ -337,7 +336,7 @@ class AntigravityProtocolTests(ProtocolMixin, HookCase):
             "toolCall": {"name": "run_command", "args": {"CommandLine": "git reset --hard"}},
         }
         _code, value, _stderr = self.run_core(payload, event="Stop")
-        self.assertTrue(self.is_denied(value), value)
+        assert self.is_denied(value), value
 
     def test_workspace_paths_array_is_used_and_multiple_warns(self) -> None:
         other = self.root / "other-ws"
@@ -348,8 +347,8 @@ class AntigravityProtocolTests(ProtocolMixin, HookCase):
             "workspacePaths": [str(self.repo), str(other)],
         }
         _code, value, stderr = self.run_core(payload, event="PreToolUse")
-        self.assertEqual(value, {"decision": "allow"})
-        self.assertIn("workspacePaths", stderr)
+        assert value == {"decision": "allow"}
+        assert "workspacePaths" in stderr
 
     def test_workspace_path_scalar_still_supported(self) -> None:
         self.activate("scalar-ws")
@@ -359,7 +358,7 @@ class AntigravityProtocolTests(ProtocolMixin, HookCase):
             "workspacePath": str(self.repo),
         }
         _code, value, _stderr = self.run_core(payload, event="PreToolUse")
-        self.assertTrue(self.is_denied(value), value)
+        assert self.is_denied(value), value
 
 
 class AntigravityOfficialShapeTests(HookCase):
@@ -390,7 +389,7 @@ class AntigravityOfficialShapeTests(HookCase):
 
     def task_state(self) -> dict:
         files = sorted((self.state / "tasks").glob("*.json"))
-        self.assertEqual(len(files), 1, files)
+        assert len(files) == 1, files
         return json.loads(files[0].read_text(encoding="utf-8"))
 
     def test_official_post_tool_use_via_real_cli(self) -> None:
@@ -403,7 +402,7 @@ class AntigravityOfficialShapeTests(HookCase):
             self.call("cli-skill", "run_command", {"CommandLine": "git reset --hard"}, 4),
             event="PreToolUse",
         )
-        self.assertTrue(self.is_denied(value), value)
+        assert self.is_denied(value), value
 
     def test_skill_read_post_activates_without_status(self) -> None:
         path = str(self.skill / "SKILL.md")
@@ -434,25 +433,25 @@ class AntigravityOfficialShapeTests(HookCase):
             event="PreToolUse",
         )
         saved = sorted((self.state / "baselines").glob("*/*/src/app.py"))
-        self.assertEqual(len(saved), 1, saved)
-        self.assertEqual(saved[0].read_text(encoding="utf-8"), "value = 2\n")
+        assert len(saved) == 1, saved
+        assert saved[0].read_text(encoding="utf-8") == "value = 2\n"
         # 无调用 ID：配对键用整型 `stepIdx` 合成的 `step:5`。
         pending = self.task_state().get("pending_writes") or {}
-        self.assertTrue(any(key.endswith("|step:5") for key in pending), pending)
+        assert any(key.endswith("|step:5") for key in pending), pending
         (self.repo / "src" / "app.py").write_text("value = 3\n", encoding="utf-8")
         _code, _value, stderr = self.run_core(
             self.post("dev", "write_to_file", {"Path": target}, 5), event="PostToolUse"
         )
-        self.assertEqual(stderr, "")
+        assert stderr == ""
         task = self.task_state()
-        self.assertEqual(int(task.get("write_seq") or 0), 1)
-        self.assertTrue(task.get("last_success"))
+        assert int(task.get("write_seq") or 0) == 1
+        assert task.get("last_success")
         # 第二次写同一文件：命中上次成功指纹，不再要求新基线也不覆盖首次快照。
         self.allow(
             self.call("dev", "write_to_file", {"Path": target, "Content": "value = 4\n"}, 6),
             event="PreToolUse",
         )
-        self.assertEqual(len(sorted((self.state / "baselines").glob("*/*/src/app.py"))), 1)
+        assert len(sorted((self.state / "baselines").glob("*/*/src/app.py"))) == 1
 
     def test_failed_post_does_not_establish_success(self) -> None:
         self.write_context(task_root="")
@@ -468,10 +467,10 @@ class AntigravityOfficialShapeTests(HookCase):
             self.post("dev2", "write_to_file", {"Path": target}, 7, error="exit status 1"),
             event="PostToolUse",
         )
-        self.assertIn("缺少可信成功结果", stderr)
+        assert "缺少可信成功结果" in stderr
         task = self.task_state()
-        self.assertEqual(int(task.get("write_seq") or 0), 0)
-        self.assertFalse(task.get("last_success"))
+        assert int(task.get("write_seq") or 0) == 0
+        assert not task.get("last_success")
 
     def test_post_with_another_step_does_not_pair(self) -> None:
         self.write_context(task_root="")
@@ -487,8 +486,8 @@ class AntigravityOfficialShapeTests(HookCase):
         _code, _value, stderr = self.run_core(
             self.post("dev3", "write_to_file", {"Path": target}, 9), event="PostToolUse"
         )
-        self.assertIn("未找到与该 actor/epoch/tool ID 配对", stderr)
-        self.assertEqual(int(self.task_state().get("write_seq") or 0), 0)
+        assert "未找到与该 actor/epoch/tool ID 配对" in stderr
+        assert int(self.task_state().get("write_seq") or 0) == 0
 
     def test_stop_discloses_p3_gap_instead_of_reminding(self) -> None:
         """Antigravity 仍是 completion_events=false：只验证写序列与缺口披露。"""
@@ -514,11 +513,11 @@ class AntigravityOfficialShapeTests(HookCase):
             self.post("dev4", "write_to_file", {"Path": target}, 2), event="PostToolUse"
         )
         task = self.task_state()
-        self.assertEqual(int(task.get("write_seq") or 0), 1)
-        self.assertTrue(task.get("reviews"))
+        assert int(task.get("write_seq") or 0) == 1
+        assert task.get("reviews")
         _code, value, stderr = self.run_core(self.settle_payload("dev4"), event="Stop")
-        self.assertFalse(self.is_continued(value), value)
-        self.assertIn("P3 不启用", stderr)
+        assert not self.is_continued(value), value
+        assert "P3 不启用" in stderr
 
 
 class CodexProtocolTests(ProtocolMixin, HookCase):
@@ -532,9 +531,5 @@ class DshProtocolTests(ProtocolMixin, HookCase):
         self.activate("dsh")
         payload = self.tool_payload("dsh", "write", {"command": ""}, tool_id="empty")
         _code, value, stderr = self.run_core(payload)
-        self.assertFalse(self.is_denied(value))
-        self.assertIn("warning", stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert not self.is_denied(value)
+        assert "warning" in stderr

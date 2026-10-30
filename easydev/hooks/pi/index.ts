@@ -78,7 +78,7 @@ const STDERR_CATEGORIES: Array<{ label: string; pattern: RegExp }> = [
   {
     label: "写序列记账缺口",
     pattern: diagnosticPattern(
-      "post (?:缺少可信成功结果|未找到|写入目标不完整|目标含符号链接|目标与 pre|目标缺少 pre 指纹)" +
+      "post (?:缺少可信成功结果|未找到|写入目标不完整|目标含符号链接|目标指纹不可信|目标与 pre|目标缺少 pre 指纹)" +
         "|缺少工具 ID，写事件无法幂等记账|锁内复核发现任务绑定已变化|锁外预取结果与当前任务绑定不一致",
     ),
   },

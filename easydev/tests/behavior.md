@@ -28,7 +28,7 @@
 | B68（可选 Hook Plugin 的确定性部分） | `tests/hooks/test_*.py` + `tests/experiments/agent_runner/test_replay_read_guard.py` |
 
 ```bash
-python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py' -v
+python3 -m pytest tests/experiments/agent_runner -v
 bash tests/cases/public-contract-callers/run.sh
 ```
 

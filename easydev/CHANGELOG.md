@@ -2,6 +2,37 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.9 更新说明（2026-10-30）
+
+修写序列记账的两处失真（post 阶段的问题指纹会被写成「成功指纹」、执行型 stdin 的同一句缺口提醒重复），并把测试运行方式统一到 pytest（easydev 规则正文即 `SKILL.md` 与 `references/` 未变，总量仍为 131715 字节）。
+
+- **P2 post 阶段问题指纹被当成成功指纹**：`_record_post` 原先只核对软链、目标集合与 `pending.complete`。pre 通过后 post 的 `_prepare_write` 若返回 `deadline`（共享预算耗尽）或目标在 pre/post 之间变成 `nonregular`/`toolarge`/`unreadable`，单条目标不会置 `gap`，于是 `last_success` 被写成 `"deadline"`/问题指纹并推进 `write_seq`：下一次 pre 可能因此误报 `external_modification` 或反复降级，dirty 目标的首次快照也可能被跳过。现在 `_merge_write_entries` 对「只有超时、没有真实指纹」的单条目标同样标 `deadline`（计入目标集不完整），`_record_post` 在更新成功指纹前拒绝 `UNSAFE_FINGERPRINTS` 并给 `post 目标指纹不可信，未建立成功豁免`。
+- **P3 执行型 stdin 缺口重复提醒**：`python3 - <<'PY'`、herestring、`-c`/管道/fd、读脚本文件的壳等未解析正文的记账缺口，在**缺口原因只有 stdin 未解析**时按任务只提醒一次（`gap_stdin_only` + `gap_notices` 记 epoch，换任务/epoch 重新提醒）。记账不变：`pending.complete` 仍为假、不建立成功豁免、不推进 `write_seq`，下一次 dirty 目标的 pre 仍保存首次快照；缺口同时含仓库外目标、预取不一致或取证超时等其它原因时每次仍披露，不合并不同原因。
+- **测试全量迁移到 pytest 风格（P3）**：`tests/` 不再依赖 unittest ——
+  2,983 处 `self.assert*` 改成 bare `assert`（`assertEqual/NotEqual/In/NotIn/Is/IsNot/Less/Greater/IsInstance/IsNone/IsNotNone/True/False`；
+  `assertRaises`→`pytest.raises`、`assertRaisesRegex`→`pytest.raises(..., match=...)`、`caught.exception`→`caught.value`；
+  低优先级操作数自动加括号，避免 `assert a or b in c` 这类静默换义），40 个 `setUp` 改成 pytest 的 `setup_method`，
+  13 处 `addCleanup` 改成 `self.defer(...)` + `teardown_method` 逆序清理（`defer` 保留 `addCleanup` 的附参形式），
+  131 处 `self.subTest` 全部移除（其中 5 处整函数循环改为 `@pytest.mark.parametrize`，其余是「前置准备 + 循环 + 后置断言」结构，
+  参数化会把前置语句变成每例重跑，保留普通循环），8 个「名字像用例、实际是基类」的类改名为 `...Mixin` 以免被误收集，
+  `self.skipTest`→`pytest.skip`、`@unittest.skipUnless`→`@pytest.mark.skipif`、`self.fail(...)`→`pytest.fail(...)`（20 处，
+  原先会抛 `AttributeError` 而不是断言失败）、`unittest.main()` 与 `import unittest` 移除；
+  新增 `easydev/pytest.ini`（`python_classes = Test* *Tests *Test *Case`，沿用既有类名）与 `easydev/conftest.py`
+  （`pytest_runtest_teardown` 兜底：`setup_method` 失败时 pytest 不调 `teardown_method`，这里补跑已注册清理，避免把
+  临时根/模板副本留在 `/tmp`）。`tests/hooks/support.py` 的 `HookCase` 改成纯类：`setup_method` 建夹具、
+  `teardown_method` 逆序清理，独立用例类用 `CaseBase` 提供同样的清理能力；`test_repo_gate.py` 里原先用
+  `unittest.TestLoader` 跑内层用例的辅助器改为直接实例化调用并捕获 `pytest.skip.Exception`（不再伪造 runner 输出）。
+  CI 的 hooks 作业超时从 5 分钟放宽到 10 分钟（迁移后本机 175s）。
+- **测试运行方式改 pytest（P3）**：本地与 CI 的所有套件改用 `python3 -m pytest`（CI 安装 `pytest==8.4.2`，`checks.yml` 的四个测试作业加 `install_pytest`），`tests/README.md`、`tests/experiments/README.md`、`agent_runner`/`swebench`/`tests/behavior.md` 的示例命令同步。
+- **全局规则（`AGENTS.md`，需用户发布）**：§6 增加测试框架默认 pytest（新测试不新写 `unittest`，已有套件不顺手迁移）；§8 与格赖斯合作原则（数量/质量/关系/方式）合并为「最终回复与沟通」。仓库里的 `AGENTS.md` 是唯一维护源，运行时副本不跟随工作区：需用户在自己的终端执行 `bash scripts/sync-agent-rules.sh --check` → `--apply` → `--check` 才会进入 `~/.config/agent-rules/AGENTS.md`（代理沙箱不能写该路径，本轮已在沙箱内被拒，未绕过）。
+- **文档**：`hooks/README.md` 的「P1 基线」补上单条 `deadline`、post 问题指纹与 stdin 缺口提醒口径；`tests/README.md` 同步运行命令、写序列记账覆盖描述与本机耗时。
+
+影响面：成功写入的判定只在存在可信写入后指纹时建立；取证超时与非普通文件/不可读/超限不再留下成功豁免。重复执行同类未解析正文不再每调用刷一条降级告警（首次仍提醒一次）。`deny` 条件（软链、`unstable_target`、`baseline_source_unsafe`、`external_modification`）未改。测试运行器换成 pytest 不改变断言内容与用例数量。
+
+验证（本机 macOS、Python 3.9 + pytest 8.4.2、无 PyYAML，基线 `bd29f18` / 1.4.8）：红→绿证据——新增的 post 指纹用例与单条 `deadline` 用例在修复前 **6 failures**（`post 目标指纹不可信` 与 `pending.complete` 断言）；加去重用例后 **1 failure**（第二次执行型 stdin post 仍提醒），实现后既有 `WrappedStdinTests` 的 6 个「每次都提醒」子用例按新契约改为「首次提醒、同任务不再提醒」，记账断言（`write_seq`、`last_success`、`pending`）逐条保留。独立审查后补了两处：`gap_stdin_only`（缺口同时含仓库外原因时不按 stdin 去重，新增 `test_stdin_gap_with_other_reason_is_disclosed_every_time`）与「换任务重新提醒」用例（`test_new_epoch_reminds_again`）。测试风格迁移后 `python3 -m pytest tests/hooks` **1191 passed + 1 skipped（175s，收集 1192 项：比迁移前多出的 39 项来自 5 处 `parametrize` 展开）**、`tests/experiments/agent_runner` **92 passed**、`tests/experiments/swebench` **56 passed**、`test_role_metric.py` **18 passed**；迁移前后逐条比对收集 id：唯一差集是 21 个抽象基类（`T08/U02/V02/W02/X02/X03`）不再被误收集，它们的 4–5 个具体子类仍在跑同一批方法，没有用例丢失；四个 case 脚本 rc=0；`bash scripts/check.sh` rc=0（§3 五处版本一致 1.4.9，§10 总量未超棘轮）；`SMOKE_TMP=<工作区临时目录> bash scripts/smoke-install.sh` rc=0。另用 1.4.8 的已安装核心在隔离 `state_root` 做对照探针：`python3 - <<'PY'` 每次 post 都出 `写序列记账缺口`，`sed -i`/`python3 -m unittest`/`rg` 静默；修复后同一探针第一次提醒、后续静默，其余不变。本机 pi 扩展已备份后升级到 1.4.9（`/tmp/easydev-hooks-backup-20261030133117`）并重新 `generate --host pi`，`install-context.json` 的 `version` 已是 1.4.9。
+
+未验证：四宿主真实 Hook 信任与输出消费仍需各自 probe；Windows/PowerShell 未验证；本版 CI 结果待推送后确认；pi 侧 TS 适配器需用户 `/reload`（或重启）才用上新类别正则（只替换 Python 核心会暂时回落到「细节已隐藏」）；全局规则尚未发布到运行时副本（见上）。
+
 ## 1.4.8 更新说明（2026-10-29）
 
 修两类「用散文关键词做拦截」的误判：照文档写 reviewer 交接仍被判缺角色声明，以及讨论只读规则就被锁成只读；同时修写序列记账把「没有写目标」当成「目标不完整」造成的重复降级告警，以及重写合并/预取判定时暴露的两个安全缺口（规则正文未变，总量仍为 131715 字节）。

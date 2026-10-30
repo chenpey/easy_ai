@@ -21,9 +21,9 @@
 ## 运行
 
 ```bash
-python3 -m unittest discover -s tests/experiments -p 'test_role_metric.py' -v
-python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py' -v
-python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
+python3 -m pytest tests/experiments/test_role_metric.py -v
+python3 -m pytest tests/experiments/agent_runner -v
+python3 -m pytest tests/experiments/swebench -v
 ```
 
 三组互不依赖，可并行；各自内部用例相互独立，单元测试文件按顺序执行，但单个用例只使用自己的临时目录。

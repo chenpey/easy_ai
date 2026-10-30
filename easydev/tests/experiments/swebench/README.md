@@ -81,7 +81,7 @@ python3 tests/experiments/swebench/analyze_events.py \
 ## 离线自测
 
 ```bash
-python3 -m unittest discover -s tests/experiments/swebench -p 'test_*.py' -v
+python3 -m pytest tests/experiments/swebench -v
 ```
 
 本地验证应与 CI 一致使用 Python 3.12 复跑（本机可用 `/tmp/agents/uv-python/cpython-3.12-macos-aarch64-none/bin/python3.12`）；swebench 的全部用例在 3.9 与 3.12 下都要全绿。

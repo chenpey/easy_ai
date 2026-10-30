@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import unittest
 
 from support import HookCase
 
@@ -61,7 +60,7 @@ class DispatchMixin(object):
         user = self.home / ".config" / "easydev" / "models.json"
         user.write_text(json.dumps(VALID), encoding="utf-8")
         os.chmod(user, 0o000)
-        self.addCleanup(os.chmod, user, 0o600)
+        self.defer(os.chmod, user, 0o600)
         self.deny(
             self.dispatch_payload("s1", self.developer_handoff()),
             env={"HOME": str(self.home)},
@@ -79,11 +78,10 @@ class DispatchMixin(object):
         )
         self.activate()
         for value in ("", "   ", 123, True, ["x"], {"path": "x"}, None):
-            with self.subTest(value=value):
-                self.write_context(models_file=value)
-                reason = self.deny(self.dispatch_payload("s1", self.developer_handoff()))
-                self.assertIn("对话指定", reason)
-                self.assertIn("不能静默回退", reason)
+            self.write_context(models_file=value)
+            reason = self.deny(self.dispatch_payload("s1", self.developer_handoff()))
+            assert "对话指定" in reason
+            assert "不能静默回退" in reason
 
     def test_explicit_missing_models_file_denies(self) -> None:
         self.activate()
@@ -138,14 +136,13 @@ class DispatchMixin(object):
             "角色/读写边界/项目与规则路径/授权基线：reviewer，只读",
         )
         for index, head in enumerate(heads):
-            with self.subTest(head=head):
-                prompt = "%s\n只读审查以下 diff。\n角色路径：%s\n**[P级] 简短标题**\n" % (
-                    head,
-                    role_path,
-                )
-                self.allow(
-                    self.dispatch_payload("s1", prompt, tool_id="decl-%d" % index)
-                )
+            prompt = "%s\n只读审查以下 diff。\n角色路径：%s\n**[P级] 简短标题**\n" % (
+                head,
+                role_path,
+            )
+            self.allow(
+                self.dispatch_payload("s1", prompt, tool_id="decl-%d" % index)
+            )
 
     def test_missing_handoff_message_names_the_literal_to_add(self) -> None:
         """只报“缺什么”模型只能猜格式；拒绝理由必须给出可照抄的字面量。"""
@@ -154,9 +151,9 @@ class DispatchMixin(object):
         reason = self.deny(
             self.dispatch_payload("s1", "只读审查以下 diff。\n", tool_id="hint")
         )
-        self.assertIn("角色：reviewer", reason)
-        self.assertIn(str(self.skill / "references" / "reviewer-role.md"), reason)
-        self.assertIn("**[P级] 简短标题**", reason)
+        assert "角色：reviewer" in reason
+        assert str(self.skill / "references" / "reviewer-role.md") in reason
+        assert "**[P级] 简短标题**" in reason
 
     def test_handoff_role_still_must_be_declared(self) -> None:
         """放宽识别不等于取消契约：没有声明行的交接仍然拒绝。"""
@@ -167,7 +164,7 @@ class DispatchMixin(object):
             % (self.skill / "references" / "reviewer-role.md")
         )
         reason = self.deny(self.dispatch_payload("s1", prompt, tool_id="no-decl"))
-        self.assertIn("角色声明", reason)
+        assert "角色声明" in reason
 
     def test_inline_template_explanation_keeps_complete_handoff(self) -> None:
         """“模板如下：”同一行里的冻结模板仍是格式证据，纯解释行仍被丢弃。"""
@@ -193,7 +190,7 @@ class DispatchMixin(object):
             ("inline-negated", "不要使用模板如下：**[P级] 简短标题**\n"),
         ):
             reason = self.deny(self.dispatch_payload("s1", base + extra, tool_id=tool_id))
-            self.assertIn("机器格式", reason)
+            assert "机器格式" in reason
 
     def test_developer_task_without_reviewer_template_is_allowed(self) -> None:
         self.activate()
@@ -244,7 +241,7 @@ class PiDispatchTests(DispatchMixin, HookCase):
             self.dispatch_payload("child", self.reviewer_handoff(), tool_id="d2"),
             env=child_env,
         )
-        self.assertIn("子代理", reason)
+        assert "子代理" in reason
 
     def test_unactivated_child_dispatch_is_allowed(self) -> None:
         # 冻结契约：未激活一律放行；只带 PI_SUBAGENT_CHILD 的普通子任务不属于
@@ -295,9 +292,5 @@ class DshDispatchTests(DispatchMixin, HookCase):
             "s1", "subagent", {"agent_type": "reviewer", "command": ""}, tool_id="lost"
         )
         _code, value, stderr = self.run_core(payload)
-        self.assertFalse(self.is_denied(value))
-        self.assertIn("warning", stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert not self.is_denied(value)
+        assert "warning" in stderr

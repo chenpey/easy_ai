@@ -50,7 +50,7 @@ B02 使用 `src/notes.json` 作为文件数据源，验收通过 Python audit ho
 ## 离线自测
 
 ```bash
-python3 -m unittest discover -s tests/experiments/agent_runner -p 'test_*.py' -v
+python3 -m pytest tests/experiments/agent_runner -v
 ```
 
 `test_cli.py` 通过 `runner.py` 的 CLI 驱动 `tests/experiments/stubs/codex_stub.py`，覆盖 `list`/`prepare`/`run`、B16 合格发现块与只读违约、安全边界（运行时 Skill 篡改、索引被暂存、超时进程树清理）与事件有效性。它不启动 Codex，也不证明当前模型会遵守流程。

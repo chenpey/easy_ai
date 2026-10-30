@@ -7,7 +7,6 @@ import json
 import os
 import stat
 import subprocess
-import unittest
 
 from support import HookCase
 from test_r5_fixes import task_states
@@ -71,7 +70,7 @@ class SafetyMixin(object):
         self.activate()
         for index, command in enumerate(GIT_DENIED):
             reason = self.deny(self.shell("s1", command, tool_id="deny-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
 
     def test_documented_alias_boundary_is_not_claimed(self) -> None:
         self.activate()
@@ -82,7 +81,7 @@ class SafetyMixin(object):
         self.touch_dirty("src/app.py")
         self.activate()
         reason = self.deny(self.write_tool("s1", "src/app.py"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
         task_root = self.make_task_root()
         self.save_baseline(task_root, "src/app.py")
         self.write_context(task_root=str(task_root))
@@ -112,13 +111,13 @@ class SafetyMixin(object):
         self.write_context(task_root=str(task_root))
         self.deny(self.write_tool("s1", "src/app.py"))
         # Hook 不修改备份内容或权限。
-        self.assertEqual(stat.S_IMODE(os.stat(backup).st_mode), 0o644)
-        self.assertEqual(backup.read_text(encoding="utf-8"), "value = 2\n")
+        assert stat.S_IMODE(os.stat(backup).st_mode) == 0o644
+        assert backup.read_text(encoding="utf-8") == "value = 2\n"
         os.chmod(backup, 0o600)
         backup.unlink()
         backup.symlink_to(self.repo / "src" / "app.py")
         self.deny(self.write_tool("s1", "src/app.py"))
-        self.assertTrue(backup.is_symlink())
+        assert backup.is_symlink()
 
     def test_reused_old_task_root_is_denied_for_content_baseline(self) -> None:
         self.touch_dirty("src/app.py", "value = 2\n")
@@ -139,9 +138,9 @@ class SafetyMixin(object):
         self.write_context(task_root=str(task_a))
         self.activate("s1")  # A -> B -> A，旧备份仍在
         reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="w-a2"))
-        self.assertIn("旧任务", reason)
-        self.assertEqual(hashlib.sha256(backup_a.read_bytes()).hexdigest(), digest)
-        self.assertEqual(stat.S_IMODE(os.stat(backup_a).st_mode), mode)
+        assert "旧任务" in reason
+        assert hashlib.sha256(backup_a.read_bytes()).hexdigest() == digest
+        assert stat.S_IMODE(os.stat(backup_a).st_mode) == mode
 
         task_c = self.make_task_root("task-c")
         self.save_baseline(task_c, "src/app.py")
@@ -166,23 +165,23 @@ class SafetyMixin(object):
         self.save_baseline(self.manual_task_root(), "src/app.py")
         self.activate("s1")
         _code, value, stderr = self.run_core(self.write_tool("s1", "src/app.py", tool_id="first"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertNotIn("首次运行", stderr)
-        self.assertNotIn("归属索引", stderr)
+        assert not self.is_denied(value), value
+        assert "首次运行" not in stderr
+        assert "归属索引" not in stderr
 
     def test_existing_root_missing_baseline_index_warns(self) -> None:
         """读到非空 root 却缺归属索引：旧版本写入或结构丢失，必须披露。"""
         self.activate("s1")
         roots = sorted((self.state / "roots").glob("*.json"))
-        self.assertEqual(len(roots), 1, roots)
+        assert len(roots) == 1, roots
         payload = json.loads(roots[0].read_text(encoding="utf-8"))
-        self.assertIn("baseline_roots_seen", payload)
+        assert "baseline_roots_seen" in payload
         payload.pop("baseline_roots_seen")
         roots[0].write_text(json.dumps(payload), encoding="utf-8")
         _code, value, stderr = self.run_core(self.shell("s1", "git status", tool_id="index"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("归属索引", stderr)
-        self.assertNotIn("Traceback", stderr)
+        assert not self.is_denied(value), value
+        assert "归属索引" in stderr
+        assert "Traceback" not in stderr
 
     def test_shell_write_target_is_checked(self) -> None:
         self.use_manual_baseline()
@@ -202,8 +201,8 @@ class SafetyMixin(object):
         # 成功写入之后的外部修改必须拒绝，文件保持外部修改后的内容。
         (self.repo / "src" / "app.py").write_text("value = 4\n", encoding="utf-8")
         reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="w3"))
-        self.assertIn("外部修改", reason)
-        self.assertEqual((self.repo / "src" / "app.py").read_text(encoding="utf-8"), "value = 4\n")
+        assert "外部修改" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "value = 4\n"
 
     def test_reviewer_write_tools_are_denied(self) -> None:
         self.activate("rev", self.reviewer_handoff())
@@ -234,8 +233,8 @@ class SafetyMixin(object):
         self.deny(payload)
         custom = self.tool_payload("rev", "some_custom_tool", {"x": 1}, tool_id="custom")
         _code, value, stderr = self.run_core(custom)
-        self.assertFalse(self.is_denied(value))
-        self.assertIn("warning", stderr)
+        assert not self.is_denied(value)
+        assert "warning" in stderr
 
     def test_compound_git_and_reviewer_guards(self) -> None:
         self.activate("s1")
@@ -243,11 +242,11 @@ class SafetyMixin(object):
             ("(git reset --hard)", "if true; then git reset --hard; fi")
         ):
             reason = self.deny(self.shell("s1", command, tool_id="compound-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(("(rm -rf src)", "{ rm -rf src; }")):
             reason = self.deny(self.shell("rev", command, tool_id="compound-rev-%d" % index))
-            self.assertIn("只读", reason)
+            assert "只读" in reason
         # 只读的复合结构不是拒绝面：分组本身不构成写副作用。
         self.allow(self.shell("rev", "(rg -n foo src)", tool_id="compound-readonly"))
 
@@ -255,17 +254,17 @@ class SafetyMixin(object):
         self.activate("s1")
         _code, value, stderr = self.run_core(self.shell("s1", "(", tool_id="unresolved-main"))
         # 普通活动会话只告警放行：窄类别只收紧 reviewer。
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
         _code, value, _stderr = self.run_core(
             self.shell("s1", "(", tool_id="unresolved-probe"), mode="probe"
         )
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         self.deny(self.shell("s1", "git reset --hard", tool_id="unresolved-direct"))
         self.allow(self.shell("s1", "rg foo", tool_id="unresolved-plain"))
         self.activate("rev", self.reviewer_handoff())
         reason = self.deny(self.shell("rev", "(", tool_id="unresolved-rev"))
-        self.assertIn("复合结构", reason)
+        assert "复合结构" in reason
         # 对照：普通简单命令与原有只读命令不被这个窄类别牵连。
         for index, command in enumerate(("test -f x", "[ -f x ]", "rg foo")):
             self.allow(self.shell("rev", command, tool_id="unresolved-allow-%d" % index))
@@ -276,7 +275,7 @@ class SafetyMixin(object):
         self.activate()
         command = "\\\n# note \\\n" + ("git " + "reset --hard")
         reason = self.deny(self.shell("s1", command, tool_id="cont-git"))
-        self.assertIn("Git", reason)
+        assert "Git" in reason
 
     def test_git_denied_in_deep_async_and_pipeline_forms(self) -> None:
         """长 `&&` 链、`&` 异步组、管道与 `!` 组合都不得让 Git 证据消失或抛异常。"""
@@ -291,7 +290,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="deep-git-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
 
     def test_git_denied_across_list_operator_newline_and_quoted_esac(self) -> None:
         """`&&`/`||`/`|` 后的换行是续接、引号里的 `esac` 是 pattern：两者都不得
@@ -306,7 +305,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="nl-git-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
         # reviewer 侧：这两种形状都不属于“无法拆解的复合结构”，普通只读命令照常放行。
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(
@@ -324,7 +323,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="force-%d" % index))
-            self.assertIn("强制", reason)
+            assert "强制" in reason
         # dry-run 仍先豁免：只观察不推送。
         for index, command in enumerate(
             ("git push --dry-run origin +main", "git push -n origin +main")
@@ -344,7 +343,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="checkout-path-%d" % index))
-            self.assertIn("工作区", reason)
+            assert "工作区" in reason
         # 没有同名路径的普通分支切换/-b 创建分支/提交表达式保持 allow。
         for index, command in enumerate(
             (
@@ -369,7 +368,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="checkout-cwd-%d" % index))
-            self.assertIn("only_here.py", reason)
+            assert "only_here.py" in reason
         # 反例：只在别的目录存在的同名路径不算路径（docs 下没有 src/app.py）。
         self.allow(self.shell("s1", "git -C docs checkout src/app.py", tool_id="checkout-cwd-other"))
         self.deny(self.shell("s1", "git -C src checkout app.py", tool_id="checkout-cwd-own"))
@@ -386,7 +385,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("rev", command, tool_id="find-sort-w-%d" % index))
-            self.assertIn("只读", reason)
+            assert "只读" in reason
         # 只读模式查询与普通读取保持 allow。
         for index, command in enumerate(
             ("find .", "find . -name '*.py'", "sort in.txt", "rg -n TODO src/")
@@ -397,7 +396,7 @@ class SafetyMixin(object):
         self.activate("s1")
         command = "printf '%s' \"\\$(\" \"$(git reset --hard)\""
         reason = self.deny(self.shell("s1", command, tool_id="dollar-open"))
-        self.assertIn("Git", reason)
+        assert "Git" in reason
         for index, literal in enumerate(
             (
                 "printf '%s' '$(git reset --hard)'",
@@ -416,7 +415,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="filtered-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
         # 字面量对照：单引号保护的目标不是执行证据，也不是 Git 拒绝。
         self.allow(self.shell("s1", "printf x >'$(git reset --hard)'", tool_id="filtered-literal"))
 
@@ -426,15 +425,15 @@ class SafetyMixin(object):
             (COMMENT_SUBSTITUTION, CONTINUATION_SUBSTITUTION)
         ):
             reason = self.deny(self.shell("s1", command, tool_id="nested-git-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
         # 内层单引号里的替换是数据：不产生 Git 拒绝，也不作为执行证据。
         self.allow(self.shell("s1", SINGLE_QUOTED_SUBSTITUTION, tool_id="nested-literal"))
 
     def test_unknown_find_write_warns_and_allows(self) -> None:
         self.activate()
         _code, value, stderr = self.run_core(self.shell("s1", "find . -exec cat x ;", tool_id="find-unknown"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
 
     def test_unactivated_write_is_allowed(self) -> None:
         self.allow(self.write_tool("plain", "src/app.py"))
@@ -462,12 +461,12 @@ class SafetyMixin(object):
         command = "rsync -a --exclude 'install-context.json' src/ dist/"
         _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="rsync-dir"))
         # 目录目的内容不可枚举：披露后放行（与 `cp -R` 一致），不用目录级快照冒充保护。
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
-        self.assertFalse(self.snapshots("src/app.py"))
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
+        assert not self.snapshots("src/app.py")
         keys = self.registered_targets()
-        self.assertFalse([key for key in keys if key.endswith("::src/app.py")], keys)
-        self.assertFalse([key for key in keys if key.endswith("::install-context.json")], keys)
+        assert not [key for key in keys if key.endswith("::src/app.py")], keys
+        assert not [key for key in keys if key.endswith("::install-context.json")], keys
 
     def test_rsync_single_file_snapshots_only_destination(self) -> None:
         self.touch_dirty("src/app.py", "value = 2\n")
@@ -475,15 +474,15 @@ class SafetyMixin(object):
         self.activate()
         self.allow(self.shell("s1", "rsync src/app.py docs/guide.md", tool_id="rsync-file"))
         saved = self.snapshots("docs/guide.md")
-        self.assertEqual(len(saved), 1, saved)
-        self.assertEqual(saved[0].read_text(encoding="utf-8"), "user guide\n")
-        self.assertEqual(stat.S_IMODE(saved[0].stat().st_mode), 0o600)
+        assert len(saved) == 1, saved
+        assert saved[0].read_text(encoding="utf-8") == "user guide\n"
+        assert stat.S_IMODE(saved[0].stat().st_mode) == 0o600
         # 源只是读取：不为它建快照。
-        self.assertFalse(self.snapshots("src/app.py"))
+        assert not self.snapshots("src/app.py")
         # 手工任务根：目标缺合规基线必须拒绝，补齐后才放行。
         task_root = self.use_manual_baseline()
         reason = self.deny(self.shell("s1", "rsync src/app.py docs/guide.md", tool_id="rsync-manual"))
-        self.assertIn("缺少合规首次基线", reason)
+        assert "缺少合规首次基线" in reason
         self.save_baseline(task_root, "docs/guide.md", "user guide\n")
         self.allow(
             self.shell("s1", "rsync src/app.py docs/guide.md", tool_id="rsync-manual-2")
@@ -502,12 +501,12 @@ class SafetyMixin(object):
                 self.shell("s1", command, tool_id=tool_id, event="post_tool", outcome="success")
             )
         source = self.snapshots("src/app.py")
-        self.assertEqual(len(source), 1, source)
-        self.assertEqual(source[0].read_text(encoding="utf-8"), "value = 2\n")
-        self.assertEqual(stat.S_IMODE(source[0].stat().st_mode), 0o600)
+        assert len(source) == 1, source
+        assert source[0].read_text(encoding="utf-8") == "value = 2\n"
+        assert stat.S_IMODE(source[0].stat().st_mode) == 0o600
         destination = self.snapshots("dest/app.py")
-        self.assertEqual(len(destination), 1, destination)
-        self.assertEqual(destination[0].read_text(encoding="utf-8"), "old dest\n")
+        assert len(destination) == 1, destination
+        assert destination[0].read_text(encoding="utf-8") == "old dest\n"
         # reviewer 对同一条删除源命令明确拒绝。
         self.activate("rev", self.reviewer_handoff())
         self.deny(self.shell("rev", "rsync --remove-source-files src/app.py dest/"))
@@ -525,17 +524,17 @@ class SafetyMixin(object):
             )
         )
         # 整段不完整 → 连已知的源删除候选也不快照：当前能力边界，不称已保护。
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
-        self.assertFalse(self.snapshots("src/app.py"))
-        self.assertFalse(self.snapshots("docs/guide.md"))
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
+        assert not self.snapshots("src/app.py")
+        assert not self.snapshots("docs/guide.md")
 
     def test_rsync_fifo_target_is_denied_without_blocking(self) -> None:
         os.mkfifo(self.repo / "pipe.out")
         self.activate()
         reason = self.deny(self.shell("s1", "rsync src/app.py pipe.out", tool_id="rsync-fifo"))
-        self.assertIn("不是普通文件", reason)
-        self.assertFalse(self.snapshots("pipe.out"))
+        assert "不是普通文件" in reason
+        assert not self.snapshots("pipe.out")
 
     def test_reviewer_rsync_is_denied(self) -> None:
         self.activate("rev", self.reviewer_handoff())
@@ -551,7 +550,7 @@ class SafetyMixin(object):
             )
         ):
             reason = self.deny(self.shell("rev", command, tool_id="rsync-rev-%d" % index))
-            self.assertIn("只读", reason)
+            assert "只读" in reason
         # 纯读对照：rsync 之外的读取命令仍放行。
         self.allow(self.shell("rev", "cat src/app.py", tool_id="rsync-rev-read"))
 
@@ -570,13 +569,13 @@ class SafetyMixin(object):
             _code, value, stderr = self.run_core(
                 self.shell("s1", command, tool_id="rsync-batch-%d" % index)
             )
-            self.assertFalse(self.is_denied(value), value)
-            self.assertIn("warning", stderr)
+            assert not self.is_denied(value), value
+            assert "warning" in stderr
         # 不为伪落点 dest/app.py 宣称完整保护，也不动源快照。
-        self.assertFalse(self.snapshots("dest/app.py"))
-        self.assertFalse(self.snapshots("src/app.py"))
+        assert not self.snapshots("dest/app.py")
+        assert not self.snapshots("src/app.py")
         keys = self.registered_targets()
-        self.assertFalse([key for key in keys if key.endswith("::dest/app.py")], keys)
+        assert not [key for key in keys if key.endswith("::dest/app.py")], keys
         self.activate("rev", self.reviewer_handoff())
         self.deny(self.shell("rev", "rsync --read-batch=batch.bin src/app.py dest/"))
 
@@ -595,19 +594,19 @@ class SafetyMixin(object):
             tool_id = "rsync-batch-write-%d" % index
             _code, value, stderr = self.run_core(self.shell("s1", command, tool_id=tool_id))
             # 整段不完整：披露后放行，不为目的/批次/源伪称文件级快照。
-            self.assertFalse(self.is_denied(value), value)
-            self.assertIn("warning", stderr)
+            assert not self.is_denied(value), value
+            assert "warning" in stderr
             for relative in ("dest/app.py", "src/app.py", "batch.bin", "batch.bin.sh"):
-                self.assertFalse(self.snapshots(relative), relative)
+                assert not self.snapshots(relative), relative
             keys = self.registered_targets()
-            self.assertFalse([key for key in keys if "::dest/app.py" in key], keys)
+            assert not [key for key in keys if "::dest/app.py" in key], keys
             # 成功 post 仍披露不完整写缺口，不推进写序列。
             _code, value, stderr = self.run_core(
                 self.shell("s1", command, tool_id=tool_id, event="post_tool", outcome="success")
             )
-            self.assertFalse(self.is_denied(value), value)
-            self.assertIn("写序列记覆盖缺口", stderr)
-            self.assertFalse(self.snapshots("dest/app.py"))
+            assert not self.is_denied(value), value
+            assert "写序列记覆盖缺口" in stderr
+            assert not self.snapshots("dest/app.py")
 
 
 class PiSafetyTests(SafetyMixin, HookCase):
@@ -630,7 +629,7 @@ class PiSafetyTests(SafetyMixin, HookCase):
         reason = self.deny(
             self.tool_payload("s1", "apply_patch", {"command": patch}, tool_id="p1")
         )
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
 
     def test_multi_repo_writes_use_each_repo_status(self) -> None:
         other = self.root / "repo2"
@@ -645,7 +644,7 @@ class PiSafetyTests(SafetyMixin, HookCase):
         self.save_baseline(task_root, "src/app.py")
         self.write_context(task_root=str(task_root))
         reason = self.deny(self.write_tool("s1", str(other / "app.py")))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
         self.save_baseline(task_root, "app.py", "v = 2\n")
         self.allow(self.write_tool("s1", str(other / "app.py"), tool_id="w2"))
 
@@ -653,7 +652,7 @@ class PiSafetyTests(SafetyMixin, HookCase):
         self.activate()
         _code, value, stderr = self.run_core(self.shell("s1", "echo $(git reset --hard)"))
         # $(...) 的字面命令会被递归分类，因此这里是明确 deny，而不是静默放行。
-        self.assertTrue(self.is_denied(value), stderr)
+        assert self.is_denied(value), stderr
 
 
 class AntigravitySafetyTests(SafetyMixin, HookCase):
@@ -672,9 +671,5 @@ class DshSafetyTests(SafetyMixin, HookCase):
         self.activate()
         payload = self.tool_payload("s1", "write", {"command": ""}, tool_id="lost")
         _code, value, stderr = self.run_core(payload)
-        self.assertFalse(self.is_denied(value))
-        self.assertIn("warning", stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert not self.is_denied(value)
+        assert "warning" in stderr

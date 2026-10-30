@@ -11,7 +11,6 @@ Codex/Antigravity 的 transcript 夹具与状态读取复用 `test_r5_fixes`。
 from __future__ import annotations
 
 import json
-import unittest
 
 from support import HookCase
 from test_r5_fixes import (
@@ -55,48 +54,43 @@ class U01FdWordRedirectTests(HookCase):
         "printf x > /dev/null",
     )
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         for name in self.SENTINELS:
             (self.repo / name).write_text("USER-SENTINEL\n", encoding="utf-8")
 
     def assert_sentinels_intact(self) -> None:
         for name in self.SENTINELS:
-            self.assertEqual(
-                (self.repo / name).read_text(encoding="utf-8"), "USER-SENTINEL\n", name
-            )
+            assert (self.repo / name).read_text(encoding="utf-8") == "USER-SENTINEL\n", name
 
     def test_developer_denies_fd_words_that_are_file_targets(self) -> None:
         # 拒绝必须来自“缺手工基线”：显式打开手工核对路径。
         self.use_manual_baseline()
         self.activate("dev")
         for index, (command, target) in enumerate(self.FILE_TARGET_CASES):
-            with self.subTest(command=command):
-                reason = self.deny(self.shell("dev", command, tool_id="u01-dev-%d" % index))
-                # 拒绝必须点名被写的文件目标，而不是别的原因凑巧拒绝。
-                self.assertIn(target, reason)
+            reason = self.deny(self.shell("dev", command, tool_id="u01-dev-%d" % index))
+            # 拒绝必须点名被写的文件目标，而不是别的原因凑巧拒绝。
+            assert target in reason
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_fd_word_file_targets(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, (command, _target) in enumerate(self.FILE_TARGET_CASES):
-            with self.subTest(command=command):
-                reason = self.deny(self.shell("rev", command, tool_id="u01-rev-%d" % index))
-                self.assertIn("只读", reason)
+            reason = self.deny(self.shell("rev", command, tool_id="u01-rev-%d" % index))
+            assert "只读" in reason
         self.assert_sentinels_intact()
 
     def test_multiple_fd_word_targets_do_not_hide_behind_fd_duplication(self) -> None:
         self.use_manual_baseline()
         self.activate("dev")
         reason = self.deny(self.shell("dev", "printf x >&1.txt 2>&2log", tool_id="u01-multi"))
-        self.assertIn("baseline/", reason)
+        assert "baseline/" in reason
         self.assert_sentinels_intact()
 
     def test_fd_duplication_and_close_are_not_file_writes(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
-            with self.subTest(command=command):
-                self.allow(self.shell("rev", command, tool_id="u01-fd-%d" % index))
+            self.allow(self.shell("rev", command, tool_id="u01-fd-%d" % index))
         self.assert_sentinels_intact()
 
     def test_numeric_file_targets_without_ampersand_stay_protected(self) -> None:
@@ -104,16 +98,15 @@ class U01FdWordRedirectTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(("printf x > 1", "printf x >> 1", "printf x 2> 1")):
-            with self.subTest(command=command):
-                reason = self.deny(self.shell("dev", command, tool_id="u01-num-%d" % index))
-                self.assertIn("baseline/1", reason)
+            reason = self.deny(self.shell("dev", command, tool_id="u01-num-%d" % index))
+            assert "baseline/1" in reason
         self.assert_sentinels_intact()
 
 
 # ---------------------------------------------------------------------------
 # U02：显式停用后的历史 SKILL 读取不得重新激活，恢复时隔离旧 child
 # ---------------------------------------------------------------------------
-class U02DeactivationBoundaryTests(object):
+class U02DeactivationBoundaryMixin(object):
     FOLLOW_UP = "普通问题：解释这个函数"
 
     def append_entries(self, path: str, entries) -> None:
@@ -134,9 +127,9 @@ class U02DeactivationBoundaryTests(object):
     def deactivate(self, name: str) -> str:
         path = self.write_transcript("P", [machine_block(active=False)], name)
         _code, value, _stderr = self.run_core(self.input_with_transcript("P", path))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(self.actor_state("P")["activation_scope"], "inactive")
-        self.assertFalse(root_states(self.state)[0].get("active"))
+        assert not self.is_denied(value), value
+        assert self.actor_state("P")["activation_scope"] == "inactive"
+        assert not root_states(self.state)[0].get("active")
         return path
 
     def child_write(self, tool_id: str) -> None:
@@ -178,21 +171,20 @@ class U02DeactivationBoundaryTests(object):
         path = self.deactivate("u02-follow.jsonl")
         # 停用后连续多个普通新回合：transcript 里仍有停用前的成功 SKILL 读取。
         for index in range(3):
-            with self.subTest(turn=index):
-                self.append_user(path, self.FOLLOW_UP)
-                _code, value, _stderr = self.run_core(self.input_with_transcript("P", path))
-                self.assertFalse(self.is_denied(value), value)
-                self.assertEqual(self.actor_state("P")["activation_scope"], "inactive")
-                self.assertFalse(root_states(self.state)[0].get("active"))
-                # 普通工具与危险 Git 继续放行：停用后不由本 Plugin 管。
-                self.allow(self.shell("P", "git reset --hard", tool_id="u02-git-%d" % index))
-                self.allow(self.write_tool("P", "src/app.py", tool_id="u02-w-%d" % index))
+            self.append_user(path, self.FOLLOW_UP)
+            _code, value, _stderr = self.run_core(self.input_with_transcript("P", path))
+            assert not self.is_denied(value), value
+            assert self.actor_state("P")["activation_scope"] == "inactive"
+            assert not root_states(self.state)[0].get("active")
+            # 普通工具与危险 Git 继续放行：停用后不由本 Plugin 管。
+            self.allow(self.shell("P", "git reset --hard", tool_id="u02-git-%d" % index))
+            self.allow(self.write_tool("P", "src/app.py", tool_id="u02-w-%d" % index))
         # 旧 child 的 pre/post/Stop 都不推进旧任务写序列与审查检查点。
         self.child_write("u02-child")
         self.allow(self.child_done_payload("P", agent="agent-dev", report="**[P1] 证据**\n"))
         after = self.task_for_epoch(1)
-        self.assertEqual(after["write_seq"], before["write_seq"])
-        self.assertEqual(after["review_checkpoint"], before["review_checkpoint"])
+        assert after["write_seq"] == before["write_seq"]
+        assert after["review_checkpoint"] == before["review_checkpoint"]
 
     def test_explicit_reinvocation_restores_in_new_epoch_and_retires_old_child(self) -> None:
         self.start_child()
@@ -200,18 +192,18 @@ class U02DeactivationBoundaryTests(object):
         self.append_user(path, "使用 $easydev，开始另一个任务")
         self.run_core(self.input_with_transcript("P", path))
         roots = root_states(self.state)
-        self.assertTrue(roots[0].get("active"))
-        self.assertEqual(int(roots[0]["epoch"]), 2)
+        assert roots[0].get("active")
+        assert int(roots[0]["epoch"]) == 2
         actor = self.actor_state("P")
-        self.assertEqual(actor["activation_scope"], "task_active")
-        self.assertEqual(int(actor["epoch"]), 2)
+        assert actor["activation_scope"] == "task_active"
+        assert int(actor["epoch"]) == 2
         # 恢复后旧 child 仍不得写入新任务。
         revived = self.task_for_epoch(2)
         self.child_write("u02-old-child")
         self.allow(self.child_done_payload("P", agent="agent-dev", report="**[P1] 旧任务**\n"))
         after = self.task_for_epoch(2)
-        self.assertEqual(after["write_seq"], revived["write_seq"])
-        self.assertEqual(after["review_checkpoint"], revived["review_checkpoint"])
+        assert after["write_seq"] == revived["write_seq"]
+        assert after["review_checkpoint"] == revived["review_checkpoint"]
 
     def test_machine_active_true_restores_in_new_epoch(self) -> None:
         self.start_child()
@@ -219,9 +211,9 @@ class U02DeactivationBoundaryTests(object):
         self.append_user(path, machine_block(active=True, role="main"))
         self.run_core(self.input_with_transcript("P", path))
         roots = root_states(self.state)
-        self.assertTrue(roots[0].get("active"))
-        self.assertEqual(int(roots[0]["epoch"]), 2)
-        self.assertEqual(self.actor_state("P")["activation_scope"], "task_active")
+        assert roots[0].get("active")
+        assert int(roots[0]["epoch"]) == 2
+        assert self.actor_state("P")["activation_scope"] == "task_active"
 
     def test_new_skill_read_after_deactivation_restores_in_new_epoch(self) -> None:
         self.start_child()
@@ -232,22 +224,18 @@ class U02DeactivationBoundaryTests(object):
         self.append_user(path, self.FOLLOW_UP)
         self.run_core(self.input_with_transcript("P", path))
         roots = root_states(self.state)
-        self.assertTrue(roots[0].get("active"))
-        self.assertEqual(int(roots[0]["epoch"]), 2)
-        self.assertEqual(self.actor_state("P")["activation_scope"], "task_active")
+        assert roots[0].get("active")
+        assert int(roots[0]["epoch"]) == 2
+        assert self.actor_state("P")["activation_scope"] == "task_active"
 
 
 class U02CodexTests(
-    CodexTranscriptMixin, U02DeactivationBoundaryTests, StateHelpers, HookCase
+    CodexTranscriptMixin, U02DeactivationBoundaryMixin, StateHelpers, HookCase
 ):
     host = "codex"
 
 
 class U02AntigravityTests(
-    AntigravityTranscriptMixin, U02DeactivationBoundaryTests, StateHelpers, HookCase
+    AntigravityTranscriptMixin, U02DeactivationBoundaryMixin, StateHelpers, HookCase
 ):
     host = "antigravity"
-
-
-if __name__ == "__main__":
-    unittest.main()

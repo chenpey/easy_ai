@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import stat
-import unittest
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -106,19 +105,19 @@ class InterpreterHeredocTests(HeredocWarningCase):
         self.activate("s1")
         command = "python3 - <<'PY'\n%s\nprint(%r)\nPY" % (DANGEROUS_GIT, BODY_SENTINEL)
         analysis = shell.analyze(command)
-        self.assertEqual(analysis.git, [])
-        self.assertTrue(analysis.stdin_program)
-        self.assertFalse(analysis.opaque)
+        assert analysis.git == []
+        assert analysis.stdin_program
+        assert not analysis.opaque
         _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="py-data"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
-        self.assertNotIn(BODY_SENTINEL, stderr)
+        assert not self.is_denied(value), value
+        assert stderr == ""
+        assert BODY_SENTINEL not in stderr
         # 解释器 stdin 是执行型正文：解析器不把正文当脚本枚举，写目标不可证明，
         # 因此保留一份不完整的写意图作为缺口证据，而不是当纯读。
         entries = self.pending_entries()
-        self.assertEqual(len(entries), 1, entries)
-        self.assertEqual(entries[0]["targets"], [])
-        self.assertFalse(entries[0]["complete"], entries[0])
+        assert len(entries) == 1, entries
+        assert entries[0]["targets"] == []
+        assert not entries[0]["complete"], entries[0]
 
 
 class CatRedirectHeredocTests(HeredocWarningCase):
@@ -129,24 +128,22 @@ class CatRedirectHeredocTests(HeredocWarningCase):
         self.activate("s1")
         command = "cat > out.txt <<'EOF'\nhello\n%s\n%s\nEOF" % (DANGEROUS_GIT, BODY_SENTINEL)
         analysis = shell.analyze(command)
-        self.assertEqual(
-            analysis.writes, [{"kind": "redirect", "target": "out.txt", "complete": True}]
-        )
-        self.assertEqual(analysis.git, [])
+        assert analysis.writes == [{"kind": "redirect", "target": "out.txt", "complete": True}]
+        assert analysis.git == []
         _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="cat-write"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(stderr, "")
+        assert not self.is_denied(value), value
+        assert stderr == ""
         entries = self.pending_entries()
-        self.assertEqual(len(entries), 1, entries)
-        self.assertTrue(entries[0]["complete"], entries[0])
-        self.assertEqual(len(entries[0]["targets"]), 1, entries[0])
-        self.assertTrue(entries[0]["targets"][0].endswith("::out.txt"), entries[0])
+        assert len(entries) == 1, entries
+        assert entries[0]["complete"], entries[0]
+        assert len(entries[0]["targets"]) == 1, entries[0]
+        assert entries[0]["targets"][0].endswith("::out.txt"), entries[0]
         saved = self.snapshots("out.txt")
-        self.assertEqual(len(saved), 1, saved)
-        self.assertEqual(saved[0].read_text(encoding="utf-8"), "user content\n")
-        self.assertEqual(stat.S_IMODE(saved[0].stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(saved[0].parent.stat().st_mode), 0o700)
-        self.assertNotIn(BODY_SENTINEL, saved[0].read_text(encoding="utf-8"))
+        assert len(saved) == 1, saved
+        assert saved[0].read_text(encoding="utf-8") == "user content\n"
+        assert stat.S_IMODE(saved[0].stat().st_mode) == 0o600
+        assert stat.S_IMODE(saved[0].parent.stat().st_mode) == 0o700
+        assert BODY_SENTINEL not in saved[0].read_text(encoding="utf-8")
 
 
 class ShellHeredocTests(HeredocWarningCase):
@@ -156,9 +153,9 @@ class ShellHeredocTests(HeredocWarningCase):
         self.activate("s1")
         command = "sh <<'EOF'\n%s\nEOF" % DANGEROUS_GIT
         analysis = shell.analyze(command)
-        self.assertTrue([action for action in analysis.git if action["sub"] == "reset"])
+        assert [action for action in analysis.git if action["sub"] == "reset"]
         reason = self.deny(self.shell("s1", command, tool_id="sh-body"))
-        self.assertIn("危险 Git", reason)
+        assert "危险 Git" in reason
 
 
 class StructureWarningScopeTests(HeredocWarningCase):
@@ -168,20 +165,20 @@ class StructureWarningScopeTests(HeredocWarningCase):
         self.activate("s1")
         # 未闭合正文：heredoc 边界无法证明，pre 按原条件披露结构缺口。
         command = "cat > out.txt <<'EOF'\nhello\n"
-        self.assertTrue(shell.analyze(command).opaque)
+        assert shell.analyze(command).opaque
         pre = self.shell("s1", command, tool_id="open-heredoc")
         _code, value, pre_stderr = self.run_core(pre)
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(engine_warnings(pre_stderr).count(STRUCTURE_UNPARSABLE), 1)
+        assert not self.is_denied(value), value
+        assert engine_warnings(pre_stderr).count(STRUCTURE_UNPARSABLE) == 1
         post = self.shell(
             "s1", command, tool_id="open-heredoc", event="post_tool", outcome="success"
         )
         _code, value, post_stderr = self.run_core(post)
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         warnings = engine_warnings(post_stderr)
-        self.assertNotIn(STRUCTURE_UNPARSABLE, warnings)
+        assert STRUCTURE_UNPARSABLE not in warnings
         # post 自己的记账缺口保留，不因结构原句 pre-only 而消失。
-        self.assertIn(POST_INCOMPLETE, warnings)
+        assert POST_INCOMPLETE in warnings
 
     def test_write_tool_without_path_is_still_disclosed_on_pre(self) -> None:
         tool = {
@@ -192,15 +189,15 @@ class StructureWarningScopeTests(HeredocWarningCase):
             "paths_complete": True,
         }
         prepared, warnings = self.prepare("pre_tool", tool=tool)
-        self.assertIsNotNone(prepared)
-        self.assertEqual(prepared["entries"], [])
-        self.assertTrue(prepared["gap"])
-        self.assertEqual(warnings, [WRITE_TOOL_WITHOUT_PATH])
+        assert prepared is not None
+        assert prepared["entries"] == []
+        assert prepared["gap"]
+        assert warnings == [WRITE_TOOL_WITHOUT_PATH]
         prepared, warnings = self.prepare("post_tool", tool=tool)
-        self.assertIsNotNone(prepared)
-        self.assertEqual(prepared["entries"], [])
-        self.assertTrue(prepared["gap"])
-        self.assertEqual(warnings, [])
+        assert prepared is not None
+        assert prepared["entries"] == []
+        assert prepared["gap"]
+        assert warnings == []
 
     def test_baseline_structure_warnings_are_pre_only(self) -> None:
         cases = (
@@ -219,17 +216,16 @@ class StructureWarningScopeTests(HeredocWarningCase):
         )
         (self.root / "outside").mkdir()
         for name, kwargs, message in cases:
-            with self.subTest(case=name):
-                prepared, warnings = self.prepare("pre_tool", **kwargs)
-                self.assertIsNotNone(prepared)
-                self.assertEqual(prepared["entries"], [])
-                self.assertTrue(prepared["gap"])
-                self.assertEqual(warnings, [message])
-                prepared, warnings = self.prepare("post_tool", **kwargs)
-                self.assertIsNotNone(prepared)
-                self.assertEqual(prepared["entries"], [])
-                self.assertTrue(prepared["gap"])
-                self.assertEqual(warnings, [])
+            prepared, warnings = self.prepare("pre_tool", **kwargs)
+            assert prepared is not None
+            assert prepared["entries"] == []
+            assert prepared["gap"]
+            assert warnings == [message]
+            prepared, warnings = self.prepare("post_tool", **kwargs)
+            assert prepared is not None
+            assert prepared["entries"] == []
+            assert prepared["gap"]
+            assert warnings == []
 
     def test_multiple_outside_targets_warn_once_per_pre_call(self) -> None:
         (self.root / "outside").mkdir()
@@ -238,10 +234,10 @@ class StructureWarningScopeTests(HeredocWarningCase):
             self.root / "outside" / "b.txt",
         )
         prepared, warnings = self.prepare("pre_tool", command=command)
-        self.assertIsNotNone(prepared)
-        self.assertEqual(prepared["entries"], [])
-        self.assertTrue(prepared["gap"])
-        self.assertEqual(warnings.count(TARGET_OUTSIDE), 1, warnings)
+        assert prepared is not None
+        assert prepared["entries"] == []
+        assert prepared["gap"]
+        assert warnings.count(TARGET_OUTSIDE) == 1, warnings
 
 class ReviewerStructureWarningTests(HeredocWarningCase):
     """reviewer 的明确写仍是 reviewer_command_write；未知结构告警仅 pre。"""
@@ -250,37 +246,35 @@ class ReviewerStructureWarningTests(HeredocWarningCase):
         self.activate("rev", self.reviewer_handoff())
         command = "sh <<'EOF'\ntouch protected\nEOF"
         analysis = shell.analyze(command)
-        self.assertTrue(
-            [write for write in analysis.writes if write.get("target") == "protected"], analysis.writes
-        )
+        assert [write for write in analysis.writes if write.get("target") == "protected"], analysis.writes
         payload = self.shell("rev", command, tool_id="rev-sh")
         decision = self.decide(payload)
-        self.assertEqual(decision.decision, "deny")
-        self.assertEqual(decision.code, "reviewer_command_write")
-        self.assertIn("明确写副作用", decision.reason)
+        assert decision.decision == "deny"
+        assert decision.code == "reviewer_command_write"
+        assert "明确写副作用" in decision.reason
 
     def test_reviewer_structured_write_stays_reviewer_write(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         decision = self.decide(self.write_tool("rev", "src/app.py", tool_id="rev-write"))
-        self.assertEqual(decision.decision, "deny")
-        self.assertEqual(decision.code, "reviewer_write")
+        assert decision.decision == "deny"
+        assert decision.code == "reviewer_write"
 
     def test_reviewer_unknown_structure_warning_is_pre_only(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         # 未闭合壳 heredoc：正文边界无法证明，未知结构的写风险仍在，按原条件告警放行。
         command = "sh <<'EOF'\nhello\n"
-        self.assertTrue(shell.analyze(command).opaque)
+        assert shell.analyze(command).opaque
         pre = self.shell("rev", command, tool_id="rev-unknown")
         _code, value, pre_stderr = self.run_core(pre)
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         # 预锁与锁内各追加一次，run 仍按原文只输出一条。
-        self.assertEqual(engine_warnings(pre_stderr).count(REVIEWER_UNKNOWN), 1)
+        assert engine_warnings(pre_stderr).count(REVIEWER_UNKNOWN) == 1
         post = self.shell(
             "rev", command, tool_id="rev-unknown", event="post_tool", outcome="success"
         )
         _code, value, post_stderr = self.run_core(post)
-        self.assertFalse(self.is_denied(value), value)
-        self.assertNotIn(REVIEWER_UNKNOWN, engine_warnings(post_stderr))
+        assert not self.is_denied(value), value
+        assert REVIEWER_UNKNOWN not in engine_warnings(post_stderr)
 
 
 class PreOnlyInformationLossTests(HeredocWarningCase):
@@ -294,36 +288,35 @@ class PreOnlyInformationLossTests(HeredocWarningCase):
         """B3：不跑 pre，直接提交 opaque 且目标不完整的 post。"""
         self.activate("s1")
         command = "cat > out.txt <<'EOF'\nhello\n"
-        self.assertTrue(shell.analyze(command).opaque)
+        assert shell.analyze(command).opaque
         _code, value, stderr = self.run_core(
             self.shell("s1", command, tool_id="b3-post", event="post_tool", outcome="success")
         )
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         warnings = engine_warnings(stderr)
         for message in (STRUCTURE_UNPARSABLE, "写入目标不完整，基线检查未覆盖", POST_INCOMPLETE):
-            self.assertNotIn(message, warnings)
+            assert message not in warnings
         # post 自己的记账缺口按原条件保留，但不得据此声称结构原因已披露或可恢复。
-        self.assertIn(POST_UNPAIRED, warnings)
+        assert POST_UNPAIRED in warnings
 
     def test_post_only_host_suppresses_structure_reason_every_call(self) -> None:
         """B4：宿主全程只投递 post；每次都不输出结构原因，也没有“已披露”状态。"""
         self.activate("s1")
         for index in range(2):
             command = "cat > out%s.txt <<'EOF'\nhello\n" % index
-            with self.subTest(call=index):
-                _code, value, stderr = self.run_core(
-                    self.shell(
-                        "s1",
-                        command,
-                        tool_id="b4-%d" % index,
-                        event="post_tool",
-                        outcome="success",
-                    )
+            _code, value, stderr = self.run_core(
+                self.shell(
+                    "s1",
+                    command,
+                    tool_id="b4-%d" % index,
+                    event="post_tool",
+                    outcome="success",
                 )
-                self.assertFalse(self.is_denied(value), value)
-                warnings = engine_warnings(stderr)
-                self.assertNotIn(STRUCTURE_UNPARSABLE, warnings)
-                self.assertIn(POST_UNPAIRED, warnings)
+            )
+            assert not self.is_denied(value), value
+            warnings = engine_warnings(stderr)
+            assert STRUCTURE_UNPARSABLE not in warnings
+            assert POST_UNPAIRED in warnings
 
     def test_changed_post_parameters_keep_post_only_accounting(self) -> None:
         """B5：同工具 ID 的 pre 可解析，post 换成有结构缺口的参数。"""
@@ -331,20 +324,20 @@ class PreOnlyInformationLossTests(HeredocWarningCase):
         _code, value, stderr = self.run_core(
             self.shell("s1", "printf x > src/app.py", tool_id="b5")
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertEqual(engine_warnings(stderr), [])
-        self.assertEqual(len(self.pending_entries()), 1)
+        assert not self.is_denied(value), value
+        assert engine_warnings(stderr) == []
+        assert len(self.pending_entries()) == 1
         post = "cat > out.txt <<'EOF'\nhello\n"
         _code, value, stderr = self.run_core(
             self.shell("s1", post, tool_id="b5", event="post_tool", outcome="success")
         )
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         warnings = engine_warnings(stderr)
         for message in (STRUCTURE_UNPARSABLE, "写入目标不完整，基线检查未覆盖"):
-            self.assertNotIn(message, warnings)
+            assert message not in warnings
         # post 自身目标/记账缺口按原条件保留，不建立成功豁免。
-        self.assertIn(POST_INCOMPLETE, warnings)
-        self.assertEqual(self.pending_entries(), [])
+        assert POST_INCOMPLETE in warnings
+        assert self.pending_entries() == []
 
 
 class FaultInjectionTests(HeredocWarningCase):
@@ -353,13 +346,13 @@ class FaultInjectionTests(HeredocWarningCase):
     def test_unavailable_state_warning_is_kept(self) -> None:
         self.activate("s1")
         files = sorted((self.state / "actors").glob("*.json"))
-        self.assertTrue(files)
+        assert files
         for path in files:
             path.write_bytes(b"{not-json")
             os.chmod(path, 0o600)
         _code, value, stderr = self.run_core(self.shell("s1", "rg TODO src/", tool_id="corrupt"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("私有状态不可用", stderr)
+        assert not self.is_denied(value), value
+        assert "私有状态不可用" in stderr
 
     def test_fingerprint_timeout_text_drops_repo_relative_path(self) -> None:
         engine = self.engine()
@@ -385,10 +378,6 @@ class FaultInjectionTests(HeredocWarningCase):
             ],
         }
         decision = engine._check_baseline(record, {}, {}, prepared)
-        self.assertIsNone(decision)
-        self.assertEqual(engine.warnings, ["基线指纹查询超时，基线检查降级"])
-        self.assertNotIn("secret/dir/app.py", "；".join(engine.warnings))
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert decision is None
+        assert engine.warnings == ["基线指纹查询超时，基线检查降级"]
+        assert "secret/dir/app.py" not in "；".join(engine.warnings)

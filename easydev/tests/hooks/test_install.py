@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 
 from support import HOOKS_ROOT, HookCase, clean_env, core_module
@@ -63,6 +64,7 @@ CORE_DIAGNOSTIC_CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("post 未找到与该 actor/epoch/tool ID 配对的 pre 记录，未建立成功豁免", ("写序列记账缺口",)),
     ("post 写入目标不完整，写序列记覆盖缺口", ("写序列记账缺口",)),
     ("post 目标含符号链接，未建立成功豁免", ("写序列记账缺口",)),
+    ("post 目标指纹不可信，未建立成功豁免", ("写序列记账缺口",)),
     ("post 目标与 pre 记录的调用目标不一致（含仓库身份），未建立成功豁免", ("写序列记账缺口",)),
     ("post 目标缺少 pre 指纹，未建立成功豁免", ("写序列记账缺口",)),
     ("锁内复核发现任务绑定已变化，丢弃锁外预取并降级本次写入判定", ("写序列记账缺口",)),
@@ -181,50 +183,50 @@ class InstallTests(HookCase):
             env=clean_env(),
             timeout=30,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def test_generate_writes_only_output_dir(self) -> None:
         before = sorted(path.name for path in self.root.iterdir())
         result = self.generate("codex", mode="enforce")
         output = Path(result["output"])
-        self.assertTrue(output.is_dir())
+        assert output.is_dir()
         context = json.loads((output / "install-context.json").read_text(encoding="utf-8"))
-        self.assertEqual(context["host"], "codex")
-        self.assertEqual(context["mode"], "enforce")
+        assert context["host"] == "codex"
+        assert context["mode"] == "enforce"
         release = json.loads(
             (HOOKS_ROOT / "hooks" / "manifest.json").read_text(encoding="utf-8")
         )["release"]
-        self.assertEqual(context["version"], release)
-        self.assertEqual(context["skill_root"], str(self.skill))
-        self.assertEqual(Path(context["plugin_root"]), HOOKS_ROOT / "hooks")
+        assert context["version"] == release
+        assert context["skill_root"] == str(self.skill)
+        assert Path(context["plugin_root"]) == (HOOKS_ROOT / "hooks")
         manifest = json.loads((output / "install-manifest.json").read_text(encoding="utf-8"))
-        self.assertFalse(manifest["install_skill"])
-        self.assertFalse(manifest["install_tests"])
+        assert not manifest["install_skill"]
+        assert not manifest["install_tests"]
         files = " ".join(manifest["files"])
-        self.assertNotIn("tests/", files)
-        self.assertNotIn("SKILL.md", files)
-        self.assertNotIn("references/", files)
-        self.assertIn("hooks/core.py".replace("hooks/", ""), manifest["files"])
+        assert "tests/" not in files
+        assert "SKILL.md" not in files
+        assert "references/" not in files
+        assert "hooks/core.py".replace("hooks/", "") in manifest["files"]
         # 清单条目带完整标识/摘要，apply/uninstall 不再靠路径子串。
-        self.assertTrue(manifest["entries"])
+        assert manifest["entries"]
         for item in manifest["entries"]:
-            self.assertTrue(item["identity"])
-            self.assertTrue(item["digest"])
-            self.assertIn("--context", item["command"])
+            assert item["identity"]
+            assert item["digest"]
+            assert "--context" in item["command"]
         # 只在生成目录内产生文件，不改宿主配置。
         for name in ("codex-hooks.json", "install-context.json", "install-manifest.json"):
-            self.assertTrue((output / name).exists(), name)
+            assert (output / name).exists(), name
 
     def test_command_is_absolute_and_safely_quoted(self) -> None:
         output = self.root / "out dir'with$dollar`tick"
         result = self.generate("codex", output=output)
         command = result["command"]
-        self.assertTrue(os.path.isabs(command.split(" ")[0]))
-        self.assertIn(str(output / "install-context.json").replace("'", "'\"'\"'"), command)
+        assert os.path.isabs(command.split(" ")[0])
+        assert str(output / "install-context.json").replace("'", "'\"'\"'") in command
         config = json.loads((output / "codex-hooks.json").read_text(encoding="utf-8"))
         hook_command = config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        self.assertEqual(hook_command, command)
+        assert hook_command == command
 
     def test_all_hosts_generate_declared_events(self) -> None:
         for host in ("antigravity", "codex", "dsh"):
@@ -232,23 +234,23 @@ class InstallTests(HookCase):
             config = json.loads(Path(result["config"]).read_text(encoding="utf-8"))
             # Antigravity 用命名 Hook 组，Codex/DSH 用顶层 hooks。
             group = ANTIGRAVITY_GROUP if host == "antigravity" else "hooks"
-            self.assertIn(group, config)
+            assert group in config
             buckets = config[group]
             for event in ("SessionStart", "PreToolUse", "PostToolUse", "Stop"):
-                self.assertIn(event, buckets, host)
+                assert event in buckets, host
             text = Path(result["config"]).read_text(encoding="utf-8")
-            self.assertNotIn("additionalContext", text)
-            self.assertNotIn("overwrite", text)
+            assert "additionalContext" not in text
+            assert "overwrite" not in text
         plugin = self.copied_plugin("plugin-pi")
         pi = self.generate("pi", root=plugin)
-        self.assertIsNone(pi["config"])
+        assert pi["config"] is None
         manifest = json.loads(Path(pi["manifest"]).read_text(encoding="utf-8"))
-        self.assertTrue(manifest["extension_entry"].endswith("index.ts"))
+        assert manifest["extension_entry"].endswith("index.ts")
         # pi 的 context 必须落在扩展实际读取的位置，并记录绝对解释器。
         plugin_context = Path(pi["plugin_context"])
-        self.assertEqual(plugin_context, plugin / "install-context.json")
+        assert plugin_context == (plugin / "install-context.json")
         value = json.loads(plugin_context.read_text(encoding="utf-8"))
-        self.assertEqual(value["python"], os.path.realpath(sys.executable))
+        assert value["python"] == os.path.realpath(sys.executable)
 
     def test_apply_is_idempotent_preserves_others_and_uninstall(self) -> None:
         result = self.generate("codex")
@@ -265,29 +267,29 @@ class InstallTests(HookCase):
         }
         target.write_text(json.dumps(other), encoding="utf-8")
         first = self.run_install(["apply", "--target", str(target), "--source", source])
-        self.assertTrue(first["changed"])
+        assert first["changed"]
         merged = json.loads(target.read_text(encoding="utf-8"))
         commands = [
             hook["command"]
             for entry in merged["hooks"]["PreToolUse"]
             for hook in entry.get("hooks", [])
         ]
-        self.assertIn("other-hook", commands)
-        self.assertTrue(any("core.py" in command for command in commands))
-        self.assertEqual(merged["custom"], {"keep": True})
+        assert "other-hook" in commands
+        assert any("core.py" in command for command in commands)
+        assert merged["custom"] == {"keep": True}
         backup = Path(first["backup"])
-        self.assertTrue(backup.exists())
-        self.assertEqual(backup.read_text(encoding="utf-8"), json.dumps(other))
+        assert backup.exists()
+        assert backup.read_text(encoding="utf-8") == json.dumps(other)
         second = self.run_install(["apply", "--target", str(target), "--source", source])
-        self.assertFalse(second["changed"])
+        assert not second["changed"]
 
         removed = self.run_install(["uninstall", "--target", str(target), "--manifest", manifest])
-        self.assertTrue(removed["changed"])
+        assert removed["changed"]
         after = json.loads(target.read_text(encoding="utf-8"))
-        self.assertEqual(after["hooks"]["PreToolUse"], other["hooks"]["PreToolUse"])
-        self.assertEqual(after["custom"], {"keep": True})
+        assert after["hooks"]["PreToolUse"] == other["hooks"]["PreToolUse"]
+        assert after["custom"] == {"keep": True}
         again = self.run_install(["uninstall", "--target", str(target), "--manifest", manifest])
-        self.assertFalse(again["changed"])
+        assert not again["changed"]
 
     def test_apply_conflict_and_unsafe_target(self) -> None:
         result = self.generate("codex")
@@ -323,8 +325,8 @@ class InstallTests(HookCase):
             env=clean_env(),
             timeout=30,
         )
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn("同标识", failed.stderr)
+        assert failed.returncode != 0
+        assert "同标识" in failed.stderr
 
         link = self.root / "link.json"
         link.symlink_to(target)
@@ -335,7 +337,7 @@ class InstallTests(HookCase):
             env=clean_env(),
             timeout=30,
         )
-        self.assertNotEqual(failed.returncode, 0)
+        assert failed.returncode != 0
 
     # ---- 工具 ------------------------------------------------------
     def copied_plugin(self, name: str = "plugin-rand0m") -> Path:
@@ -357,7 +359,7 @@ class InstallTests(HookCase):
             env=clean_env(),
             timeout=30,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def install_failure(self, args: list) -> subprocess.CompletedProcess:
@@ -401,7 +403,7 @@ def distribution_source_files(source_root: Path, excluded_top: set) -> list:
     return sorted(actual)
 
 
-class DistributionManifestTests(unittest.TestCase):
+class DistributionManifestTests:
     """P3-4：源分发目录的正式文件集必须与 manifest.files 完全一致，防止清单再漏文件。"""
 
     def test_manifest_lists_exactly_the_distributed_files(self) -> None:
@@ -416,11 +418,11 @@ class DistributionManifestTests(unittest.TestCase):
             "index.ts",
             "pi/index.ts",
         ):
-            self.assertIn(required, files)
+            assert required in files
         actual = distribution_source_files(
             HOOKS_ROOT / "hooks", set(manifest.get("excludes") or [])
         )
-        self.assertEqual(actual, sorted(files))
+        assert actual == sorted(files)
 
     def test_generated_and_system_files_are_not_distribution_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -435,10 +437,7 @@ class DistributionManifestTests(unittest.TestCase):
             (root / "tests").mkdir()
             (root / "tests" / "test_x.py").write_text("", encoding="utf-8")
             # 排除只针对生成物/系统文件/非分发目录，正式文件仍全部保留。
-            self.assertEqual(
-                distribution_source_files(root, {"tests"}),
-                ["core.py", "pi/index.ts"],
-            )
+            assert distribution_source_files(root, {"tests"}) == ["core.py", "pi/index.ts"]
 
 
 class DistributionLaunchTests(HookCase):
@@ -453,8 +452,8 @@ class DistributionLaunchTests(HookCase):
             destination = plugin / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(HOOKS_ROOT / "hooks" / relative, destination)
-        self.assertTrue((plugin / "manifest.json").is_file())
-        self.assertFalse((plugin / "hooks").exists())
+        assert (plugin / "manifest.json").is_file()
+        assert not (plugin / "hooks").exists()
 
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir()
@@ -473,9 +472,9 @@ class DistributionLaunchTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout), {"action": "continue"})
-        self.assertNotIn("No module named 'hooks'", completed.stderr)
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout) == {"action": "continue"}
+        assert "No module named 'hooks'" not in completed.stderr
 
         output = self.root / "generated"
         generated = subprocess.run(
@@ -500,11 +499,11 @@ class DistributionLaunchTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(generated.returncode, 0, generated.stderr)
-        self.assertTrue((output / "codex-hooks.json").is_file())
+        assert generated.returncode == 0, generated.stderr
+        assert (output / "codex-hooks.json").is_file()
         installed = json.loads((output / "install-manifest.json").read_text(encoding="utf-8"))
-        self.assertIn("core.py", " ".join(installed["files"]))
-        self.assertTrue(str(installed["plugin_root"]).startswith(str(plugin)))
+        assert "core.py" in " ".join(installed["files"])
+        assert str(installed["plugin_root"]).startswith(str(plugin))
 
 
 class PiExtensionTests(HookCase):
@@ -541,17 +540,17 @@ class PiExtensionTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         context_path = plugin / "install-context.json"
         source = plugin / "pi" / "index.ts"
-        self.assertTrue(context_path.is_file())
-        self.assertNotIn("shell", source.read_text(encoding="utf-8"))
+        assert context_path.is_file()
+        assert "shell" not in source.read_text(encoding="utf-8")
         return plugin
 
     def test_extension_entry_calls_real_core_and_blocks(self) -> None:
         node = shutil.which("node")
         if not node:
-            self.skipTest("node 不可用，无法运行 pi 适配夹具")
+            pytest.skip("node 不可用，无法运行 pi 适配夹具")
         plugin = self.build()
         context_path = plugin / "install-context.json"
         context = json.loads(context_path.read_text(encoding="utf-8"))
@@ -584,25 +583,25 @@ class PiExtensionTests(HookCase):
             env=clean_env({"PATH": "/nonexistent"}),
             timeout=120,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         value = json.loads(completed.stdout)
-        self.assertIn("tool_call", value["handlers"])
+        assert "tool_call" in value["handlers"]
         write_result, reset_result, status_result = value["results"]
         # 只读 review：写工具被真实核心拒绝。
-        self.assertIs(write_result["value"]["block"], True)
+        assert write_result["value"]["block"] is True
         # 破坏性 Git：真实核心拒绝。
-        self.assertIs(reset_result["value"]["block"], True)
+        assert reset_result["value"]["block"] is True
         # 只读命令放行。
-        self.assertIsNone(status_result["value"])
+        assert status_result["value"] is None
         # 核心确实运行过：私有状态已由本次调用写出。
-        self.assertTrue(any((self.state / "actors").glob("*.json")))
+        assert any((self.state / "actors").glob("*.json"))
         # 判定不变，告警通道也不影响返回值：每次工具调用至多一条汇总，且不含细节。
         # 本用例刻意清空 PATH，Git 不可用：三次 pre 都在取目标前因仓库定位降级告警，
         # 归入“写入目标未覆盖”，而不是命令结构缺口或目标的 Git 状态查询。
         lines = self.warning_lines(completed.stderr)
-        self.assertEqual(len(lines), 3, completed.stderr)
+        assert len(lines) == 3, completed.stderr
         for line in lines:
-            self.assertEqual(line, "[easydev-hooks] warning: core 降级：写入目标未覆盖")
+            assert line == "[easydev-hooks] warning: core 降级：写入目标未覆盖"
         self.assert_no_detail_leak(completed.stderr, "git reset --hard", "git status")
 
     # ---- P2-10：降级告警通道 --------------------------------------------
@@ -620,7 +619,7 @@ class PiExtensionTests(HookCase):
     ) -> subprocess.CompletedProcess:
         node = shutil.which("node")
         if not node:
-            self.skipTest("node 不可用，无法运行 pi 适配夹具")
+            pytest.skip("node 不可用，无法运行 pi 适配夹具")
         context_path = plugin / "install-context.json"
         context = json.loads(context_path.read_text(encoding="utf-8"))
         context.update({"state_root": str(self.state), "repo_root": str(self.repo)})
@@ -648,10 +647,10 @@ class PiExtensionTests(HookCase):
     def assert_no_detail_leak(self, stderr: str, *sentinels: str) -> None:
         """告警只许出现类别与固定文案：路径、解释器、payload、stack 都不许进 stderr。"""
         for sentinel in sentinels:
-            self.assertNotIn(sentinel, stderr)
-        self.assertNotIn(str(self.root), stderr)
-        self.assertNotIn("core.py", stderr)
-        self.assertNotIn("Traceback", stderr)
+            assert sentinel not in stderr
+        assert str(self.root) not in stderr
+        assert "core.py" not in stderr
+        assert "Traceback" not in stderr
 
     def test_spawn_failure_warns_once_per_call_and_still_allows(self) -> None:
         plugin = self.build()
@@ -661,16 +660,16 @@ class PiExtensionTests(HookCase):
             [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "git reset --hard"}}],
             context_overrides={"python": str(sentinel / "python3")},
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         value = json.loads(completed.stdout)
         # 无法启动核心：仍然 fail-open 放行（高危 Git 也不阻断），不冒充“已核对”。
-        self.assertIsNone(value["results"][0]["value"])
+        assert value["results"][0]["value"] is None
         lines = self.warning_lines(completed.stderr)
         # input 与 tool_call 各一次核心调用，每次一条汇总。
-        self.assertEqual(len(lines), 2, completed.stderr)
+        assert len(lines) == 2, completed.stderr
         for line in lines:
-            self.assertEqual(line.count("[easydev-hooks] warning"), 1, line)
-            self.assertIn("core 启动失败，已放行", line)
+            assert line.count("[easydev-hooks] warning") == 1, line
+            assert "core 启动失败，已放行" in line
         self.assert_no_detail_leak(completed.stderr, "PY-SENTINEL")
 
     def test_transcript_diagnostics_name_only_the_category(self) -> None:
@@ -679,14 +678,12 @@ class PiExtensionTests(HookCase):
         transcript = self.root / "TRANSCRIPT-SENTINEL"
         transcript.mkdir()
         completed = self.run_fixture(plugin, [], transcript=str(transcript))
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         lines = self.warning_lines(completed.stderr)
-        self.assertEqual(len(lines), 1, completed.stderr)
+        assert len(lines) == 1, completed.stderr
         # 固定类别名本身含 transcript 字样，但核心原句与路径不得回显。
-        self.assertEqual(
-            lines[0], "[easydev-hooks] warning: core 降级：transcript 证据降级"
-        )
-        self.assertNotIn("不是普通文件", completed.stderr)
+        assert lines[0] == "[easydev-hooks] warning: core 降级：transcript 证据降级"
+        assert "不是普通文件" not in completed.stderr
         self.assert_no_detail_leak(completed.stderr, "TRANSCRIPT-SENTINEL")
 
     def test_unknown_core_diagnostics_stay_hidden(self) -> None:
@@ -698,13 +695,9 @@ class PiExtensionTests(HookCase):
         completed = self.run_fixture(
             plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         # 完全不匹配的新文案：保留“有诊断”兜底，不回显任何原文。
-        self.assertEqual(
-            self.warning_lines(completed.stderr),
-            ["[easydev-hooks] warning: " + HIDDEN_STDERR] * 2,
-            completed.stderr,
-        )
+        assert self.warning_lines(completed.stderr) == (["[easydev-hooks] warning: " + HIDDEN_STDERR] * 2), completed.stderr
         self.assert_no_detail_leak(completed.stderr, "UNCLASSIFIED-SENTINEL", "未知降级文本")
 
     def test_forged_separators_only_leak_fixed_labels(self) -> None:
@@ -721,14 +714,10 @@ class PiExtensionTests(HookCase):
         completed = self.run_fixture(
             plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         # 伪造的分隔符让两个类别各命中一次：汇总仍只有固定 label，不回显原句。
         # input 与 tool_call 各一次核心调用，每次一条汇总。
-        self.assertEqual(
-            self.warning_lines(completed.stderr),
-            ["[easydev-hooks] warning: core 降级：状态不可用；分派/子代理降级"] * 2,
-            completed.stderr,
-        )
+        assert self.warning_lines(completed.stderr) == (["[easydev-hooks] warning: core 降级：状态不可用；分派/子代理降级"] * 2), completed.stderr
         self.assert_no_detail_leak(completed.stderr, "FORGED-STATUS-SENTINEL")
 
     def build_with_core(self, source: str) -> Path:
@@ -747,15 +736,15 @@ class PiExtensionTests(HookCase):
         completed = self.run_fixture(
             plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         value = json.loads(completed.stdout)
         # 非 0 退出的 stdout 不可信：不返回 block，实际放行。
-        self.assertIsNone(value["results"][0]["value"])
+        assert value["results"][0]["value"] is None
         lines = self.warning_lines(completed.stderr)
-        self.assertEqual(len(lines), 2, completed.stderr)  # input + tool_call
+        assert len(lines) == 2, completed.stderr  # input + tool_call
         for line in lines:
-            self.assertIn("core 非 0 退出（1），已放行", line)
-        self.assertNotIn("STUB-DENY", completed.stderr)
+            assert "core 非 0 退出（1），已放行" in line
+        assert "STUB-DENY" not in completed.stderr
 
     def test_empty_or_non_object_output_is_disclosed(self) -> None:
         cases = (
@@ -771,22 +760,22 @@ class PiExtensionTests(HookCase):
             completed = self.run_fixture(
                 plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
             )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
+            assert completed.returncode == 0, completed.stderr
             value = json.loads(completed.stdout)
-            self.assertIsNone(value["results"][0]["value"], source)
-            self.assertEqual(self.warning_lines(completed.stderr).count(expected) if False else len(
+            assert value["results"][0]["value"] is None, source
+            assert (self.warning_lines(completed.stderr).count(expected) if False else len(
                 [line for line in self.warning_lines(completed.stderr) if expected in line]
-            ), 2, (source, completed.stderr))
+            )) == 2, (source, completed.stderr)
 
     def test_valid_empty_object_stays_silent(self) -> None:
         plugin = self.build_with_core("print('{}')\n")
         completed = self.run_fixture(
             plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         value = json.loads(completed.stdout)
-        self.assertIsNone(value["results"][0]["value"])
-        self.assertEqual(self.warning_lines(completed.stderr), [], completed.stderr)
+        assert value["results"][0]["value"] is None
+        assert self.warning_lines(completed.stderr) == [], completed.stderr
 
     def test_whitelisted_core_degradation_names_only_the_category(self) -> None:
         plugin = self.build()
@@ -795,12 +784,12 @@ class PiExtensionTests(HookCase):
         completed = self.run_fixture(
             plugin, [], context_overrides={"state_root": str(blocked_root)}
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         lines = self.warning_lines(completed.stderr)
-        self.assertEqual(len(lines), 1, completed.stderr)
+        assert len(lines) == 1, completed.stderr
         # 只给完整固定汇总：类别名，不含核心原句与状态根路径。
-        self.assertEqual(lines[0], "[easydev-hooks] warning: core 降级：状态不可用")
-        self.assertNotIn("私有状态不可用", completed.stderr)
+        assert lines[0] == "[easydev-hooks] warning: core 降级：状态不可用"
+        assert "私有状态不可用" not in completed.stderr
         self.assert_no_detail_leak(completed.stderr, "STATE-ROOT-SENTINEL")
 
     def test_lock_diagnostics_never_double_as_state_unavailable(self) -> None:
@@ -812,14 +801,10 @@ class PiExtensionTests(HookCase):
         completed = self.run_fixture(
             plugin, [{"toolName": "bash", "toolCallId": "t1", "input": {"command": "ls"}}]
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(
-            self.warning_lines(completed.stderr),
-            ["[easydev-hooks] warning: core 降级：锁忙"] * 2,
-            completed.stderr,
-        )
+        assert completed.returncode == 0, completed.stderr
+        assert self.warning_lines(completed.stderr) == (["[easydev-hooks] warning: core 降级：锁忙"] * 2), completed.stderr
         # 锁故障只归“锁忙”：不得同时出现“状态不可用”。
-        self.assertNotIn("状态不可用", completed.stderr)
+        assert "状态不可用" not in completed.stderr
 
     def test_core_diagnostic_catalog_maps_fixed_categories(self) -> None:
         plugin = self.build()
@@ -834,14 +819,11 @@ class PiExtensionTests(HookCase):
             for index in range(len(messages) - 1)
         ]
         completed = self.run_fixture(plugin, calls)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         lines = self.warning_lines(completed.stderr)
-        self.assertEqual(len(lines), len(messages), completed.stderr)
+        assert len(lines) == len(messages), completed.stderr
         for index, (message, labels) in enumerate(CORE_DIAGNOSTIC_CATALOG):
-            with self.subTest(message=message):
-                self.assertEqual(
-                    lines[index], "[easydev-hooks] warning: " + catalog_summary(labels)
-                )
+            assert lines[index] == ("[easydev-hooks] warning: " + catalog_summary(labels))
         self.assert_no_detail_leak(completed.stderr, "UNCLASSIFIED-SENTINEL", "STATE-ROOT-SENTINEL")
 
 
@@ -855,24 +837,21 @@ class CoreDiagnosticProducerTests(HookCase):
     host = "codex"
 
     def test_child_failure_statuses_are_the_frozen_domain(self) -> None:
-        self.assertEqual(
-            core_module.CHILD_FAILURE_STATUSES,
-            {
-                "failed",
-                "failure",
-                "error",
-                "cancelled",
-                "canceled",
-                "timeout",
-                "timed_out",
-                "aborted",
-                "interrupted",
-                "running",
-                "started",
-                "pending",
-                "stopped_early",
-            },
-        )
+        assert core_module.CHILD_FAILURE_STATUSES == {
+            "failed",
+            "failure",
+            "error",
+            "cancelled",
+            "canceled",
+            "timeout",
+            "timed_out",
+            "aborted",
+            "interrupted",
+            "running",
+            "started",
+            "pending",
+            "stopped_early",
+        }
 
     def record_child_done(self, session: str, status: str):
         dispatch = "d-" + session
@@ -891,12 +870,11 @@ class CoreDiagnosticProducerTests(HookCase):
             )
         )
 
-    def test_every_child_failure_status_produces_its_own_terminal_warning(self) -> None:
-        for status in sorted(core_module.CHILD_FAILURE_STATUSES):
-            with self.subTest(status=status):
-                _code, value, stderr = self.record_child_done("p-" + status, status)
-                self.assertFalse(self.is_denied(value), value)
-                self.assertIn("子代理终态为 %s，未计入审查完成" % status, stderr)
+    @pytest.mark.parametrize("status", sorted(core_module.CHILD_FAILURE_STATUSES))
+    def test_every_child_failure_status_produces_its_own_terminal_warning(self, status) -> None:
+        _code, value, stderr = self.record_child_done("p-" + status, status)
+        assert not self.is_denied(value), value
+        assert ("子代理终态为 %s，未计入审查完成" % status) in stderr
 
     def test_non_set_status_never_produces_the_terminal_warning(self) -> None:
         # 含全角分号的非集合 status：真实 core 不产生该条终态告警，也不会把
@@ -904,9 +882,9 @@ class CoreDiagnosticProducerTests(HookCase):
         _code, value, stderr = self.record_child_done(
             "p-forged", "failed；状态写失败，已保留本次判定并降级"
         )
-        self.assertFalse(self.is_denied(value), value)
-        self.assertNotIn("子代理终态为", stderr)
-        self.assertNotIn("状态写失败", stderr)
+        assert not self.is_denied(value), value
+        assert "子代理终态为" not in stderr
+        assert "状态写失败" not in stderr
 
     def test_transcript_identity_reasons_are_bounded(self) -> None:
         engine = core_module.Engine(
@@ -925,14 +903,11 @@ class CoreDiagnosticProducerTests(HookCase):
             ({"agent_id": "other-actor"}, ("actor", True)),
             ({}, ("", False)),
         ):
-            with self.subTest(payload=payload):
-                path.write_text(
-                    json.dumps({"type": "session_meta", "payload": payload}) + "\n",
-                    encoding="utf-8",
-                )
-                self.assertEqual(
-                    engine._transcript_identity_problem(record, str(path)), expected
-                )
+            path.write_text(
+                json.dumps({"type": "session_meta", "payload": payload}) + "\n",
+                encoding="utf-8",
+            )
+            assert engine._transcript_identity_problem(record, str(path)) == expected
 
 
 class AntigravityNamedGroupTests(HookCase):
@@ -940,8 +915,8 @@ class AntigravityNamedGroupTests(HookCase):
 
     host = "antigravity"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         self.target = self.root / "hooks.json"
         self.other = {
             "easydev-hooks": {
@@ -979,7 +954,7 @@ class AntigravityNamedGroupTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def run_install(self, args: list) -> dict:
@@ -990,7 +965,7 @@ class AntigravityNamedGroupTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def group(self) -> dict:
@@ -999,55 +974,52 @@ class AntigravityNamedGroupTests(HookCase):
     def test_generated_config_uses_named_group_and_per_event_command(self) -> None:
         result = self.generate("enforce")
         config = json.loads(Path(result["config"]).read_text(encoding="utf-8"))
-        self.assertEqual(list(config), [ANTIGRAVITY_GROUP])
+        assert list(config) == [ANTIGRAVITY_GROUP]
         buckets = config[ANTIGRAVITY_GROUP]
-        self.assertEqual(
-            sorted(buckets),
-            ["PostToolUse", "PreInvocation", "PreToolUse", "SessionStart", "Stop"],
-        )
+        assert sorted(buckets) == ["PostToolUse", "PreInvocation", "PreToolUse", "SessionStart", "Stop"]
         for event, entries in buckets.items():
             # 官方两种结构：工具事件 Grouped（matcher + hooks[]），其余 Flat。
             if event in ("PreToolUse", "PostToolUse"):
-                self.assertIsInstance(entries[0].get("hooks"), list, event)
-                self.assertEqual(entries[0]["matcher"], "*", event)
+                assert isinstance(entries[0].get("hooks"), list), event
+                assert entries[0]["matcher"] == "*", event
                 hook = entries[0]["hooks"][0]
             else:
-                self.assertNotIn("hooks", entries[0], event)
+                assert "hooks" not in entries[0], event
                 hook = entries[0]
-            self.assertEqual(hook["type"], "command", event)
-            self.assertIn("--event %s" % event, hook["command"], event)
-            self.assertIn("--mode enforce", hook["command"])
+            assert hook["type"] == "command", event
+            assert ("--event %s" % event) in hook["command"], event
+            assert "--mode enforce" in hook["command"]
         manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
-        self.assertEqual({item["group"] for item in manifest["entries"]}, {ANTIGRAVITY_GROUP})
+        assert {item["group"] for item in manifest["entries"]} == {ANTIGRAVITY_GROUP}
 
     def test_apply_and_uninstall_touch_only_own_named_group(self) -> None:
         result = self.generate()
         applied = self.run_install(["apply", "--target", str(self.target), "--source", result["config"]])
-        self.assertTrue(applied["changed"])
+        assert applied["changed"]
         value = json.loads(self.target.read_text(encoding="utf-8"))
         commands = [
             hook["command"]
             for entry in value[ANTIGRAVITY_GROUP]["PreToolUse"]
             for hook in entry.get("hooks", [])
         ]
-        self.assertIn("other-hook", commands)
+        assert "other-hook" in commands
         easydev = [command for command in commands if "core.py" in command]
-        self.assertEqual(len(easydev), 1)
-        self.assertIn("--event PreToolUse", easydev[0])
-        self.assertEqual(value["user-hooks"], self.other["user-hooks"])
-        self.assertEqual(value["custom"], {"keep": True})
-        self.assertNotIn("hooks", value)
+        assert len(easydev) == 1
+        assert "--event PreToolUse" in easydev[0]
+        assert value["user-hooks"] == self.other["user-hooks"]
+        assert value["custom"] == {"keep": True}
+        assert "hooks" not in value
 
         again = self.run_install(["apply", "--target", str(self.target), "--source", result["config"]])
-        self.assertFalse(again["changed"])
+        assert not again["changed"]
 
         removed = self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertTrue(removed["changed"])
+        assert removed["changed"]
         after = json.loads(self.target.read_text(encoding="utf-8"))
         # 用户自己的 easydev-hooks 条目保留（本组不清空），其他命名组原样。
-        self.assertEqual(after[ANTIGRAVITY_GROUP], self.other[ANTIGRAVITY_GROUP])
-        self.assertEqual(after["user-hooks"], self.other["user-hooks"])
-        self.assertEqual(after["custom"], {"keep": True})
+        assert after[ANTIGRAVITY_GROUP] == self.other[ANTIGRAVITY_GROUP]
+        assert after["user-hooks"] == self.other["user-hooks"]
+        assert after["custom"] == {"keep": True}
 
     def test_flat_non_tool_events_apply_and_uninstall(self) -> None:
         result = self.generate("enforce")
@@ -1055,11 +1027,11 @@ class AntigravityNamedGroupTests(HookCase):
         group = self.group()
         for event in ("SessionStart", "PreInvocation", "Stop"):
             easydev = [entry for entry in group[event] if "core.py" in entry.get("command", "")]
-            self.assertEqual(len(easydev), 1, event)
-            self.assertNotIn("hooks", easydev[0], event)
-            self.assertIn("--event %s" % event, easydev[0]["command"], event)
+            assert len(easydev) == 1, event
+            assert "hooks" not in easydev[0], event
+            assert ("--event %s" % event) in easydev[0]["command"], event
         self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertEqual(self.group(), self.other[ANTIGRAVITY_GROUP])
+        assert self.group() == self.other[ANTIGRAVITY_GROUP]
 
     def test_user_modified_flat_entry_is_preserved(self) -> None:
         result = self.generate()
@@ -1070,8 +1042,8 @@ class AntigravityNamedGroupTests(HookCase):
         self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
         after = json.loads(self.target.read_text(encoding="utf-8"))
         stop = after[ANTIGRAVITY_GROUP]["Stop"]
-        self.assertEqual(len(stop), 1, stop)
-        self.assertTrue(stop[0]["command"].endswith("--user-flag"), stop)
+        assert len(stop) == 1, stop
+        assert stop[0]["command"].endswith("--user-flag"), stop
 
     def test_empty_own_group_is_removed_on_uninstall(self) -> None:
         target = self.root / "clean-hooks.json"
@@ -1079,11 +1051,11 @@ class AntigravityNamedGroupTests(HookCase):
         result = self.generate()
         self.run_install(["apply", "--target", str(target), "--source", result["config"]])
         value = json.loads(target.read_text(encoding="utf-8"))
-        self.assertIn(ANTIGRAVITY_GROUP, value)
+        assert ANTIGRAVITY_GROUP in value
         self.run_install(["uninstall", "--target", str(target), "--manifest", result["manifest"]])
         after = json.loads(target.read_text(encoding="utf-8"))
-        self.assertNotIn(ANTIGRAVITY_GROUP, after)
-        self.assertEqual(after["user-hooks"], self.other["user-hooks"])
+        assert ANTIGRAVITY_GROUP not in after
+        assert after["user-hooks"] == self.other["user-hooks"]
 
     def test_probe_to_enforce_replaces_in_named_group(self) -> None:
         probe = self.generate("probe")
@@ -1096,8 +1068,8 @@ class AntigravityNamedGroupTests(HookCase):
             for hook in entry.get("hooks", [])
             if "core.py" in hook.get("command", "")
         ]
-        self.assertEqual(len(commands), 1)
-        self.assertIn("--mode enforce", commands[0])
+        assert len(commands) == 1
+        assert "--mode enforce" in commands[0]
 
 
 class ApplyManifestTests(HookCase):
@@ -1105,8 +1077,8 @@ class ApplyManifestTests(HookCase):
 
     host = "codex"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         self.target = self.root / "hooks.json"
         self.other = {
             "hooks": {
@@ -1141,7 +1113,7 @@ class ApplyManifestTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def copied_plugin(self, name: str = "plugin-rand0m") -> Path:
@@ -1161,7 +1133,7 @@ class ApplyManifestTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def commands(self, event: str = "PreToolUse") -> list:
@@ -1178,13 +1150,13 @@ class ApplyManifestTests(HookCase):
         plugin = self.copied_plugin()
         result = self.generate(plugin)
         applied = self.run_install(["apply", "--target", str(self.target), "--source", result["config"]])
-        self.assertTrue(applied["changed"])
+        assert applied["changed"]
         commands = self.commands()
-        self.assertIn("other-hook", commands)
+        assert "other-hook" in commands
         easydev = [command for command in commands if "core.py" in command]
-        self.assertEqual(len(easydev), 1)
-        self.assertIn("--mode probe", easydev[0])
-        self.assertEqual(json.loads(self.target.read_text(encoding="utf-8"))["custom"], {"keep": True})
+        assert len(easydev) == 1
+        assert "--mode probe" in easydev[0]
+        assert json.loads(self.target.read_text(encoding="utf-8"))["custom"] == {"keep": True}
 
     def test_probe_to_enforce_replaces_instead_of_appending(self) -> None:
         plugin = self.copied_plugin()
@@ -1193,10 +1165,10 @@ class ApplyManifestTests(HookCase):
         enforce = self.generate(plugin, mode="enforce")
         self.run_install(["apply", "--target", str(self.target), "--source", enforce["config"]])
         commands = self.commands()
-        self.assertEqual(len([command for command in commands if "core.py" in command]), 1)
-        self.assertTrue(any("--mode enforce" in command for command in commands))
-        self.assertFalse(any("--mode probe" in command for command in commands))
-        self.assertIn("other-hook", commands)
+        assert len([command for command in commands if "core.py" in command]) == 1
+        assert any("--mode enforce" in command for command in commands)
+        assert not any("--mode probe" in command for command in commands)
+        assert "other-hook" in commands
 
     def test_user_modified_entry_is_preserved_and_reported(self) -> None:
         plugin = self.copied_plugin()
@@ -1216,40 +1188,40 @@ class ApplyManifestTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn("同标识", failed.stderr)
-        self.assertIn(modified, json.dumps(json.loads(self.target.read_text(encoding="utf-8")), sort_keys=True))
+        assert failed.returncode != 0
+        assert "同标识" in failed.stderr
+        assert modified in json.dumps(json.loads(self.target.read_text(encoding="utf-8")), sort_keys=True)
 
         removed = self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertTrue(removed["changed"])
+        assert removed["changed"]
         # 用户修改过的条目必须保留，其余仍与清单一致的条目被移除。
         after = json.dumps(json.loads(self.target.read_text(encoding="utf-8")), sort_keys=True)
-        self.assertIn(modified, after)
-        self.assertEqual(len([command for command in self.commands() if "core.py" in command]), 1)
+        assert modified in after
+        assert len([command for command in self.commands() if "core.py" in command]) == 1
         again = self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertFalse(again["changed"])
+        assert not again["changed"]
 
     def test_plugin_root_with_special_characters(self) -> None:
         plugin = self.copied_plugin("plug in'with$dollar`tick")
         result = self.generate(plugin)
         self.run_install(["apply", "--target", str(self.target), "--source", result["config"]])
         commands = self.commands()
-        self.assertEqual(len([command for command in commands if "core.py" in command]), 1)
+        assert len([command for command in commands if "core.py" in command]) == 1
         removed = self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertTrue(removed["changed"])
-        self.assertEqual(self.commands(), ["other-hook"])
+        assert removed["changed"]
+        assert self.commands() == ["other-hook"]
 
     def test_repeated_uninstall_is_idempotent(self) -> None:
         plugin = self.copied_plugin()
         result = self.generate(plugin)
         self.run_install(["apply", "--target", str(self.target), "--source", result["config"]])
         first = self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertTrue(first["changed"])
+        assert first["changed"]
         second = self.run_install(["uninstall", "--target", str(self.target), "--manifest", result["manifest"]])
-        self.assertFalse(second["changed"])
+        assert not second["changed"]
         value = json.loads(self.target.read_text(encoding="utf-8"))
-        self.assertEqual(value["hooks"]["PreToolUse"], self.other["hooks"]["PreToolUse"])
-        self.assertEqual(value["custom"], {"keep": True})
+        assert value["hooks"]["PreToolUse"] == self.other["hooks"]["PreToolUse"]
+        assert value["custom"] == {"keep": True}
 
 
 class GenerateLayoutAndPruneTests(HookCase):
@@ -1265,7 +1237,7 @@ class GenerateLayoutAndPruneTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
     def _generate(
@@ -1309,16 +1281,16 @@ class GenerateLayoutAndPruneTests(HookCase):
     def test_generate_defaults_to_enforce_and_uses_stable_layout(self) -> None:
         config_root = self.root / "config"
         result = self._generate(output_root=config_root)
-        self.assertEqual(result["mode"], "enforce")
-        self.assertEqual(Path(result["output"]), config_root / "codex")
-        self.assertEqual(result["stale"], [])
+        assert result["mode"] == "enforce"
+        assert Path(result["output"]) == (config_root / "codex")
+        assert result["stale"] == []
         context = json.loads((config_root / "codex" / "install-context.json").read_text(encoding="utf-8"))
-        self.assertEqual(context["mode"], "enforce")
+        assert context["mode"] == "enforce"
         # 再次生成同一稳定目录：原地覆盖，不产生版本号目录。
         self._generate(output_root=config_root, mode="probe")
-        self.assertEqual(sorted(item.name for item in config_root.iterdir()), ["codex"])
+        assert sorted(item.name for item in config_root.iterdir()) == ["codex"]
         context = json.loads((config_root / "codex" / "install-context.json").read_text(encoding="utf-8"))
-        self.assertEqual(context["mode"], "probe")
+        assert context["mode"] == "probe"
 
     def test_generate_requires_exactly_one_output_target(self) -> None:
         base = [
@@ -1339,16 +1311,16 @@ class GenerateLayoutAndPruneTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertEqual(both.returncode, 2)
+        assert both.returncode == 2
         neither = subprocess.run(base, capture_output=True, text=True, env=clean_env(), timeout=60)
-        self.assertEqual(neither.returncode, 2)
-        self.assertFalse((self.root / "a").exists())
+        assert neither.returncode == 2
+        assert not (self.root / "a").exists()
 
     def test_generate_reports_stale_release_dirs(self) -> None:
         config_root = self.root / "config"
         old = self._old_release(config_root, "0.9.0")
         result = self._generate(output_root=config_root)
-        self.assertEqual(result["stale"], [str(old)])
+        assert result["stale"] == [str(old)]
 
     def test_prune_dry_run_then_apply_keeps_current_and_keep(self) -> None:
         config_root = self.root / "config"
@@ -1357,22 +1329,19 @@ class GenerateLayoutAndPruneTests(HookCase):
         self._generate(output_root=config_root)
 
         dry = self._install("prune", "--root", str(config_root))
-        self.assertTrue(dry["dry_run"])
-        self.assertEqual(dry["removed"], [os.path.realpath(old), os.path.realpath(kept)])
-        self.assertTrue(old.is_dir() and kept.is_dir())
+        assert dry["dry_run"]
+        assert dry["removed"] == [os.path.realpath(old), os.path.realpath(kept)]
+        assert (old.is_dir() and kept.is_dir())
 
         applied = self._install("prune", "--root", str(config_root), "--keep", "0.9.1", "--apply")
-        self.assertFalse(applied["dry_run"])
-        self.assertEqual(applied["removed"], [os.path.realpath(old)])
-        self.assertFalse(old.exists())
-        self.assertTrue(kept.is_dir())
-        self.assertIn("note", applied)
+        assert not applied["dry_run"]
+        assert applied["removed"] == [os.path.realpath(old)]
+        assert not old.exists()
+        assert kept.is_dir()
+        assert "note" in applied
         # 当前 release 与稳定布局的宿主目录都不能被删。
-        self.assertTrue((config_root / "codex").is_dir())
-        self.assertEqual(
-            [item["reason"] for item in applied["skipped"]],
-            ["当前或显式保留的版本"],
-        )
+        assert (config_root / "codex").is_dir()
+        assert [item["reason"] for item in applied["skipped"]] == ["当前或显式保留的版本"]
 
     def test_prune_skips_user_content_symlinks_and_foreign_manifests(self) -> None:
         config_root = self.root / "config"
@@ -1394,14 +1363,14 @@ class GenerateLayoutAndPruneTests(HookCase):
         (config_root / "0.8.3").symlink_to(real)
 
         result = self._install("prune", "--root", str(config_root), "--apply")
-        self.assertEqual(result["removed"], [])
+        assert result["removed"] == []
         reasons = " ".join(item["reason"] for item in result["skipped"])
-        self.assertIn("未知文件", reasons)
-        self.assertIn("不是本插件生成", reasons)
-        self.assertIn("未知子目录", reasons)
-        self.assertIn("软链", reasons)
+        assert "未知文件" in reasons
+        assert "不是本插件生成" in reasons
+        assert "未知子目录" in reasons
+        assert "软链" in reasons
         for path in (notes, config_root / "0.8.1", unexpected, config_root / "0.8.3"):
-            self.assertTrue(os.path.lexists(path), path)
+            assert os.path.lexists(path), path
 
     def test_prune_rejects_symlinked_root(self) -> None:
         real_root = self.root / "real-config"
@@ -1415,8 +1384,8 @@ class GenerateLayoutAndPruneTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("非软链", completed.stderr)
+        assert completed.returncode != 0
+        assert "非软链" in completed.stderr
 
     def test_upgrade_never_overwrites_user_modified_entry(self) -> None:
         config_root = self.root / "config"
@@ -1439,11 +1408,7 @@ class GenerateLayoutAndPruneTests(HookCase):
             env=clean_env(),
             timeout=60,
         )
-        self.assertNotEqual(failed.returncode, 0)
-        self.assertIn("同标识", failed.stderr)
+        assert failed.returncode != 0
+        assert "同标识" in failed.stderr
         after = json.dumps(json.loads(target.read_text(encoding="utf-8")), sort_keys=True)
-        self.assertIn(edited, after)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert edited in after

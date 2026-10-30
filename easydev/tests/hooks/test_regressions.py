@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 import json
 import os
 import shutil
 import stat
 import subprocess
-import unittest
 
 from support import HookCase
 
@@ -26,7 +27,7 @@ class RegressionMixin(object):
             )
         ):
             reason = self.deny(self.shell("s1", command, tool_id="env-%d" % index))
-            self.assertIn("Git", reason)
+            assert "Git" in reason
 
     def test_quoted_data_is_not_executed(self) -> None:
         # reviewer 只读判定只依赖命令结构，能直接证明“字面数据不是执行”。
@@ -84,22 +85,20 @@ class RegressionMixin(object):
         self.write_path("s1", "w1", content="value = 3\n")
         (self.repo / "src" / "app.py").write_text("value = 4\n", encoding="utf-8")
         reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="w2"))
-        self.assertIn("外部修改", reason)
-        self.assertEqual((self.repo / "src" / "app.py").read_text(encoding="utf-8"), "value = 4\n")
+        assert "外部修改" in reason
+        assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "value = 4\n"
 
     def test_external_modification_of_clean_file_is_denied(self) -> None:
         self.activate()
         self.write_path("s1", "c1", content="value = 5\n")
         (self.repo / "src" / "app.py").write_text("value = 6\n", encoding="utf-8")
-        self.assertIn("外部修改", self.deny(self.write_tool("s1", "src/app.py", tool_id="c2")))
+        assert "外部修改" in self.deny(self.write_tool("s1", "src/app.py", tool_id="c2"))
 
     def test_external_creation_of_absent_file_is_denied(self) -> None:
         self.activate()
         self.write_path("s1", "a1", relative="src/new_mod.py", content="x = 1\n")
         (self.repo / "src" / "new_mod.py").write_text("x = 2\n", encoding="utf-8")
-        self.assertIn(
-            "外部修改", self.deny(self.write_tool("s1", "src/new_mod.py", tool_id="a2"))
-        )
+        assert "外部修改" in self.deny(self.write_tool("s1", "src/new_mod.py", tool_id="a2"))
 
     # ---- F07：porcelain -z rename 路径顺序 -----------------------------
     def test_renamed_destination_modification_requires_baseline(self) -> None:
@@ -109,7 +108,7 @@ class RegressionMixin(object):
         (self.repo / "src" / "renamed.py").write_text("value = 99\n", encoding="utf-8")
         self.activate()
         reason = self.deny(self.write_tool("s1", "src/renamed.py", tool_id="rn1"))
-        self.assertIn("baseline", reason)
+        assert "baseline" in reason
         task_root = self.make_task_root()
         self.save_baseline(task_root, "src/renamed.py", "value = 99\n")
         self.write_context(task_root=str(task_root))
@@ -153,7 +152,7 @@ class RegressionMixin(object):
         payload = self.write_tool("s1", "src/app.py", tool_id="rb1")
         payload["cwd"] = str(other)
         reason = self.deny(payload)
-        self.assertIn("baseline_shared_path", reason.replace("占用", "baseline_shared_path"))
+        assert "baseline_shared_path" in reason.replace("占用", "baseline_shared_path")
 
     # ---- F10：工具级 cwd 参与目标解析 ---------------------------------
     def test_tool_cwd_is_used_for_baseline_targets(self) -> None:
@@ -203,7 +202,7 @@ class RegressionMixin(object):
         self.activate("s1", block)
         # 下一次分派是独立进程：必须仍用上一次 input 指定的来源。
         reason = self.deny(self.dispatch_payload("s1", self.developer_handoff(), tool_id="d1"))
-        self.assertIn("模型", reason)
+        assert "模型" in reason
 
     def test_machine_task_root_persists_across_processes(self) -> None:
         # 该用例验证机器上下文里的 task_root 跨进程生效：显式清空安装上下文来源。
@@ -235,7 +234,7 @@ class RegressionMixin(object):
     def test_readonly_review_request_denies_writes(self) -> None:
         self.activate("s1", "使用 easydev，只读 review 这个改动，不要修改代码")
         reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="ro1"))
-        self.assertIn("只读", reason)
+        assert "只读" in reason
         self.deny(self.shell("s1", "sed -i '' s/1/2/ src/app.py", tool_id="ro2"))
         # 普通开发请求放行，任务切换后不继承只读。
         self.activate("s1", "使用 easydev，实现这个功能改动")
@@ -257,24 +256,23 @@ class RegressionMixin(object):
                 "使用 easydev，修这个 bug，不要修改 hook 的现有行为",
             )
         ):
-            with self.subTest(prompt=prompt):
-                self.activate("s1", prompt)
-                self.allow(self.write_tool("s1", "src/app.py", tool_id="disc-%d" % index))
+            self.activate("s1", prompt)
+            self.allow(self.write_tool("s1", "src/app.py", tool_id="disc-%d" % index))
 
-    def test_readonly_directive_forms_still_deny(self) -> None:
-        for index, prompt in enumerate(
-            (
-                "使用 easydev，只读审查这个改动",
-                "使用 easydev，review 这个 diff，只读，不要修改代码",
-                "使用 easydev，审查这个 PR，不要改动任何文件",
-                "使用 easydev，review the diff in read-only mode",
-                "使用 easydev，看一下这个 diff，不要修改",
-            )
-        ):
-            with self.subTest(prompt=prompt):
-                self.activate("s1", prompt)
-                reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="ro-%d" % index))
-                self.assertIn("只读", reason)
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "使用 easydev，只读审查这个改动",
+            "使用 easydev，review 这个 diff，只读，不要修改代码",
+            "使用 easydev，审查这个 PR，不要改动任何文件",
+            "使用 easydev，review the diff in read-only mode",
+            "使用 easydev，看一下这个 diff，不要修改",
+        ],
+    )
+    def test_readonly_directive_forms_still_deny(self, prompt) -> None:
+        self.activate("s1", prompt)
+        reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="ro"))
+        assert "只读" in reason
 
     # ---- F21：空/null/布尔/数组 role_overrides -------------------------
     def test_empty_role_overrides_are_rejected(self) -> None:
@@ -300,11 +298,11 @@ class RegressionMixin(object):
             payload["child"] = "false"
             payload["outcome"] = 5
         code, value, stderr = self.run_core(payload)
-        self.assertEqual(code, 0)
+        assert code == 0
         # 协议故障仍按已识别的宿主事件编码：pi 的 input 放行形状不是空对象。
-        self.assertEqual(value, {"action": "continue"} if self.host == "pi" else {})
-        self.assertIn("warning", stderr)
-        self.assertNotIn("Traceback", stderr)
+        assert value == ({"action": "continue"} if self.host == "pi" else {})
+        assert "warning" in stderr
+        assert "Traceback" not in stderr
 
     # ---- F27：交接取证不认引用/否定/错误路径/单严重度 -----------------
     def test_handoff_evidence_boundaries(self) -> None:
@@ -346,8 +344,8 @@ class RegressionMixin(object):
         for path in (self.state / "tasks").glob("*.json"):
             task = json.loads(path.read_text(encoding="utf-8"))
             break
-        self.assertIsNotNone(task)
-        self.assertEqual(sorted(task["reviews"]), ["R9"])
+        assert task is not None
+        assert sorted(task["reviews"]) == ["R9"]
 
     # ---- 测试工具 ------------------------------------------------------
     def run_review(self, session: str, tool_id: str = "R1", prompt: str = "") -> None:
@@ -376,7 +374,7 @@ class CodexP3RegressionTests(HookCase):
         self.run_review(tool_id="R1", agent="agent-1")
         self.allow(self.child_done_payload("P", report="**[P1] 证据**\n", agent="agent-1"))
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertTrue(self.is_continued(value), value)
+        assert self.is_continued(value), value
 
     def test_batch_items_keep_independent_identity(self) -> None:
         self.activate("P")
@@ -398,13 +396,13 @@ class CodexP3RegressionTests(HookCase):
             if value.get("reviews"):
                 task_file = value
                 break
-        self.assertIsNotNone(task_file, "task state not found")
+        assert task_file is not None, "task state not found"
         reviews = task_file["reviews"]
-        self.assertIn("B#0", reviews)
-        self.assertIn("B#1", reviews)
-        self.assertEqual(reviews["B#0"]["status"], "completed")
-        self.assertEqual(reviews["B#1"]["status"], "started")
-        self.assertTrue(task_file["has_completed_code_review"])
+        assert "B#0" in reviews
+        assert "B#1" in reviews
+        assert reviews["B#0"]["status"] == "completed"
+        assert reviews["B#1"]["status"] == "started"
+        assert task_file["has_completed_code_review"]
 
 
 class PiRegressionTests(RegressionMixin, HookCase):
@@ -416,12 +414,12 @@ class PiRegressionTests(RegressionMixin, HookCase):
         self.write_path("P", "w1", content="value = 2\n")
         # pi 无法可靠归因完成事件：不续跑也不虚报，但仍披露能力缺口。
         _code, value, stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
-        self.assertIn("P3", stderr)
+        assert not self.is_continued(value), value
+        assert "P3" in stderr
         self.run_core(self.child_input_payload("C", "继续实现", parent="P"))
         self.run_core(self.child_input_payload("C", "继续跟进", parent="P"))
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
+        assert not self.is_continued(value), value
 
 
 class AntigravityRegressionTests(RegressionMixin, HookCase):
@@ -432,11 +430,11 @@ class AntigravityRegressionTests(RegressionMixin, HookCase):
         self.run_review("P")
         self.write_path("P", "w1", content="value = 2\n")
         _code, value, stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
-        self.assertIn("P3", stderr)
+        assert not self.is_continued(value), value
+        assert "P3" in stderr
         self.run_core(self.child_input_payload("C", "继续实现", parent="P"))
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
+        assert not self.is_continued(value), value
 
 
 class CodexRegressionTests(RegressionMixin, HookCase):
@@ -449,11 +447,11 @@ class CodexRegressionTests(RegressionMixin, HookCase):
         self.allow(self.child_done_payload("P", report="**[P1] 证据**\n", agent="agent-1"))
         self.write_path("P", "w1", content="value = 2\n")
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertTrue(self.is_continued(value), value)
+        assert self.is_continued(value), value
         # 子代理的跟进 input 不是根的新用户回合：不重新开提醒预算。
         self.run_core(self.child_input_payload("C", "继续实现", parent="P"))
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
+        assert not self.is_continued(value), value
         # 根真实新用户输入才重新开预算。
         self.run_core(
             {"hook_event_name": "UserPromptSubmit", "session_id": "P", "prompt": "继续",
@@ -461,7 +459,7 @@ class CodexRegressionTests(RegressionMixin, HookCase):
         )
         self.write_path("P", "w2", content="value = 3\n")
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertTrue(self.is_continued(value), value)
+        assert self.is_continued(value), value
 
 
 class DshRegressionTests(RegressionMixin, HookCase):
@@ -472,11 +470,11 @@ class DshRegressionTests(RegressionMixin, HookCase):
         self.run_review("P")
         self.write_path("P", "w1", content="value = 2\n")
         _code, value, stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
-        self.assertIn("P3", stderr)
+        assert not self.is_continued(value), value
+        assert "P3" in stderr
         self.run_core(self.child_input_payload("C", "继续实现", parent="P"))
         _code, value, _stderr = self.run_core(self.settle_payload("P"))
-        self.assertFalse(self.is_continued(value), value)
+        assert not self.is_continued(value), value
 
 
 class DocExclusionTests(HookCase):
@@ -491,20 +489,20 @@ class DocExclusionTests(HookCase):
         self.activate("P")
         # 明确文档路径：不计入代码写入（共享写序列不推进）。
         self.write_path("P", "docs", "docs/guide.md", "guide2\n")
-        self.assertEqual(self.code_write_seq(), 0)
+        assert self.code_write_seq() == 0
         # Markdown 测试夹具即使被列进 doc_paths 也必须计入。
         self.write_path("P", "spec", "tests/spec.md", "spec2\n")
-        self.assertEqual(self.code_write_seq(), 1)
+        assert self.code_write_seq() == 1
         # 运行规则（SKILL.md）即使被误列进 doc_paths 也计入。
         self.write_path("P", "skill", "SKILL.md", "rules\n")
-        self.assertEqual(self.code_write_seq(), 2)
+        assert self.code_write_seq() == 2
 
     def code_write_seq(self) -> int:
         for path in (self.state / "tasks").glob("*.json"):
             value = json.loads(path.read_text(encoding="utf-8"))
             if value.get("task_identity"):
                 return int(value.get("last_code_write_seq") or 0)
-        self.fail("task state not found")
+        pytest.fail("task state not found")
 
     def run_review(self, session: str, tool_id: str = "R1") -> None:
         self.allow(self.dispatch_payload(session, self.reviewer_handoff(), tool_id=tool_id))
@@ -518,8 +516,8 @@ class PostPairingTests(HookCase):
 
     host = "pi"
 
-    def setUp(self) -> None:
-        super().setUp()
+    def setup_method(self) -> None:
+        super().setup_method()
         self.activate("P")
 
     def write_seq(self) -> int:
@@ -530,13 +528,13 @@ class PostPairingTests(HookCase):
         self.allow(
             self.write_tool("P", "src/app.py", tool_id="n1", event="post_tool", outcome="success")
         )
-        self.assertEqual(self.write_seq(), 0)
+        assert self.write_seq() == 0
 
     def test_post_without_outcome_does_not_count(self) -> None:
         self.allow(self.write_tool("P", "src/app.py", tool_id="n2"))
         (self.repo / "src" / "app.py").write_text("value = 2\n", encoding="utf-8")
         self.allow(self.write_tool("P", "src/app.py", tool_id="n2", event="post_tool"))
-        self.assertEqual(self.write_seq(), 0)
+        assert self.write_seq() == 0
 
     def test_failed_post_does_not_count(self) -> None:
         self.allow(self.write_tool("P", "src/app.py", tool_id="n3"))
@@ -544,7 +542,7 @@ class PostPairingTests(HookCase):
         self.allow(
             self.write_tool("P", "src/app.py", tool_id="n3", event="post_tool", outcome="error")
         )
-        self.assertEqual(self.write_seq(), 0)
+        assert self.write_seq() == 0
 
     def test_noop_write_does_not_advance_sequence(self) -> None:
         self.allow(self.write_tool("P", "src/app.py", tool_id="n4"))
@@ -552,7 +550,7 @@ class PostPairingTests(HookCase):
         self.allow(
             self.write_tool("P", "src/app.py", tool_id="n4", event="post_tool", outcome="success")
         )
-        self.assertEqual(self.write_seq(), 0)
+        assert self.write_seq() == 0
 
     def test_duplicate_post_does_not_advance_twice(self) -> None:
         self.allow(self.write_tool("P", "src/app.py", tool_id="n5"))
@@ -564,13 +562,9 @@ class PostPairingTests(HookCase):
         self.allow(
             self.write_tool("P", "src/app.py", tool_id="n5", event="post_tool", outcome="success")
         )
-        self.assertEqual(self.task_state()["write_seq"], 1)
+        assert self.task_state()["write_seq"] == 1
 
     def task_state(self) -> dict:
         for path in (self.state / "tasks").glob("*.json"):
             return json.loads(path.read_text(encoding="utf-8"))
-        self.fail("task state not found")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        pytest.fail("task state not found")

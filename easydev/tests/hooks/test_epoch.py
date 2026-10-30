@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import unittest
 
 from support import HookCase
 
@@ -51,18 +50,18 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         # 旧 child 在 epoch 1 用可信分派摘要正常绑定。
         self.allow(self.child_input_payload("C", handoff, parent="P"))
         child = [state for state in self.actor_states().values() if state.get("parent_id") == "P"]
-        self.assertTrue(child)
-        self.assertEqual(child[0]["activation_scope"], "task_active")
+        assert child
+        assert child[0]["activation_scope"] == "task_active"
         # 父切到新任务 B：新 epoch 开始，旧 child 绑定必须退役。
         self.allow(self.new_task_input("使用 easydev，开始另一个任务", "turn-2"))
         self.write_path("C", "cw", content="value = 5\n")
-        self.assertEqual(self.total_write_seq(), 0)
+        assert self.total_write_seq() == 0
         self.allow(self.child_done_payload("P", "D1"))
-        self.assertFalse(self.any_completed_review())
+        assert not self.any_completed_review()
         stale = [
             state for state in self.actor_states().values() if state.get("parent_id") == "P"
         ][0]
-        self.assertEqual(stale["activation_scope"], "role_only")
+        assert stale["activation_scope"] == "role_only"
 
     def test_child_initialized_after_epoch_switch_is_not_bound(self) -> None:
         self.activate("P")
@@ -71,14 +70,11 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         self.allow(self.new_task_input("使用 easydev，开始另一个任务", "turn-2"))
         # 旧分派的 epoch 已退役：初始化时只保留局部约束，并披露缺口。
         _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("warning", stderr)
-        self.assertEqual(
-            [state for state in self.actor_states().values() if state.get("parent_id") == "P"][0][
+        assert not self.is_denied(value), value
+        assert "warning" in stderr
+        assert [state for state in self.actor_states().values() if state.get("parent_id") == "P"][0][
                 "activation_scope"
-            ],
-            "role_only",
-        )
+            ] == "role_only"
 
     def test_deactivated_root_retires_child_bindings(self) -> None:
         self.activate("P")
@@ -87,24 +83,24 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         # 真实 user 输入的 active=false 使当前 root epoch 的子绑定退役。
         self.allow(self.new_task_input("使用 easydev\n" + machine_block(False), "turn-off"))
         _code, value, _stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         self.write_path("C", "cw", content="value = 6\n")
-        self.assertEqual(self.total_write_seq(), 0)
+        assert self.total_write_seq() == 0
         self.allow(self.child_done_payload("P", "D1"))
-        self.assertFalse(self.any_completed_review())
+        assert not self.any_completed_review()
 
     def test_same_actor_id_in_different_sessions_is_isolated(self) -> None:
         self.allow(self.input_payload("s1", "使用 easydev，改这个文件", actorId="shared"))
         self.write_shared("s1", "w1", "src/app.py", "value = 2\n")
         self.allow(self.input_payload("s2", "使用 easydev，改那个文件", actorId="shared"))
         identities = {value.get("task_identity") for value in self.task_states()}
-        self.assertEqual(len(identities), 2)
-        self.assertEqual(self.total_write_seq(), 1)
+        assert len(identities) == 2
+        assert self.total_write_seq() == 1
         # s2 自己的写只进它自己的任务。
         self.write_shared("s2", "w2", "src/other.py", "value = 3\n")
-        self.assertEqual(self.total_write_seq(), 2)
+        assert self.total_write_seq() == 2
         # 同 actor ID 的两个 session 各自推进自己的写序列，不共享基线。
-        self.assertEqual(sorted(int(v.get("write_seq") or 0) for v in self.task_states()), [1, 1])
+        assert sorted(int(v.get("write_seq") or 0) for v in self.task_states()) == [1, 1]
 
     def write_shared(self, session: str, tool_id: str, relative: str, content: str) -> None:
         self.allow(self.write_tool(session, relative, tool_id=tool_id, actorId="shared"))
@@ -127,15 +123,15 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         handoff = self.reviewer_handoff()
         self.allow(self.dispatch_payload("P", handoff, tool_id="D1"))
         _code, value, _stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         # 已关联 reviewer：写工具被拒绝，且绑定固定在父 epoch 上。
         self.deny(self.write_tool("C", "src/app.py"))
         child = [
             state for state in self.actor_states().values() if state.get("parent_id") == "P"
         ][0]
-        self.assertEqual(child["activation_scope"], "task_active")
-        self.assertEqual(child["role"], "reviewer")
-        self.assertEqual(child["dispatch_id"], "D1")
+        assert child["activation_scope"] == "task_active"
+        assert child["role"] == "reviewer"
+        assert child["dispatch_id"] == "D1"
 
     def child_state(self, parent: str = "P") -> dict:
         return [
@@ -151,16 +147,16 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         self.allow(self.new_task_input("使用 easydev，开始另一个任务", "turn-2"))
         self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D2"))
         _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertNotIn("未匹配到有效分派记录", stderr)
+        assert not self.is_denied(value), value
+        assert "未匹配到有效分派记录" not in stderr
         child = self.child_state()
-        self.assertEqual(child["activation_scope"], "task_active")
-        self.assertEqual(child["dispatch_id"], "D2")
-        self.assertEqual(child["role"], "developer")
-        self.assertEqual(int(child["epoch"]), 2)
+        assert child["activation_scope"] == "task_active"
+        assert child["dispatch_id"] == "D2"
+        assert child["role"] == "developer"
+        assert int(child["epoch"]) == 2
         # 绑定落在当前 epoch 的任务上：写序列记入当前任务。
         self.write_path("C", "cw", content="value = 8\n")
-        self.assertEqual(self.total_write_seq(), 1)
+        assert self.total_write_seq() == 1
 
     def test_current_epoch_ambiguous_dispatch_stays_role_only_for_developer(self) -> None:
         self.activate("P")
@@ -168,11 +164,11 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D1"))
         self.allow(self.dispatch_payload("P", handoff, role="developer", tool_id="D2"))
         _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("未匹配到有效分派记录", stderr)
+        assert not self.is_denied(value), value
+        assert "未匹配到有效分派记录" in stderr
         child = self.child_state()
-        self.assertEqual(child["activation_scope"], "role_only")
-        self.assertFalse(child.get("dispatch_id"))
+        assert child["activation_scope"] == "role_only"
+        assert not child.get("dispatch_id")
 
     def test_current_epoch_ambiguous_dispatch_stays_role_only_for_reviewer(self) -> None:
         self.activate("P")
@@ -180,11 +176,11 @@ class PiEpochBindingTests(EpochBindingMixin, HookCase):
         self.allow(self.dispatch_payload("P", handoff, tool_id="D1"))
         self.allow(self.dispatch_payload("P", handoff, tool_id="D2"))
         _code, value, stderr = self.run_core(self.child_input_payload("C", handoff, parent="P"))
-        self.assertFalse(self.is_denied(value), value)
-        self.assertIn("未匹配到有效分派记录", stderr)
+        assert not self.is_denied(value), value
+        assert "未匹配到有效分派记录" in stderr
         child = self.child_state()
-        self.assertEqual(child["activation_scope"], "role_only")
-        self.assertFalse(child.get("dispatch_id"))
+        assert child["activation_scope"] == "role_only"
+        assert not child.get("dispatch_id")
 
 
 class CodexEpochBindingTests(EpochBindingMixin, HookCase):
@@ -207,12 +203,12 @@ class CodexEpochBindingTests(EpochBindingMixin, HookCase):
         self.allow(self.dispatch_payload("P", handoff, tool_id="R2"))
         self.allow(self.child_start_payload("agent-1"))
         bound = [state for state in self.actor_states().values() if state.get("dispatch_id")]
-        self.assertEqual(len(bound), 1)
-        self.assertEqual(bound[0]["dispatch_id"], "R2")
-        self.assertEqual(bound[0]["activation_scope"], "task_active")
+        assert len(bound) == 1
+        assert bound[0]["dispatch_id"] == "R2"
+        assert bound[0]["activation_scope"] == "task_active"
         # 完成事件计入当前 epoch 的 review checkpoint。
         self.allow(self.child_done_payload("P", dispatch_id="R2", agent="agent-1"))
-        self.assertTrue(self.any_completed_review())
+        assert self.any_completed_review()
 
     def test_child_start_binding_then_epoch_switch_is_retired(self) -> None:
         self.activate("P")
@@ -246,10 +242,6 @@ class CodexEpochBindingTests(EpochBindingMixin, HookCase):
                 is_child=True,
             )
         )
-        self.assertEqual(self.total_write_seq(), 0)
+        assert self.total_write_seq() == 0
         self.allow(self.child_done_payload("P", report="**[P1] 证据**\n", agent="agent-1"))
-        self.assertFalse(self.any_completed_review())
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert not self.any_completed_review()

@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 import atexit
 import contextlib
+import functools
 import io
 import json
 import os
@@ -16,7 +19,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -75,7 +77,14 @@ def _temporary_environ(environment: Dict[str, str]):
         os.environ.update(saved)
 
 
-class HookCase(unittest.TestCase):
+class HookCase:
+    """pytest xunit 夹具：每例一个私有临时根、隔离 HOME/Git，逆序清理。
+
+    基类在 `setup_method` 里建立夹具，子类先 `super().setup_method()` 再追加用例级
+    准备；清理用 `self.defer(...)` 注册，由 `teardown_method` 逆序执行（`setup_method`
+    失败时由仓库根的 `conftest.py` 兜底执行）。
+    """
+
     host = "pi"
 
     # 模板仓库每进程只建一次：每个用例 copytree 一份，不再逐例跑 5 次 git。
@@ -111,9 +120,15 @@ class HookCase(unittest.TestCase):
             HookCase._template = str(repo)
         return HookCase._template
 
-    def setUp(self) -> None:
+    def setup_method(self) -> None:
+        """xunit 式每例夹具：私有临时根、隔离 HOME/Git、模板仓库副本。
+
+        pytest 的 `setup_method` 先于函数级 fixture 执行，且子类用
+        `super().setup_method()` 串联，所以基类夹具放在这里而不是 autouse fixture。
+        """
+        self._cleanups: List[Any] = []
         self.tmp = tempfile.TemporaryDirectory(dir="/tmp")
-        self.addCleanup(self.tmp.cleanup)
+        self.defer(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         # 共享夹具默认把 HOME/XDG_CONFIG_HOME 与 Git 全局配置定向到临时目录：
         # 普通用例不得读取维护者真实用户配置，来源选择专项用例再显式切换。
@@ -136,6 +151,21 @@ class HookCase(unittest.TestCase):
         self.context_path = self.root / "install-context.json"
         self.write_context()
 
+    def teardown_method(self) -> None:
+        for cleanup in reversed(self._cleanups):
+            cleanup()
+        self._cleanups = []
+
+    def defer(self, cleanup: Any, *args: Any, **kwargs: Any) -> None:
+        """注册用例结束时的清理（由 `teardown_method` 按注册逆序执行）。
+
+        与 unittest 的 `addCleanup` 一样接受附参形式：`defer(os.chmod, path, 0o600)`。
+        """
+        self._cleanups.append(
+            functools.partial(cleanup, *args, **kwargs) if args or kwargs else cleanup
+        )
+
+
     # ---- 基础工具 --------------------------------------------------
     def environment(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """隔离 HOME/XDG/Git 全局配置；专项用例用 extra 显式切到指定临时源。"""
@@ -152,7 +182,7 @@ class HookCase(unittest.TestCase):
             text=True,
             timeout=30,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         return completed.stdout.strip()
 
     def write_context(self, **overrides: Any) -> None:
@@ -233,11 +263,11 @@ class HookCase(unittest.TestCase):
                 code = core_module.run(
                     argv, io.BytesIO(stdin.encode("utf-8")), dict(os.environ)
                 )
-        self.assertEqual(code, 0, err.getvalue())
+        assert code == 0, err.getvalue()
         try:
             value = json.loads(out.getvalue())
         except json.JSONDecodeError:
-            self.fail("stdout 不是单个 JSON: %r / stderr=%s" % (out.getvalue(), err.getvalue()))
+            pytest.fail("stdout 不是单个 JSON: %r / stderr=%s" % (out.getvalue(), err.getvalue()))
         return code, value, err.getvalue()
 
     def run_core_cli(
@@ -272,11 +302,11 @@ class HookCase(unittest.TestCase):
             env=self.environment(env),
             timeout=30,
         )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+        assert completed.returncode == 0, completed.stderr
         try:
             value = json.loads(completed.stdout)
         except json.JSONDecodeError:
-            self.fail("stdout 不是单个 JSON: %r / stderr=%s" % (completed.stdout, completed.stderr))
+            pytest.fail("stdout 不是单个 JSON: %r / stderr=%s" % (completed.stdout, completed.stderr))
         return completed.returncode, value, completed.stderr
 
     # ---- envelope --------------------------------------------------
@@ -584,12 +614,12 @@ class HookCase(unittest.TestCase):
 
     def deny(self, payload: Dict[str, Any], **kwargs: Any) -> str:
         _code, value, _stderr = self.run_core(payload, **kwargs)
-        self.assertTrue(self.is_denied(value), value)
+        assert self.is_denied(value), value
         return self.reason(value)
 
     def allow(self, payload: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
         _code, value, _stderr = self.run_core(payload, **kwargs)
-        self.assertFalse(self.is_denied(value), value)
+        assert not self.is_denied(value), value
         return value
 
     # ---- 基线 ------------------------------------------------------
@@ -631,3 +661,18 @@ def apply_context(base: Dict[str, Any], **overrides: Any) -> Dict[str, Any]:
     result = dict(base)
     result.update(overrides)
     return result
+
+
+class CaseBase:
+    """不依赖 HookCase 的最小基类：只提供逆序清理，供独立用例类使用。"""
+
+    def defer(self, cleanup: Any, *args: Any, **kwargs: Any) -> None:
+        self._cleanups = getattr(self, "_cleanups", [])
+        self._cleanups.append(
+            functools.partial(cleanup, *args, **kwargs) if args or kwargs else cleanup
+        )
+
+    def teardown_method(self) -> None:
+        for cleanup in reversed(getattr(self, "_cleanups", [])):
+            cleanup()
+        self._cleanups = []
