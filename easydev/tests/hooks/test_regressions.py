@@ -245,6 +245,37 @@ class RegressionMixin(object):
         self.activate("s1", "使用 easydev，实现改动，之后我再 review")
         self.allow(self.write_tool("s1", "src/app.py", tool_id="rw2"))
 
+    def test_readonly_discussion_does_not_freeze_main(self) -> None:
+        """讨论“只读”本身不是只读指令：不得把主代理锁成只读。"""
+        for index, prompt in enumerate(
+            (
+                "使用 easydev，reviewer 只读是否合理，能不能用 shell",
+                "使用 easydev，审查 reviewer 角色的只读约束是否合理",
+                "使用 easydev，reviewer 不修改被审代码，这合理吗",
+                # 限定到具体路径的禁令不是全局只读：否则正常修复请求整段被拒。
+                "使用 easydev，修这两个问题，但不要改动 SKILL.md 的规则正文",
+                "使用 easydev，修这个 bug，不要修改 hook 的现有行为",
+            )
+        ):
+            with self.subTest(prompt=prompt):
+                self.activate("s1", prompt)
+                self.allow(self.write_tool("s1", "src/app.py", tool_id="disc-%d" % index))
+
+    def test_readonly_directive_forms_still_deny(self) -> None:
+        for index, prompt in enumerate(
+            (
+                "使用 easydev，只读审查这个改动",
+                "使用 easydev，review 这个 diff，只读，不要修改代码",
+                "使用 easydev，审查这个 PR，不要改动任何文件",
+                "使用 easydev，review the diff in read-only mode",
+                "使用 easydev，看一下这个 diff，不要修改",
+            )
+        ):
+            with self.subTest(prompt=prompt):
+                self.activate("s1", prompt)
+                reason = self.deny(self.write_tool("s1", "src/app.py", tool_id="ro-%d" % index))
+                self.assertIn("只读", reason)
+
     # ---- F21：空/null/布尔/数组 role_overrides -------------------------
     def test_empty_role_overrides_are_rejected(self) -> None:
         self.activate()

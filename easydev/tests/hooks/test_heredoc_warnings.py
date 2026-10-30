@@ -113,9 +113,12 @@ class InterpreterHeredocTests(HeredocWarningCase):
         self.assertFalse(self.is_denied(value), value)
         self.assertEqual(stderr, "")
         self.assertNotIn(BODY_SENTINEL, stderr)
+        # 解释器 stdin 是执行型正文：解析器不把正文当脚本枚举，写目标不可证明，
+        # 因此保留一份不完整的写意图作为缺口证据，而不是当纯读。
         entries = self.pending_entries()
         self.assertEqual(len(entries), 1, entries)
         self.assertEqual(entries[0]["targets"], [])
+        self.assertFalse(entries[0]["complete"], entries[0])
 
 
 class CatRedirectHeredocTests(HeredocWarningCase):
@@ -189,10 +192,14 @@ class StructureWarningScopeTests(HeredocWarningCase):
             "paths_complete": True,
         }
         prepared, warnings = self.prepare("pre_tool", tool=tool)
-        self.assertIsNone(prepared)
+        self.assertIsNotNone(prepared)
+        self.assertEqual(prepared["entries"], [])
+        self.assertTrue(prepared["gap"])
         self.assertEqual(warnings, [WRITE_TOOL_WITHOUT_PATH])
         prepared, warnings = self.prepare("post_tool", tool=tool)
-        self.assertIsNone(prepared)
+        self.assertIsNotNone(prepared)
+        self.assertEqual(prepared["entries"], [])
+        self.assertTrue(prepared["gap"])
         self.assertEqual(warnings, [])
 
     def test_baseline_structure_warnings_are_pre_only(self) -> None:
@@ -214,10 +221,14 @@ class StructureWarningScopeTests(HeredocWarningCase):
         for name, kwargs, message in cases:
             with self.subTest(case=name):
                 prepared, warnings = self.prepare("pre_tool", **kwargs)
-                self.assertIsNone(prepared)
+                self.assertIsNotNone(prepared)
+                self.assertEqual(prepared["entries"], [])
+                self.assertTrue(prepared["gap"])
                 self.assertEqual(warnings, [message])
                 prepared, warnings = self.prepare("post_tool", **kwargs)
-                self.assertIsNone(prepared)
+                self.assertIsNotNone(prepared)
+                self.assertEqual(prepared["entries"], [])
+                self.assertTrue(prepared["gap"])
                 self.assertEqual(warnings, [])
 
     def test_multiple_outside_targets_warn_once_per_pre_call(self) -> None:
@@ -227,7 +238,9 @@ class StructureWarningScopeTests(HeredocWarningCase):
             self.root / "outside" / "b.txt",
         )
         prepared, warnings = self.prepare("pre_tool", command=command)
-        self.assertIsNone(prepared)
+        self.assertIsNotNone(prepared)
+        self.assertEqual(prepared["entries"], [])
+        self.assertTrue(prepared["gap"])
         self.assertEqual(warnings.count(TARGET_OUTSIDE), 1, warnings)
 
 class ReviewerStructureWarningTests(HeredocWarningCase):

@@ -2,6 +2,22 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.4.8 更新说明（2026-10-29）
+
+修两类「用散文关键词做拦截」的误判：照文档写 reviewer 交接仍被判缺角色声明，以及讨论只读规则就被锁成只读；同时修写序列记账把「没有写目标」当成「目标不完整」造成的重复降级告警，以及重写合并/预取判定时暴露的两个安全缺口（规则正文未变，总量仍为 131715 字节）。
+
+- **P2 角色声明识别过窄（误拒）**：`hooks/core.py` 的 `ROLE_LINE_RE` 只认行首 `角色`/`role` 紧跟冒号。`**角色**：reviewer`、`## 角色：reviewer`、`1. 角色：reviewer`、`角色声明：reviewer`、`你的角色是 reviewer`，以及 **`references/orchestration.md` 交接模板自己的首行** `角色/读写边界/项目与规则路径/授权基线：reviewer，…` 全部被判「缺少独立 reviewer 角色声明」——照模板写交接的模型因此被稳定拒绝。现仍按行首锚定（正文里顺带提到角色不算声明），但容许行首 Markdown 强调/标题/列表前缀、`角色声明`、`角色是|为`，以及 `角色/字段/字段：值` 的复合标签。放宽识别不取消契约：没有声明行的交接仍 `deny`；`角色：审查者`、`references/reviewer-role.md`、`reviewer 只读是否合理`、带 `→`/`（` 行首前缀的讨论行、`**角色**：reviewers` 逐条保持拒绝。
+- **P2 交接拒绝理由可操作**：同一 `deny` 现在给出可照抄的字面量与路径（`角色：reviewer`、reviewer 角色文件绝对路径、`**[P级] 简短标题**`），仍不改写 prompt，也仍保留「缺什么」的精确标签（`missing` 不夸大）。
+- **P2 只读派生用全文同现（误拒主代理）**：`_activate_input` 原先用 `REVIEW_AUDIT_RE`（`review|审查|审计|audit`）+ `READONLY_MARKERS`（`只读|不要修改|…`）**全文任意同现**派生 `readonly`，而 `review` 会命中 `reviewer` 内部。用户发「reviewer 只读是否合理，能不能用 shell，请使用 easydev 帮我修复」这类**讨论**时，主代理被锁成只读，随后所有 write/patch 一律 `reviewer 只读：写文件/应用补丁被拒绝`，正常修复被整段阻断（本次实测即由该 prompt 触发）。现改为 `READONLY_DIRECTIVE_RE` 定向判定：`只读` 须修饰审查动作本身（`只读审查`、`只读地 review`、`review 一下，只读`、`只读模式`/`read-only mode`），或出现明确的**全局**禁止修改指令——宽对象（`不要修改代码`、`不要改动任何文件`、`别动文件`）或句尾裸命令（`不要修改`）；限定到具体路径的禁令（`不要改动 SKILL.md`）不是全局只读，不锁写权限。`本 Hook 不改写交接正文` 这类描述不再触发。真正的只读请求（含原有用例 `使用 easydev，只读 review 这个改动，不要修改代码`）仍拒绝写工具与写命令。
+- **P1 写序列合并丢软链/不安全证据**：`_merge_write_entries` 合并同一 `origin_key` 的多次预取；任一条目观察到软链或 `nonregular`/`toolarge`/`unreadable` 时保留具体拒绝证据，普通条目不得覆盖。两个可信指纹不同说明预取期间目标被外部改写：`pre_tool` 以 `unstable_target` 拒绝并跳过快照，不再只记 post 缺口。`deadline`（共享预算耗尽的取证超时）是降级不是状态变化：保留可用的真实指纹、告警 `基线指纹查询超时，基线检查降级`，成功 post 仍不建立成功豁免。
+- **P2 写序列记账误报**：read/grep 等非写工具、已证明没有写目标的完整 shell（`git status`/`rg`）与 `role_only`/未激活不再建 pending、不再产生 `post 未找到配对` / `post 写入目标不完整` 噪音；同一文件的多次写按 `origin_key` 去重为一个目标，成功写入只推进一次 `write_seq`。已有写 pre 而 post 改报非写工具、换成无写目标或失败/未知结果时，消费 pending 并披露，不建立成功豁免；`prepared` 缺失仍按不完整记账。
+- **P2 执行型 stdin 缺口**：`Analysis.stdin_unparsed` 标记解释器 heredoc/herestring、`-c`/管道/fd、读脚本文件的壳与未知消费者（正文未被当作脚本枚举）；写类 `_prepare_write` 把它并入 gap，成功 post 不建立成功豁免。直接 `sh`/`bash`/`sudo bash`/`env bash`/`bash -s` 等已证明从 stdin 读且完成递归解析的正文保持静默；壳参数判定是有限规则：值选项/`-s`/`--`/`-` 按保守规则解析，未知长选项或未识别布局一律按未解析（多披露，不少披露）。
+- **文档**：`hooks/README.md` 的「激活与角色」补上角色声明的等价写法与只读派生口径（讨论不触发、禁止用全文同现派生），「P2 交接/嵌套」补上拒绝理由给出字面量的契约；「规则与降级 / 诊断作用域」同步写序列只对写类工具、空目标/非写/role_only 静默、写 pre 被读/失败 post 覆盖时消费、`stdin_unparsed` 缺口与 `unstable_target`/deadline 语义。
+
+影响面：reviewer 交接按技能文档模板与常见 Markdown 写法可正常分派；讨论只读规则的会话不再被误锁；正常读/查/纯读 shell 不再刷写序列降级告警，同文件多写仍按一次推进写序列；执行型 stdin、仓库外/不完整目标、软链/不安全指纹与预取变化仍披露或拒绝。其余规则（Git、模型配置、嵌套、P3）未改。已知边界未变：`make`/`pytest`/`docker build` 这类命令会写产物但不在写命令表内，reviewer 只读不是文件系统级只读；`uv sync` 等仍放行。壳脚本参数的 stdin 判定是有限静态规则：已处理 `-s`/`--`/`-` 终止、`--rcfile`/`--init-file`/`-O`/`-o` 取值与常见无值长选项；未知长选项或未识别布局一律按未解析（多披露，不少披露）。`bash consumer.sh`、`bash - consumer.sh`、`bash --rcfile -s consumer.sh` 等读脚本文件的形态按未解析披露。
+
+验证（本机 macOS、无 PyYAML，基线 `26908ff` / 1.4.7）：红→绿证据用 `git show HEAD:easydev/hooks/core.py` 覆盖被测核心后跑新用例——`test_dispatch.py` **32 failures**（7 种角色声明写法 × 4 宿主，含模板复合标签）、`test_regressions.py` **16 failures**（3 条讨论句被误锁成只读 + 1 条裸 `不要修改` 漏判，各 4 宿主）；恢复修复版后两份文件全绿，`cmp` 确认恢复后与备份逐字节相同。全量 `tests/hooks` **1115 项 0 failures（1 skip）**；`bash scripts/check.sh` rc=0（§2/§3 版本一致 1.4.8，§10 总量 131715 ≤ 131715）；`SMOKE_TMP=<工作区临时目录> bash scripts/smoke-install.sh` rc=0（7 个场景全过，测后手工清理，脚本不删调用方目录）。写序列修复追加（同一基线，1.4.8 工作区）：红证据四轮分别 **4/8/10/3 failures**（读工具/纯读 shell/同文件多写、软链与预取变化、解释器/包装 stdin、脚本文件 `-s` 边界）；修复后 `test_write_accounting` + `test_heredoc_warnings` **42 项 0 failures**、全量 `tests/hooks` **1142 项 0 failures（1 skip）**、`tests/experiments/agent_runner` **92 项 0 failures**、`test_role_metric` **18 项 0 failures**；`bash scripts/check.sh` rc=0。未验证：四宿主真实 Hook 信任与输出消费仍需各自 probe；Windows/PowerShell 未验证；本版 CI 结果待推送后确认。
+
 ## 1.4.7 更新说明（2026-10-29）
 
 修 heredoc 被当命令解析造成的误拦与基线不覆盖，收敛 pre/post 重复的结构告警，并把 pi 适配器的降级告警从「细节已隐藏」换成固定类别（规则正文未变，总量仍为 131715 字节）。

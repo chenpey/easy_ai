@@ -262,6 +262,11 @@ class Analysis(object):
         # 正文不是可证明的数据消费者输入（解释器 stdin、壳正文、组/fd/管道与
         # 未知消费者）：读取守卫一律拒绝，共用 helper 按未知上报。
         self.stdin_program = False
+        # 正文是执行型 stdin（解释器正文、herestring、`-c`/管道等未证明是壳脚本的
+        # 消费）且解析器没有把正文当脚本枚举过：消费命令可能写到任何路径，写目标
+        # 不可证明。已按脚本递归解析的壳正文（`sh`/`bash` 的 argv 形式）与纯数据
+        # 消费者（`data`）都不置位。
+        self.stdin_unparsed = False
 
     def merge(self, other: "Analysis") -> None:
         self.opaque = self.opaque or other.opaque
@@ -275,6 +280,7 @@ class Analysis(object):
         self.recursive_follow = self.recursive_follow or other.recursive_follow
         self.compound_unresolved = self.compound_unresolved or other.compound_unresolved
         self.stdin_program = self.stdin_program or other.stdin_program
+        self.stdin_unparsed = self.stdin_unparsed or other.stdin_unparsed
 
     def as_dict(self) -> Dict[str, object]:
         return {
@@ -288,6 +294,7 @@ class Analysis(object):
             "recursive_follow": self.recursive_follow,
             "compound_unresolved": self.compound_unresolved,
             "stdin_program": self.stdin_program,
+            "stdin_unparsed": self.stdin_unparsed,
         }
 
 
@@ -3498,6 +3505,91 @@ def _unwrap_consumer_argv(
     return None, "argv", effective_cwd, effective_known
 
 
+# 壳的长选项里接收一个值的选项：值可能以 `-` 开头，不能被当选项扫描。
+_SHELL_LONG_VALUE_OPTIONS = frozenset({"--rcfile", "--init-file"})
+# 壳已知无值长选项：识别后直接跳过，未知长选项仍按未解析处理。
+_SHELL_LONG_FLAG_OPTIONS = frozenset(
+    {
+        "--noprofile",
+        "--norc",
+        "--posix",
+        "--restricted",
+        "--verbose",
+        "--version",
+        "--help",
+        "--login",
+        "--noediting",
+        "--protected",
+        "--debugger",
+        "--dump-po-strings",
+        "--dump-strings",
+        "--pretty-print",
+    }
+)
+
+
+def _shell_reads_script_from_stdin(args: List[str]) -> bool:
+    """壳的 argv 是否证明它从 stdin 读脚本（而不是读脚本文件）。
+
+    有限、保守的选项区间扫描，不新增完整壳解析器：只有 `-s`、无脚本文件操作数，
+    或 `--`/`-` 之后没有操作数才证明脚本来自 stdin。
+    - `--` 与单个 `-` 都是选项终止：其后全是操作数；有操作数就是脚本文件
+      （`bash -- -s`、`bash - consumer.sh`），一个都没有时壳仍从 stdin 读
+      （`bash --`、`bash -`）。
+    - 值选项（`--rcfile`、`--init-file`、`-O`、`-o`）会消费下一个 token 作为值，
+      即使它以 `-` 开头（`bash --rcfile -s consumer.sh` 里的 `-s` 是值，
+      `consumer.sh` 才是脚本文件）；值随等号/集群附加时（`--rcfile=-s`、`-Os`、
+      `-opipefail`）也按值处理，里面的 `s` 不算 `-s`。
+    - 已知无值长选项（`--noprofile` 等）跳过；未识别长选项与未识别短选项值布局
+      保守按未解析（保留 gap）。
+    - 脚本短选项集群含 `s`（`-s`、`-euxs`）后，其余 token 都是位置参数，
+      不再当选项解析（`bash -s consumer.sh` 仍有 `consumer.sh` 作位置参数）。
+    - 未证明 stdin 时遇非选项 token（`bash consumer.sh`、`bash consumer.sh -s`）
+      就是脚本文件操作数，后续 `-s` 不再是选项 → 未解析。
+
+    按未解析处理的含义：正文只是脚本及其子进程的 stdin，其写目标不可枚举。
+    `-c`/`eval` 的脚本文本已在 `_unwrap_consumer_argv` 的 `stage == "script"`
+    分支排除，不在这里判断。
+    """
+    forced = False
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"--", "-"}:
+            # 选项终止：其后全是操作数；一个操作数都没有时壳仍从 stdin 读脚本。
+            return forced or index + 1 == len(args)
+        if forced:
+            # 已证明从 stdin 读脚本：其余 token 都是位置参数。
+            index += 1
+            continue
+        if not token.startswith("-"):
+            # 脚本文件操作数（或未识别选项的值）：后续 `-s` 不是选项。
+            return False
+        if token.startswith("--"):
+            name, assigned, _value = token.partition("=")
+            if name in _SHELL_LONG_VALUE_OPTIONS:
+                # 值已随等号附加，否则下一个 token 是值（可能以 `-` 开头）。
+                index += 1 if assigned else 2
+                continue
+            if not assigned and name in _SHELL_LONG_FLAG_OPTIONS:
+                index += 1
+                continue
+            # 未识别长选项（含无值白名单之外的带值形式）：保守按未解析。
+            return False
+        if token in {"-O", "-o"}:
+            # 选项值在下一个 token（`bash -O extglob`），可能以 `-` 开头。
+            index += 2
+            continue
+        if token[:2] in {"-O", "-o"}:
+            # 值已附加（`-Os`、`-opipefail`）：其中的 `s` 是值的一部分。
+            index += 1
+            continue
+        if "s" in token[1:]:
+            forced = True
+        index += 1
+    return True
+
+
 def _heredoc_consumer(
     entries: List[Tuple[Token, str, int, int]],
     tokens: List[Token],
@@ -3505,15 +3597,21 @@ def _heredoc_consumer(
     argv_tokens: List[Token],
     cwd: Optional[str],
     cwd_known: bool,
-) -> Tuple[str, Optional[str], bool]:
-    """判定正文消费者：返回 (模式, 正文有效 cwd, cwd 是否已知)。
+) -> Tuple[str, Optional[str], bool, bool]:
+    """判定正文消费者：返回 (模式, 正文有效 cwd, cwd 是否已知, 正文是否已按脚本解析)。
 
     模式 `data` 只给静态纯数据白名单（`stdin_program=False`）；`interpreter` 是
     独立解释器数据分支（正文不按 shell 解析，但仍不是可证明的只读输入）；其余
     一切（壳、xargs/sed/awk/find、未知命令、无命令名段、fd 转接、管道、argv
     无法绑定）都按脚本保守分析。
+
+    第四个值 `parsed` 只给“正文就是壳脚本且已按脚本递归分析”的直接壳消费
+    （`sh`/`bash`、`sudo bash`、`env bash`、`bash -s` 这类 argv 形式，且壳确实从
+    stdin 读脚本）；`bash -c`/`eval`（`stage == "script"`）、`bash consumer.sh`
+    这类读脚本文件的壳、管道/绑定未决、非零 fd、fd 转接、未知消费者与
+    data/interpreter 都是 False：正文不是已证明的壳脚本，其写目标仍不可枚举。
     """
-    script: Tuple[str, Optional[str], bool] = ("script", cwd, cwd_known)
+    script: Tuple[str, Optional[str], bool, bool] = ("script", cwd, cwd_known, False)
     for token, base, _operator_index, _word_index in entries:
         if token.heredoc_binding_unresolved:
             # 管道任一侧：正文不是该命令的独占 stdin。
@@ -3535,15 +3633,21 @@ def _heredoc_consumer(
         argv_tokens, cwd, cwd_known
     )
     if effective is None or stage == "script":
-        return ("script", effective_cwd, effective_known)
+        return ("script", effective_cwd, effective_known, False)
     name = os.path.basename(effective[0].text)
     if name in _HEREDOC_SHELLS:
-        return ("script", effective_cwd, effective_known)
+        # 正文就是壳脚本（马上按脚本递归分析）的前提：壳确实从 stdin 读脚本。
+        return (
+            "script",
+            effective_cwd,
+            effective_known,
+            _shell_reads_script_from_stdin([token.text for token in effective[1:]]),
+        )
     if name in _HEREDOC_DATA_COMMANDS:
-        return ("data", effective_cwd, effective_known)
+        return ("data", effective_cwd, effective_known, False)
     if _HEREDOC_INTERPRETER_RE.match(name):
-        return ("interpreter", effective_cwd, effective_known)
-    return ("script", effective_cwd, effective_known)
+        return ("interpreter", effective_cwd, effective_known, False)
+    return ("script", effective_cwd, effective_known, False)
 
 
 def _herestring_is_stdin_program(
@@ -3641,16 +3745,22 @@ def _analyze_simple_segment(
     body_cwd: Optional[str] = cwd
     body_cwd_known = cwd_known
     if heredocs:
-        mode, body_cwd, body_cwd_known = _heredoc_consumer(
+        mode, body_cwd, body_cwd_known, parsed = _heredoc_consumer(
             heredocs, tokens, argv, argv_tokens, cwd, cwd_known
         )
         if mode != "data":
             analysis.stdin_program = True
+            if not parsed:
+                # 正文不是已证明的壳脚本（解释器、`-c`/`eval`、管道、fd 转接、
+                # 未知消费者）：消费命令可能写到任何路径，写目标不可枚举。
+                analysis.stdin_unparsed = True
     if any(token.operator and _redirect_base(token.text) == "<<<" for token in tokens):
         # `<<<` 的 herestring 事实马上被 `_strip_redirects` 丢弃，先在这里判定消费者：
         # 供给解释器/壳时正文是 stdin 程序，只加标记，不新增脚本分析。
         if _herestring_is_stdin_program(argv_tokens, cwd, cwd_known):
             analysis.stdin_program = True
+            # herestring 正文同样没有按脚本枚举，执行型消费者的写目标不可证明。
+            analysis.stdin_unparsed = True
     proven_data_stdin = mode == "data" or (inherited_data_stdin and not heredocs)
     # 没有命令名的重定向（`> app.py`、`cd src; > app.py`）仍是真实读写副作用；
     # `cd . > file` 的重定向在 cd 之前打开，因此按进入本段的 cwd 解析。

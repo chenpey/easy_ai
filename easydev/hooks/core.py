@@ -77,11 +77,24 @@ TEMPLATE_EXPLANATION_MARKERS = (
     "explain the following",
     "template:",
 )
-READONLY_MARKERS = re.compile(
-    r"(只读|不要修改|不修改|不改代码|不要改动|不要编辑|read[- ]only|do not modify|don't modify|no code changes)",
-    re.IGNORECASE,
+# 只读指令：`只读` 必须修饰审查动作本身，或出现明确的禁止修改指令。
+# 旧口径是“全文任意同现”（`review|审查…` + `只读`），于是“reviewer 只读是否合理”
+# 这类**讨论**也会把主代理锁成只读，且 `review` 命中 `reviewer` 内部——把正常修复
+# 请求整个拒掉。现在要求同句邻近或明示禁止，讨论句不再触发。
+READONLY_DIRECTIVE_RE = re.compile(
+    r"(?:只读|read[- ]only)[ \t]*(?:地)?[ \t]*(?:审查|review(?!er)|检查|复核|审计|audit)"
+    r"|(?:审查|review(?!er)|检查|复核|审计|audit)[^\n。；;]{0,8}?(?:只读|read[- ]only)"
+    # 禁止修改：宽对象（代码/文件/仓库/工作区/项目）或句尾裸命令才算全局只读；
+    # “不要改动 SKILL.md”这类限定到具体路径的禁令不是全局只读，不得锁死写权限。
+    r"|(?:不要|不需要|禁止|别|切勿|请勿)[ \t]*(?:修改|改动|编辑|删除|改|动|碰)"
+    r"[ \t]*(?:任何)?[ \t]*(?:代码|文件|仓库|工作区|项目)"
+    r"|(?:不要|不需要|禁止|别|切勿|请勿)[ \t]*(?:修改|改动|编辑|删除)"
+    r"(?=[ \t]*(?:$|[。；;，,\n]|即可|就好|就行))"
+    r"|不(?:需要)?[ \t]*(?:修改|改动|编辑|删除)[ \t]*(?:任何)?[ \t]*"
+    r"(?:代码|文件|仓库|工作区|项目)"
+    r"|(?:只读|read[- ]only)[ \t]*(?:模式|mode)|no\s+code\s+changes|do\s*n[o']?t\s+modify",
+    re.IGNORECASE | re.MULTILINE,
 )
-REVIEW_AUDIT_RE = re.compile(r"(review|审查|审计|audit)", re.IGNORECASE)
 RUNTIME_RULE_NAMES = {"SKILL.md", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"}
 DOC_SUFFIXES = (".md", ".txt", ".rst", ".adoc")
 REPORT_NAME_RE = re.compile(
@@ -162,7 +175,16 @@ EXPLICIT_INVOCATION_RE = re.compile(
 )
 FENCED_BLOCK_RE = re.compile(r"```([A-Za-z0-9_-]*)\n(.*?)```", re.DOTALL)
 ROLE_LINE_RE = re.compile(
-    r"^[ \t*-]*(?:角色|role)[ \t]*[:：][ \t]*(main|developer|reviewer|designer)\b",
+    # 角色声明按行首锚定（`^` + MULTILINE）：正文里顺带提到角色不算声明。行首的
+    # Markdown 强调/标题/列表标记不影响判定，`**角色**：reviewer`、`## 角色：reviewer`、
+    # `1. 角色：reviewer`、`角色声明：reviewer`、`你的角色是 reviewer` 与交接模板的
+    # 复合标签 `角色/读写边界/…：reviewer` 都是同一声明——模板写法不可检出会让照
+    # 文档写交接的模型被稳定拒绝。
+    r"^[ \t*_#+.\-]*(?:\d{1,2}[.)][ \t]+)?[*_ \t]*"
+    r"(?:你的[ \t*_]*)?(?:角色(?:声明)?|role)"
+    r"(?:[*_ \t]*[/、，,][^:：\n]{0,30})?"
+    r"[*_ \t]*(?:[:：]|是|为)[ \t*_]*"
+    r"(main|developer|reviewer|designer)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 REVIEWER_DECLARATION_RE = re.compile(
@@ -981,6 +1003,67 @@ def write_targets_from_tool(
     return [], True, ""
 
 
+# 无法作为内容基线依据的指纹：不是可读普通文件或不可读，直接拒绝而不是降级。
+UNSAFE_FINGERPRINTS = ("nonregular", "toolarge", "unreadable")
+
+
+def _merge_write_entries(
+    entries: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """按仓库身份 + 规范相对路径合并同一目标的多次预取，返回 (条目, 是否不稳定)。
+
+    同一文件多次写只算一个目标，但合并不能丢掉已观察到的不安全证据：预取之间
+    目标被换成软链、变成非普通文件或不可读时，丢掉那条等于放行已被识别的危险
+    状态。两条普通条目的写入前指纹不同，说明目标在分析期间被外部改写；保留条目
+    带 `unstable` 标记，由 `_check_baseline` 在 pre 直接拒绝，而不是只记 post 缺口。
+    指纹取证超时（`deadline`）是预算耗尽的降级而不是状态变化：保留真实指纹并标
+    `deadline`，交给 `_check_baseline` 告警降级。软链仍优先于普通条目（两个都软链
+    保留首个）。
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    unstable = False
+    for entry in entries:
+        kept = merged.get(entry["origin_key"])
+        if kept is None:
+            merged[entry["origin_key"]] = entry
+            continue
+        if entry.get("symlink") and not kept.get("symlink"):
+            merged[entry["origin_key"]] = entry
+            continue
+        if entry.get("symlink") or kept.get("symlink"):
+            continue
+        if entry.get("fingerprint") == "deadline" or kept.get("fingerprint") == "deadline":
+            # 取证超时不是观察到的状态变化：优先保留真实指纹并标记 deadline，
+            # 不置 unstable（否则 A→deadline 会被当成并发修改在 pre 拒绝）。
+            if (
+                kept.get("fingerprint") == "deadline"
+                and entry.get("fingerprint") != "deadline"
+            ):
+                merged[entry["origin_key"]] = entry
+                entry["deadline"] = True
+            else:
+                kept["deadline"] = True
+            continue
+        if (
+            entry.get("fingerprint") in UNSAFE_FINGERPRINTS
+            and kept.get("fingerprint") not in UNSAFE_FINGERPRINTS
+        ):
+            # 不安全证据不得被先到的安全条目盖掉。
+            merged[entry["origin_key"]] = entry
+            entry["unstable"] = True
+            unstable = True
+            continue
+        if kept.get("fingerprint") != entry.get("fingerprint"):
+            kept["unstable"] = True
+            unstable = True
+    return list(merged.values()), unstable
+
+
+def _write_targets_gap() -> Dict[str, Any]:
+    """写类工具的目标集合无法完整建立：pre 披露结构原因，post 保留记账缺口。"""
+    return {"repo": None, "entries": [], "gap": True, "task_key": None}
+
+
 ROOT_MARKERS = {"root", "main"}
 
 
@@ -1402,9 +1485,7 @@ class Engine(object):
             record,
             role=role or declared_role(user_text) or "main",
             role_source="explicit" if explicit else "machine",
-            readonly=bool(
-                user_text and REVIEW_AUDIT_RE.search(user_text) and READONLY_MARKERS.search(user_text)
-            ),
+            readonly=bool(user_text and READONLY_DIRECTIVE_RE.search(user_text)),
             machine=machine,
             transcript_key=transcript_key,
             explicit=explicit,
@@ -1900,28 +1981,38 @@ class Engine(object):
 
         锁内只做短状态读改写；提交前用 task 键与 epoch 复核，不一致就降级。需要
         内容基线的目标在锁外在这里自动保存首次快照（大文件 I/O 不进共享 task 锁）。
+
+        写类工具始终返回结构：`gap=True` 表示目标集合无法完整建立（结构缺口、
+        执行型 stdin 未枚举出写目标、预取指纹不一致、目标在仓库外），`entries=[]`
+        且 `gap=False` 表示这次调用没有写目标可记账（纯读 shell、空 patch）。两者
+        不能混为一谈：后者不建 pending，也不告警。
         """
         tool = record.tool
         if tool.get("kind") not in {"write", "patch", "shell"}:
             return None
+        unparsed = False
         if tool.get("kind") == "shell":
             command = _string(_first(tool.get("args") or {}, "command", "CommandLine", "cmd"))
             analysis = shell.analyze(command, cwd=_tool_cwd(record) or None)
             if analysis.opaque or analysis.too_deep:
                 self._warn_structure_once(record, "命令结构无法完整解析，基线检查未覆盖")
-                return None
+                return _write_targets_gap()
+            # 执行型 stdin（解释器正文、herestring）没有被枚举成写目标：
+            # “无法证明没有写”不等于“已证明没有写”，按目标集不完整处理。
+            unparsed = bool(getattr(analysis, "stdin_unparsed", False))
         repo = self._repo_root(record)
         if not repo:
             self._warn_structure_once(record, "缺少可定位的仓库根或 cwd，基线检查降级")
-            return None
-        targets, complete, gap = write_targets_from_tool(
+            return _write_targets_gap()
+        targets, complete, targets_gap = write_targets_from_tool(
             self.host, tool, self.capabilities, _tool_cwd(record)
         )
         if not complete:
-            self._warn_structure_once(record, gap or "写入目标不完整，基线检查未覆盖")
-            return None
+            self._warn_structure_once(record, targets_gap or "写入目标不完整，基线检查未覆盖")
+            return _write_targets_gap()
         tool_cwd = _tool_cwd(record)
         entries: List[Dict[str, Any]] = []
+        outside = False
         for write_target in targets:
             target = write_target["path"]
             # 该段命令的有效 cwd 优先于工具 cwd（`cd sub; >> app.py`）。
@@ -1953,6 +2044,7 @@ class Engine(object):
             lexical = paths.lexical_rel(target_repo, absolute)
             if lexical is None:
                 self._warn_structure_once(record, "写入目标位于仓库外，未纳入基线检查")
+                outside = True
                 continue
             # 解析后的目标仓库内父链同样不允许软链消解。
             link = paths.symlink_component(target_repo, absolute)
@@ -1975,18 +2067,26 @@ class Engine(object):
                     entry["origin"] = paths.classify(target_repo, relative, deadline=self.deadline)
                 except paths.GitUnavailable:
                     self.warnings.append("Git 状态查询失败，基线检查降级")
-                    return None
+                    return _write_targets_gap()
             entries.append(entry)
+        # 同一文件多次写只算一个目标：快照与配对都按合并后的集合做一次。
+        entries, unstable = _merge_write_entries(entries)
+        # 取证超时仍算目标集不完整（post 不建立成功豁免），但不因此 pre 拒绝。
+        degraded = any(item.get("deadline") for item in entries)
+        gap = outside or unstable or unparsed or degraded
         if not entries:
-            return None
+            return {"repo": repo, "entries": [], "gap": gap, "task_key": None}
         if classify and record.activation_scope == "task_active" and not self._manual_task_root_for(root_key, task_key):
             for entry in entries:
                 if entry.get("snapshot") is not None or entry.get("symlink"):
                     continue
+                if entry.get("unstable"):
+                    # 观察到的竞态目标不建快照：它不是可放行的单一状态。
+                    continue
                 if entry.get("origin") not in {"dirty", "untracked", "unreconstructible"}:
                     continue
                 entry["snapshot"] = self._save_snapshot(entry, task_key)
-        return {"repo": repo, "entries": entries, "task_key": None}
+        return {"repo": repo, "entries": entries, "gap": gap, "task_key": None}
 
     def _manual_task_root_for(self, root_key: Optional[str], task_key: Optional[str]) -> bool:
         """是否已有显式手工任务根：本次上下文/环境，或已存进状态的任务/机器上下文。
@@ -2041,6 +2141,9 @@ class Engine(object):
             return None
         if not prepared:
             return None
+        if not prepared.get("entries"):
+            # 目标集合为空（纯读 shell、空 patch、或目标集无法建立）：无可核对目标。
+            return None
         task_root = self._select_task_root(record, root, task)
         for item in prepared.get("entries") or []:
             relative = item["relative"]
@@ -2053,7 +2156,7 @@ class Engine(object):
                     "写入目标或其仓库内父链是符号链接（%s）：不跟随链接冒充仓库内文件；"
                     "请明确真实目标与范围（确需容受保护文件时显式给出其仓库内真实路径）。" % relative,
                 )
-            if item.get("fingerprint") in {"nonregular", "toolarge", "unreadable"}:
+            if item.get("fingerprint") in UNSAFE_FINGERPRINTS:
                 # 不可读的普通文件无法自动快照，也无法证明可重建：直接拒绝而不是静默降级。
                 fingerprint = item.get("fingerprint")
                 detail = {
@@ -2069,10 +2172,25 @@ class Engine(object):
                     "或显式提供 EASYDEV_TASK_ROOT 与 baseline/%s 手工保存原内容。"
                     % (detail, relative, relative),
                 )
+            if item.get("unstable"):
+                # 同一次分析里同一目标的预取指纹不一致：目标已被并发改写，
+                # 不能拿先前的成功指纹冒充满足。
+                return Decision(
+                    "deny",
+                    "baseline",
+                    "unstable_target",
+                    "写入目标的预取指纹在同一次分析期间发生变化（%s）："
+                    "请先确认并协调并发变更，再重试本次写入。" % relative,
+                )
             if item.get("fingerprint") == "deadline":
-                # 超时文案不带仓库相对路径：路径不进 stderr/诊断输出。
+                # 只有超时、没有可信真实指纹：超时文案不带仓库相对路径（路径不进
+                # stderr/诊断输出）。
                 self.warnings.append("基线指纹查询超时，基线检查降级")
                 continue
+            if item.get("deadline"):
+                # 预取期间见过超时，但保留了真实指纹：告警降级后继续用真实指纹核对，
+                # 不把取证超时当成并发修改拒掉。
+                self.warnings.append("基线指纹查询超时，基线检查降级")
             origins = task.setdefault("origins", {})
             origin_key = item["origin_key"]
             entry = origins.get(origin_key)
@@ -2283,6 +2401,10 @@ class Engine(object):
             handoff = standard_handoff(prompt, self.skill_root)
             if not handoff.get("complete"):
                 missing = handoff.get("missing") or []
+                reviewer_path = handoff.get("role_path") or os.path.join(
+                    os.path.abspath(self.skill_root), "references", "reviewer-role.md"
+                )
+                # 只报“缺什么”模型只能猜格式；每份拒绝都给出可照抄的字面量与路径。
                 labels = {
                     "role": "独立 reviewer 角色声明",
                     "role_path": "references/reviewer-role.md 路径",
@@ -2294,7 +2416,9 @@ class Engine(object):
                     "deny",
                     "handoff",
                     "reviewer_handoff_incomplete",
-                    "reviewer 交接缺少：%s。请补齐后再分派；本 Hook 不改写交接正文。" % described,
+                    "reviewer 交接缺少：%s。请补齐后再分派：单独一行写 `角色：reviewer`；"
+                    "写绝对路径 %s；单列一行 `**[P级] 简短标题**` 机器格式。"
+                    "本 Hook 不改写交接正文。" % (described, reviewer_path),
                 )
             code_review = bool(self.context.get("code_review")) or bool(handoff.get("code_review"))
             dispatches[dispatch_id]["code_review"] = code_review
@@ -2920,7 +3044,8 @@ class Engine(object):
                     )
                     if decision:
                         return decision
-            self._record_pre_write(record, task, prepared)
+                # role_only（无父关联的 reviewer）不借用父任务的基线/P3 写序列。
+                self._record_pre_write(record, task, prepared)
             return Decision()
         if record.event == "post_tool":
             if not stale_child:
@@ -2950,6 +3075,10 @@ class Engine(object):
         if not tool_id:
             return
         entries = (prepared or {}).get("entries") or []
+        gap = bool((prepared or {}).get("gap"))
+        if prepared is not None and not entries and not gap:
+            # 这次调用没有写目标可记账（纯读 shell、空 patch）：不建 pending。
+            return
         # 目标键含完整仓库身份 + 规范相对路径：跨仓库同相对路径不能互相冒充。
         fingerprints: Dict[str, str] = {}
         for item in entries:
@@ -2965,7 +3094,13 @@ class Engine(object):
             "tool_id": tool_id,
             "targets": sorted(fingerprints),
             "fingerprints": fingerprints,
-            "complete": bool(entries) and len(fingerprints) == len(entries),
+            "complete": (
+                prepared is not None
+                and not gap
+                and len(fingerprints)
+                == len([item for item in entries if not item.get("symlink")])
+            ),
+            "gap": gap,
         }
         if len(pending) > 200:
             for key in list(pending)[:100]:
@@ -3011,33 +3146,58 @@ class Engine(object):
             # 根 actor 的直接读取恢复走 `_restore_from_skill_read`（新 epoch），此处
             # 不得只改 activation_scope，否则 root 与 epoch/缓存会停在旧任务。
             self._activate_child_local_scope(record, actor)
-        if not success:
-            # 结果未知或失败不能建立成功豁免（含可观测但未解析的结果）。
-            self.warnings.append("post 缺少可信成功结果，未计入成功写入")
+        if record.activation_scope != "task_active" and actor.get("activation_scope") != "task_active":
+            # role_only / 未激活不借用父任务写序列：不配对也不刷记账告警。
             return
         tool_id = tool.get("id") or ""
+        write_kind = tool.get("kind") in {"write", "patch", "shell"}
         if not tool_id:
-            self.warnings.append("缺少工具 ID，写事件无法幂等记账")
+            if write_kind:
+                self.warnings.append("缺少工具 ID，写事件无法幂等记账")
             return
-        pending = task.setdefault("pending_writes", {})
         actor_id = record.actor_id or record.session_id
         epoch = int(task.get("task_epoch") or 0)
-        entry = pending.pop(_pending_key(actor_id, epoch, tool_id), None)
+        # 不为读工具创建空 dict：没有 pending 就没有可消费的写意图。
+        pending = task.get("pending_writes") or {}
+        entry = pending.pop(_pending_key(actor_id, epoch, tool_id), None) if pending else None
+        if not write_kind:
+            # 非写工具不参与写序列；但同一调用 ID 已有写 pre 时，读 post 就是
+            # 目标集合被替换，必须消费该意图并披露。
+            if entry is not None:
+                self.warnings.append("post 写入目标不完整，写序列记覆盖缺口")
+            return
+        analyzed = prepared is not None
+        entries = (prepared or {}).get("entries") or []
+        gap = bool((prepared or {}).get("gap"))
+        no_accounting = analyzed and not entries and not gap
+        if not success:
+            # 结果未知或失败不能建立成功豁免（含可观测但未解析的结果）；
+            # 没有写目标可记账的纯读命令失败不需该披露。
+            if entry is not None or not no_accounting:
+                self.warnings.append("post 缺少可信成功结果，未计入成功写入")
+            return
         if entry is None:
             # 只弹出/校验自己的 (actor, epoch, tool ID)，绝不删除其他 actor 的 pending。
+            if no_accounting:
+                return
             self.warnings.append(
                 "post 未找到与该 actor/epoch/tool ID 配对的 pre 记录，未建立成功豁免"
             )
             return
-        entries = (prepared or {}).get("entries") or []
-        if not entries or not entry.get("complete"):
+        if no_accounting:
+            # pre 是写、post 变成纯读：目标集合不一致，不建立成功豁免。
             self.warnings.append("post 写入目标不完整，写序列记覆盖缺口")
             return
         if any(item.get("symlink") for item in entries):
             self.warnings.append("post 目标含符号链接，未建立成功豁免")
             return
+        if gap or not entry.get("complete"):
+            self.warnings.append("post 写入目标不完整，写序列记覆盖缺口")
+            return
         # 完整目标集合按仓库身份 + 规范相对路径比较：不能只看相对路径。
-        targets = sorted(item["origin_key"] for item in entries)
+        targets = sorted(
+            {item["origin_key"] for item in entries if not item.get("symlink")}
+        )
         if targets != list(entry.get("targets") or []):
             self.warnings.append(
                 "post 目标与 pre 记录的调用目标不一致（含仓库身份），未建立成功豁免"

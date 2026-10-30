@@ -119,6 +119,56 @@ class DispatchMixin(object):
         self.deny(self.dispatch_payload("s1", no_format))
         self.allow(self.dispatch_payload("s1", self.reviewer_handoff()))
 
+    def test_role_declaration_accepts_common_markdown_forms(self) -> None:
+        """同一声明在 Markdown 强调/标题/编号列表/复合标签下都应被识别。
+
+        交接模板 `角色/读写边界/…：reviewer` 是技能文档自己的写法，必须可检出，
+        否则照模板写交接的模型会被稳定拒绝。
+        """
+        self.activate()
+        self.write_models(VALID)
+        role_path = str(self.skill / "references" / "reviewer-role.md")
+        heads = (
+            "**角色**：reviewer",
+            "**Role**: reviewer",
+            "## 角色：reviewer",
+            "1. 角色：reviewer",
+            "角色声明：reviewer",
+            "你的角色是 reviewer",
+            "角色/读写边界/项目与规则路径/授权基线：reviewer，只读",
+        )
+        for index, head in enumerate(heads):
+            with self.subTest(head=head):
+                prompt = "%s\n只读审查以下 diff。\n角色路径：%s\n**[P级] 简短标题**\n" % (
+                    head,
+                    role_path,
+                )
+                self.allow(
+                    self.dispatch_payload("s1", prompt, tool_id="decl-%d" % index)
+                )
+
+    def test_missing_handoff_message_names_the_literal_to_add(self) -> None:
+        """只报“缺什么”模型只能猜格式；拒绝理由必须给出可照抄的字面量。"""
+        self.activate()
+        self.write_models(VALID)
+        reason = self.deny(
+            self.dispatch_payload("s1", "只读审查以下 diff。\n", tool_id="hint")
+        )
+        self.assertIn("角色：reviewer", reason)
+        self.assertIn(str(self.skill / "references" / "reviewer-role.md"), reason)
+        self.assertIn("**[P级] 简短标题**", reason)
+
+    def test_handoff_role_still_must_be_declared(self) -> None:
+        """放宽识别不等于取消契约：没有声明行的交接仍然拒绝。"""
+        self.activate()
+        self.write_models(VALID)
+        prompt = (
+            "只读审查以下 diff。\n角色路径：%s\n**[P级] 简短标题**\n"
+            % (self.skill / "references" / "reviewer-role.md")
+        )
+        reason = self.deny(self.dispatch_payload("s1", prompt, tool_id="no-decl"))
+        self.assertIn("角色声明", reason)
+
     def test_inline_template_explanation_keeps_complete_handoff(self) -> None:
         """“模板如下：”同一行里的冻结模板仍是格式证据，纯解释行仍被丢弃。"""
         self.activate()
