@@ -16,6 +16,7 @@ import pytest
 import subprocess
 import sys
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states, task_states
 
@@ -73,51 +74,58 @@ class W01OperatorContinuationTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.DENY_CASES):
-            value = self.dispatch_command("dev", command, "w01-dev-%d" % index)
-            # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
-            assert self.is_denied(value), value
-            assert "baseline/1.txt" in self.reason(value)
+            with subtests.test(command=command):
+                value = self.dispatch_command("dev", command, "w01-dev-%d" % index)
+                # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
+                assert self.is_denied(value), value
+                assert "baseline/1.txt" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_targets_across_operator_continuation(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.DENY_CASES):
-            value = self.dispatch_command("rev", command, "w01-rev-%d" % index)
-            assert self.is_denied(value), value
-            assert "只读" in self.reason(value)
-            # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
-            violation = shell.reviewer_violation(command)
-            assert violation.get("targets") == ["1.txt"], violation
+            with subtests.test(command=command):
+                value = self.dispatch_command("rev", command, "w01-rev-%d" % index)
+                assert self.is_denied(value), value
+                assert "只读" in self.reason(value)
+                # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
+                violation = shell.reviewer_violation(command)
+                assert violation.get("targets") == ["1.txt"], violation
         self.assert_sentinels_intact()
 
     def test_fd_numeric_and_git_controls_unchanged(self) -> None:
         self.use_manual_baseline()
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
-            value = self.dispatch_command("rev", command, "w01-fd-%d" % index)
-            assert not self.is_denied(value), value
+            with subtests.test(command=command):
+                value = self.dispatch_command("rev", command, "w01-fd-%d" % index)
+                assert not self.is_denied(value), value
         self.activate("dev")
         for index, command in enumerate(self.NUMERIC_CASES):
-            value = self.dispatch_command("dev", command, "w01-num-%d" % index)
-            assert self.is_denied(value), value
-            assert "baseline/1" in self.reason(value)
+            with subtests.test(command=command):
+                value = self.dispatch_command("dev", command, "w01-num-%d" % index)
+                assert self.is_denied(value), value
+                assert "baseline/1" in self.reason(value)
         for index, command in enumerate(self.GIT_CASES):
-            reason = self.deny(self.shell("dev", command, tool_id="w01-git-%d" % index))
-            assert "Git" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("dev", command, tool_id="w01-git-%d" % index))
+                assert "Git" in reason
         self.assert_sentinels_intact()
 
     def test_continuation_is_joined_before_operator_combination(self) -> None:
         for command in self.DENY_CASES:
-            analysis = shell.analyze(command)
-            assert not analysis.opaque, analysis.as_dict()
-            assert [item.get("target") for item in analysis.writes] == ["1.txt"]
-            assert all(item.get("complete") for item in analysis.writes)
-            # 第二个运算符不再是 argv 或假目标。
-            assert analysis.commands == [["printf", "x"]]
+            with subtests.test(command=command):
+                analysis = shell.analyze(command)
+                assert not analysis.opaque, analysis.as_dict()
+                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
+                assert all(item.get("complete") for item in analysis.writes)
+                # 第二个运算符不再是 argv 或假目标。
+                assert analysis.commands == [["printf", "x"]]
         # fd 前缀也在同一词法结果里与运算符组合。
         for command in ("printf x 2\\\n>1.txt", "printf x &\\\n>1.txt"):
-            analysis = shell.analyze(command)
-            assert [item.get("target") for item in analysis.writes] == ["1.txt"]
+            with subtests.test(command=command):
+                analysis = shell.analyze(command)
+                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
         # 单引号内保持字面：`\`+换行是数据，不是续接。
         quoted = shell.analyze("printf x >&'1\\\n.txt'")
         assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]

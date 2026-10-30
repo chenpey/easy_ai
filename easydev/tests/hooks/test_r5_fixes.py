@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase
 
 
@@ -177,17 +178,19 @@ class T02NumericRedirectTests(HookCase):
         for index, (command, target) in enumerate(
             (("printf x > 1", "baseline/1"), ("printf x >> 2", "baseline/2"), ("printf x 2> 1", "baseline/1"))
         ):
-            reason = self.deny(self.shell("s1", command, tool_id="num-%d" % index))
-            # 拒绝必须点名被写的数字文件名，而不是“其它写目标”的副作用。
-            assert target in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("s1", command, tool_id="num-%d" % index))
+                # 拒绝必须点名被写的数字文件名，而不是“其它写目标”的副作用。
+                assert target in reason
         assert (self.repo / "1").read_text(encoding="utf-8") == "USER-SENTINEL\n"
         assert (self.repo / "2").read_text(encoding="utf-8") == "USER-SENTINEL\n"
 
     def test_numeric_filenames_are_denied_for_readonly_reviewer(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(("printf x > 1", "printf x >> 2", "printf x 2> 1")):
-            reason = self.deny(self.shell("rev", command, tool_id="num-rev-%d" % index))
-            assert "只读" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("rev", command, tool_id="num-rev-%d" % index))
+                assert "只读" in reason
         assert (self.repo / "1").read_text(encoding="utf-8") == "USER-SENTINEL\n"
         assert (self.repo / "2").read_text(encoding="utf-8") == "USER-SENTINEL\n"
 
@@ -196,7 +199,8 @@ class T02NumericRedirectTests(HookCase):
         for index, command in enumerate(
             ("printf x >&1", "printf x 2>&1", "printf x > /dev/null", "printf x >&2")
         ):
-            self.allow(self.shell("rev", command, tool_id="fd-%d" % index))
+            with subtests.test(command=command):
+                self.allow(self.shell("rev", command, tool_id="fd-%d" % index))
         # 已提交且干净的普通文件仍可写：数字文件名不是一律拒绝。
         self.git("add", "1")
         self.git("commit", "-qm", "numeric-name")
@@ -219,9 +223,10 @@ class T03CdRedirectTests(HookCase):
         self.use_manual_baseline()
         self.activate("s1")
         for index, command in enumerate(("cd . > app.py", "cd src > app.py", "cd src > ./app.py")):
-            reason = self.deny(self.shell("s1", command, tool_id="cd-red-%d" % index))
-            # 目标按执行 cd 之前的 cwd 解析：是仓库根的 app.py，不是 src/app.py。
-            assert "baseline/app.py" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("s1", command, tool_id="cd-red-%d" % index))
+                # 目标按执行 cd 之前的 cwd 解析：是仓库根的 app.py，不是 src/app.py。
+                assert "baseline/app.py" in reason
         # 重定向在 cd 之前打开：`cd src > app.py` 落在仓库根，不是 src/app.py。
         assert (self.repo / "app.py").read_text(encoding="utf-8") == "REPO-USER\n"
         assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "SRC-USER\n"
@@ -264,11 +269,12 @@ class T05MvSourceDeletionTests(HookCase):
             "mv -T src/app.py dest/app.py",
         )
         for index, command in enumerate(commands):
-            reason = self.deny(self.shell("s1", command, tool_id="mv-%d" % index))
-            # 被移走的源同样是删除副作用：拒绝必须点名源路径。
-            assert "baseline/src/app.py" in reason
-            assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER SOURCE\n"
-            assert not (self.repo / "dest" / "app.py").exists()
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("s1", command, tool_id="mv-%d" % index))
+                # 被移走的源同样是删除副作用：拒绝必须点名源路径。
+                assert "baseline/src/app.py" in reason
+                assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER SOURCE\n"
+                assert not (self.repo / "dest" / "app.py").exists()
 
     def test_source_baseline_allows_and_existing_destination_is_denied(self) -> None:
         self.activate_with_task_root()

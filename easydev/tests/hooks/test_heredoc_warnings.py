@@ -13,6 +13,7 @@ import stat
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from conftest import subtests
 from support import HookCase, core_module
 from test_r5_fixes import task_states
 
@@ -216,16 +217,17 @@ class StructureWarningScopeTests(HeredocWarningCase):
         )
         (self.root / "outside").mkdir()
         for name, kwargs, message in cases:
-            prepared, warnings = self.prepare("pre_tool", **kwargs)
-            assert prepared is not None
-            assert prepared["entries"] == []
-            assert prepared["gap"]
-            assert warnings == [message]
-            prepared, warnings = self.prepare("post_tool", **kwargs)
-            assert prepared is not None
-            assert prepared["entries"] == []
-            assert prepared["gap"]
-            assert warnings == []
+            with subtests.test(case=name):
+                prepared, warnings = self.prepare("pre_tool", **kwargs)
+                assert prepared is not None
+                assert prepared["entries"] == []
+                assert prepared["gap"]
+                assert warnings == [message]
+                prepared, warnings = self.prepare("post_tool", **kwargs)
+                assert prepared is not None
+                assert prepared["entries"] == []
+                assert prepared["gap"]
+                assert warnings == []
 
     def test_multiple_outside_targets_warn_once_per_pre_call(self) -> None:
         (self.root / "outside").mkdir()
@@ -303,20 +305,21 @@ class PreOnlyInformationLossTests(HeredocWarningCase):
         """B4：宿主全程只投递 post；每次都不输出结构原因，也没有“已披露”状态。"""
         self.activate("s1")
         for index in range(2):
-            command = "cat > out%s.txt <<'EOF'\nhello\n" % index
-            _code, value, stderr = self.run_core(
-                self.shell(
-                    "s1",
-                    command,
-                    tool_id="b4-%d" % index,
-                    event="post_tool",
-                    outcome="success",
+            with subtests.test(call=index):
+                command = "cat > out%s.txt <<'EOF'\nhello\n" % index
+                _code, value, stderr = self.run_core(
+                    self.shell(
+                        "s1",
+                        command,
+                        tool_id="b4-%d" % index,
+                        event="post_tool",
+                        outcome="success",
+                    )
                 )
-            )
-            assert not self.is_denied(value), value
-            warnings = engine_warnings(stderr)
-            assert STRUCTURE_UNPARSABLE not in warnings
-            assert POST_UNPAIRED in warnings
+                assert not self.is_denied(value), value
+                warnings = engine_warnings(stderr)
+                assert STRUCTURE_UNPARSABLE not in warnings
+                assert POST_UNPAIRED in warnings
 
     def test_changed_post_parameters_keep_post_only_accounting(self) -> None:
         """B5：同工具 ID 的 pre 可解析，post 换成有结构缺口的参数。"""

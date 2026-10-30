@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase, clean_env
 
 INSTALL = HOOKS_ROOT / "hooks" / "install.py"
@@ -859,9 +860,10 @@ class CodexTranscriptSkillReadTests(TranscriptSkillReadTests):
             "错误结果": {"output": "Error: not found", "is_error": True},
         }
         for label, output in cases.items():
-            path = self.write_transcript(self.codex_read(str(self.skill / "SKILL.md"), output))
-            self.run_core(self.input_with_transcript("t1", path))
-            self.allow(self.shell("t1", "git reset --hard"))
+            with subtests.test(case=label):
+                path = self.write_transcript(self.codex_read(str(self.skill / "SKILL.md"), output))
+                self.run_core(self.input_with_transcript("t1", path))
+                self.allow(self.shell("t1", "git reset --hard"))
 
     def test_wrong_install_tree_does_not_activate(self) -> None:
         other = self.root / "other-install" / "SKILL.md"

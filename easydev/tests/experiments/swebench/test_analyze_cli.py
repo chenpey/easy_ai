@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from conftest import subtests
 
 
 SWEBENCH = Path(__file__).resolve().parent
@@ -448,10 +449,11 @@ class AnalyzeEventsCliTest:
             )
         payload = self.payload(experiment)
         for index, (label, _messages, initial, final, upgraded) in enumerate(cases):
-            run = self.run_by_task(payload, f"route-{index}")
-            assert run["declared_initial_path"] == initial
-            assert run["declared_final_path"] == final
-            assert run["upgraded_to_full"] == upgraded
+            with subtests.test(case=label):
+                run = self.run_by_task(payload, f"route-{index}")
+                assert run["declared_initial_path"] == initial
+                assert run["declared_final_path"] == final
+                assert run["upgraded_to_full"] == upgraded
 
     def test_reviewer_completion_requires_completed_nonempty_report(self) -> None:
         short_role_spawn = spawn()
@@ -497,10 +499,11 @@ class AnalyzeEventsCliTest:
             self.write_run(experiment, f"reviewer-{index}", events + [turn()])
         payload = self.payload(experiment)
         for index, (label, _events, completed, reports) in enumerate(cases):
-            run = self.run_by_task(payload, f"reviewer-{index}")
-            assert run["reviewer_instances"] == 1
-            assert run["reviewer_completed_instances"] == completed
-            assert run["reviewer_reports"] == reports
+            with subtests.test(case=label):
+                run = self.run_by_task(payload, f"reviewer-{index}")
+                assert run["reviewer_instances"] == 1
+                assert run["reviewer_completed_instances"] == completed
+                assert run["reviewer_reports"] == reports
 
     def test_reviewer_prompt_requires_positive_intent_without_developer_handoff(
         self,
@@ -577,9 +580,10 @@ class AnalyzeEventsCliTest:
             )
         payload = self.payload(experiment)
         for index, (label, _prompt, expected) in enumerate(cases):
-            run = self.run_by_task(payload, f"reviewer-{index}")
-            assert run["reviewer_instances"] == expected
-            assert run["reviewer_completed_instances"] == expected
+            with subtests.test(case=label):
+                run = self.run_by_task(payload, f"reviewer-{index}")
+                assert run["reviewer_instances"] == expected
+                assert run["reviewer_completed_instances"] == expected
 
     # -- access attribution --------------------------------------------
     def test_access_attribution_separates_reads_from_status_queries(self) -> None:

@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from conftest import subtests
 from support import CaseBase, HOOKS_ROOT
 
 if str(HOOKS_ROOT) not in sys.path:
@@ -313,9 +314,10 @@ class EvaluatedWordSubstitutionTests:
             'case "$(git reset --hard)" in *) true;; esac',
         )
         for command in matrix:
-            actions = git_actions(shell.analyze(command, cwd="/tmp/base"))
-            # 命令自身的子命令动作（如 git status）也合法，只要真的识别出 reset。
-            assert ("reset", ["--hard"]) in actions, command
+            with subtests.test(command=command):
+                actions = git_actions(shell.analyze(command, cwd="/tmp/base"))
+                # 命令自身的子命令动作（如 git status）也合法，只要真的识别出 reset。
+                assert ("reset", ["--hard"]) in actions, command
 
     def test_literal_filtered_words_are_not_execution(self) -> None:
         for command in (
@@ -1508,18 +1510,19 @@ class HeredocShellTests:
 
     def test_quoted_heredoc_is_data(self) -> None:
         for opener in ("<<'EOF'", '<<"EOF"', "<<\\EOF", '<<E"O"F', "<<E''OF"):
-            command = "cat > out.txt %s\n%sEOF" % (opener, QUOTED_HEREDOC_BODY)
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert not analysis.opaque, analysis.as_dict()
-            assert not analysis.compound_unresolved
-            assert not analysis.stdin_program
-            # 正文与结束行都不进 commands，只留外层命令。
-            assert analysis.commands == [["cat"]]
-            assert analysis.git == []
-            assert analysis.reads == []
-            # 外层静态重定向照旧记录，cwd 沿用工具目录。
-            assert write_targets(analysis) == [("out.txt", True)]
-            assert entry_cwds(analysis.writes) == ["/tmp/base"]
+            with subtests.test(opener=opener):
+                command = "cat > out.txt %s\n%sEOF" % (opener, QUOTED_HEREDOC_BODY)
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert not analysis.opaque, analysis.as_dict()
+                assert not analysis.compound_unresolved
+                assert not analysis.stdin_program
+                # 正文与结束行都不进 commands，只留外层命令。
+                assert analysis.commands == [["cat"]]
+                assert analysis.git == []
+                assert analysis.reads == []
+                # 外层静态重定向照旧记录，cwd 沿用工具目录。
+                assert write_targets(analysis) == [("out.txt", True)]
+                assert entry_cwds(analysis.writes) == ["/tmp/base"]
         # 空引用 delimiter：定界词存在（不是缺 word），以空行结束。
         empty = shell.analyze("cat <<''\ngit reset --hard\n\n", cwd="/tmp/base")
         assert not empty.opaque, empty.as_dict()
@@ -1535,12 +1538,13 @@ class HeredocShellTests:
             '"$(git reset --hard)"',
             "# $(git reset --hard)",
         ):
-            command = "cat <<EOF\n%s\nEOF" % body
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            # 正文里的单引号/双引号/`#` 都没有 shell 引号或注释语义。
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert not analysis.opaque, analysis.as_dict()
-            assert not analysis.stdin_program
+            with subtests.test(body=body):
+                command = "cat <<EOF\n%s\nEOF" % body
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 正文里的单引号/双引号/`#` 都没有 shell 引号或注释语义。
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert not analysis.opaque, analysis.as_dict()
+                assert not analysis.stdin_program
         # 替换内部的读/写仍按既有语义合并，正文自身不生成命令。
         nested = shell.analyze("cat <<EOF\n$(cat secret; touch child)\nEOF", cwd="/tmp/base")
         assert nested.git == []
@@ -1563,17 +1567,19 @@ class HeredocShellTests:
             (3, []),
             (4, [("reset", ["--hard"])]),
         ):
-            command = "cat <<EOF\n" + ("\\" * count) + "$(git reset --hard)\nEOF"
-            assert git_actions(shell.analyze(command, cwd="/tmp/base")) == expected
+            with subtests.test(backslashes=count):
+                command = "cat <<EOF\n" + ("\\" * count) + "$(git reset --hard)\nEOF"
+                assert git_actions(shell.analyze(command, cwd="/tmp/base")) == expected
         # 反斜杠后为非 `$`/反引号/反斜杠时只前移一个字符，后续替换照常执行。
         assert git_actions(shell.analyze("cat <<EOF\n\\a$(git reset --hard)\nEOF", cwd="/tmp/base")) == [("reset", ["--hard"])]
         assert git_actions(shell.analyze("cat <<EOF\n\\`git reset --hard\\`\nEOF", cwd="/tmp/base")) == []
         # 引用正文的同形输入一律没有执行。
         for body in ("\\$(git reset --hard)", "$(git reset --hard)", "\\\\$(git reset --hard)"):
-            command = "cat <<'EOF'\n%s\nEOF" % body
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert analysis.git == []
-            assert not analysis.opaque, analysis.as_dict()
+            with subtests.test(body=body):
+                command = "cat <<'EOF'\n%s\nEOF" % body
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert analysis.git == []
+                assert not analysis.opaque, analysis.as_dict()
 
     def test_heredoc_multiple_bodies_follow_source_order(self) -> None:
         # `cat <<A <<'B'`：A 的替换执行，B 的字面数据不执行。
@@ -1650,12 +1656,13 @@ class HeredocShellTests:
         assert analysis.commands == [["cat"]]
         # 没有精确结束行：整次回退，旧 Git 证据不减少。
         for body in ("hello\nEOF ", "hello\nEOF\t", "hello\n EOF", "hello\nEOF\r"):
-            command = "cat <<'EOF'\n" + body + "\ngit reset --hard"
-            self.assert_legacy_facts(
-                command,
-                [("reset", ["--hard"])],
-                [("git-reset", None, False)],
-            )
+            with subtests.test(body=body):
+                command = "cat <<'EOF'\n" + body + "\ngit reset --hard"
+                self.assert_legacy_facts(
+                    command,
+                    [("reset", ["--hard"])],
+                    [("git-reset", None, False)],
+                )
         # Unicode 分隔符按字节精确匹配。
         unicode = shell.analyze("cat <<'ＥＯＦ'\nhello\nＥＯＦ", cwd="/tmp/base")
         assert not unicode.opaque, unicode.as_dict()
@@ -1700,7 +1707,8 @@ class HeredocShellTests:
             ("if true; then cat <<'EOF'\nhello\nEOF", [], [], True),
         )
         for command, git, writes, compound in cases:
-            self.assert_legacy_facts(command, git, writes, compound)
+            with subtests.test(command=command):
+                self.assert_legacy_facts(command, git, writes, compound)
         # 同一次输入里更早的 quoted 数据正文不能只回退最后一个 heredoc。
         sentinel = shell.analyze(
             "cat <<'A'\ngit reset --hard\nA\ncat <<$X\nhello\nEOF\ngit reset --hard",
@@ -1777,14 +1785,15 @@ class HeredocShellTests:
         assert reads == []
         assert unknown
         for command in ("sh <<< 'git reset --hard'", "env bash <<< 'git reset --hard'"):
-            wrapped = shell.analyze(command, cwd="/tmp/base")
-            # 正文不是多行 heredoc：不新增脚本分析，Git/写证据与今天一致。
-            assert wrapped.stdin_program, wrapped.as_dict()
-            assert wrapped.git == []
-            assert wrapped.writes == []
-            assert shell.is_read_only_command(command) == (False, True)
-            _reads, unknown = shell.read_command_paths(command)
-            assert unknown
+            with subtests.test(command=command):
+                wrapped = shell.analyze(command, cwd="/tmp/base")
+                # 正文不是多行 heredoc：不新增脚本分析，Git/写证据与今天一致。
+                assert wrapped.stdin_program, wrapped.as_dict()
+                assert wrapped.git == []
+                assert wrapped.writes == []
+                assert shell.is_read_only_command(command) == (False, True)
+                _reads, unknown = shell.read_command_paths(command)
+                assert unknown
         # 数据消费者与普通命令的 herestring 不标记。
         assert not shell.analyze("cat <<< hello", cwd="/tmp/base").stdin_program
         assert not shell.analyze("printf '%s' <<< x", cwd="/tmp/base").stdin_program
@@ -1796,14 +1805,15 @@ class HeredocShellTests:
             "eval 'python3 -' <<< 'print(1)'",
             "env eval 'python3 -' <<< 'print(1)'",
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert analysis.stdin_program, analysis.as_dict()
-            assert not analysis.opaque, analysis.as_dict()
-            assert analysis.git == []
-            assert analysis.writes == []
-            assert shell.is_read_only_command(command) == (False, True)
-            _reads, unknown = shell.read_command_paths(command)
-            assert unknown
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert analysis.stdin_program, analysis.as_dict()
+                assert not analysis.opaque, analysis.as_dict()
+                assert analysis.git == []
+                assert analysis.writes == []
+                assert shell.is_read_only_command(command) == (False, True)
+                _reads, unknown = shell.read_command_paths(command)
+                assert unknown
         # 脚本阶段的任一命令名都保守标记：`eval cat` 同样可能把正文喂给程序。
         assert shell.analyze("eval 'cat' <<< 'hello'", cwd="/tmp/base").stdin_program
         assert shell.is_read_only_command("eval 'cat' <<< 'hello'") == (False, True)
@@ -1811,7 +1821,8 @@ class HeredocShellTests:
         assert unknown
         # 非脚本阶段的普通命令/数据消费者仍不标记。
         for command in ("cat <<< 'x'", "printf '%s' <<< 'x'"):
-            assert not shell.analyze(command, cwd="/tmp/base").stdin_program
+            with subtests.test(command=command):
+                assert not shell.analyze(command, cwd="/tmp/base").stdin_program
 
     def test_heredoc_cwd_and_wrapper_evaluation(self) -> None:
         # 外层重定向按段入口 cwd 解析。
@@ -1848,12 +1859,13 @@ class HeredocShellTests:
 
     def test_shell_heredoc_body_is_a_script(self) -> None:
         for name in ("sh", "bash", "dash", "zsh", "ksh"):
-            command = "%s <<'EOF'\ngit reset --hard\nEOF" % name
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            # 引用 delimiter 只抑制外层展开，不能阻止接收正文的壳执行脚本。
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert analysis.stdin_program
-            assert not analysis.opaque, analysis.as_dict()
+            with subtests.test(shell=name):
+                command = "%s <<'EOF'\ngit reset --hard\nEOF" % name
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 引用 delimiter 只抑制外层展开，不能阻止接收正文的壳执行脚本。
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert analysis.stdin_program
+                assert not analysis.opaque, analysis.as_dict()
         unquoted = shell.analyze("bash <<EOF\ntouch protected\nEOF", cwd="/tmp/base")
         assert write_targets(unquoted) == [("protected", True)]
         assert unquoted.stdin_program
@@ -1862,9 +1874,10 @@ class HeredocShellTests:
             "sudo sh <<'EOF'\ngit reset --hard\nEOF",
             "env bash <<'EOF'\ngit reset --hard\nEOF",
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert analysis.stdin_program
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert analysis.stdin_program
         # `bash -c` 的脚本文本是新的求值阶段；外层 stdin 仍保守按壳正文处理。
         script = shell.analyze("bash -c 'sh' <<'EOF'\ntouch protected\nEOF", cwd="/tmp/base")
         assert write_targets(script) == [("protected", True)]
@@ -1894,14 +1907,15 @@ class HeredocShellTests:
 
     def test_heredoc_data_consumer_whitelist(self) -> None:
         for name in HEREDOC_DATA_COMMANDS:
-            command = "%s <<'EOF'\ngit reset --hard\nEOF" % name
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert not analysis.opaque, analysis.as_dict()
-            assert not analysis.stdin_program
-            assert analysis.git == []
-            assert analysis.reads == []
-            # 正文不产生假写；tee 自身的 argv 写规则不受名单改变。
-            assert [item for item in analysis.writes if item.get("kind") != "tee"] == []
+            with subtests.test(command=name):
+                command = "%s <<'EOF'\ngit reset --hard\nEOF" % name
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert not analysis.opaque, analysis.as_dict()
+                assert not analysis.stdin_program
+                assert analysis.git == []
+                assert analysis.reads == []
+                # 正文不产生假写；tee 自身的 argv 写规则不受名单改变。
+                assert [item for item in analysis.writes if item.get("kind") != "tee"] == []
         # 绝对路径与 argv 包装解包后仍是纯数据消费者。
         for command in (
             "/usr/bin/cat <<'EOF'\ngit reset --hard\nEOF",
@@ -1909,9 +1923,10 @@ class HeredocShellTests:
             "command cat <<'EOF'\ngit reset --hard\nEOF",
             "sudo cat <<'EOF'\ngit reset --hard\nEOF",
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert analysis.git == []
-            assert not analysis.stdin_program
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert analysis.git == []
+                assert not analysis.stdin_program
         # 外层重定向写照旧完整，正文 Git 字面不构成执行。
         redirect = shell.analyze("cat > f <<'EOF'\ngit reset --hard\nEOF", cwd="/tmp/base")
         assert redirect.git == []
@@ -1925,9 +1940,10 @@ class HeredocShellTests:
             "$(echo cat) <<'EOF'\ngit reset --hard\nEOF",
             "cat $(echo file) <<'EOF'\ngit reset --hard\nEOF",
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert analysis.stdin_program
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert analysis.stdin_program
 
     def test_heredoc_executing_consumers_keep_reset(self) -> None:
         for command in (
@@ -1940,11 +1956,12 @@ class HeredocShellTests:
             "find . -maxdepth 0 <<'EOF'\ngit reset --hard\nEOF",
             "frobnicate <<'EOF'\ngit reset --hard\nEOF",
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            # 非白名单消费者一律按脚本，正文 reset 证据必须保留。
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert analysis.stdin_program
-            assert not analysis.opaque, analysis.as_dict()
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 非白名单消费者一律按脚本，正文 reset 证据必须保留。
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert analysis.stdin_program
+                assert not analysis.opaque, analysis.as_dict()
         # env 无法解包时保守按脚本，且不丢正文证据。
         opaque_env = shell.analyze(
             "env --unknown-option cat <<'EOF'\ngit reset --hard\nEOF", cwd="/tmp/base"
@@ -1954,22 +1971,24 @@ class HeredocShellTests:
 
     def test_heredoc_interpreter_data_branch(self) -> None:
         for name in ("python", "python3", "node", "perl", "ruby", "php", "python3.12"):
-            command = "%s - <<'PY'\ngit reset --hard\nPY" % name
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            # 解释器正文按数据处理，但仍是不可证明的数据消费者输入。
-            assert analysis.git == []
-            assert analysis.stdin_program
-            assert not analysis.opaque, analysis.as_dict()
-            assert shell.is_read_only_command(command) == (False, True)
+            with subtests.test(interpreter=name):
+                command = "%s - <<'PY'\ngit reset --hard\nPY" % name
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                # 解释器正文按数据处理，但仍是不可证明的数据消费者输入。
+                assert analysis.git == []
+                assert analysis.stdin_program
+                assert not analysis.opaque, analysis.as_dict()
+                assert shell.is_read_only_command(command) == (False, True)
         wrapped = shell.analyze("env python3 - <<'PY'\ngit reset --hard\nPY", cwd="/tmp/base")
         assert wrapped.git == []
         assert wrapped.stdin_program
         # awk 系列不属于解释器数据分支：仍保守按脚本并保留 reset。
         for name in ("awk", "gawk", "mawk", "nawk"):
-            command = "%s '{print}' <<'EOF'\ngit reset --hard\nEOF" % name
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert analysis.stdin_program
+            with subtests.test(awk=name):
+                command = "%s '{print}' <<'EOF'\ngit reset --hard\nEOF" % name
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert analysis.stdin_program
 
     def test_heredoc_consumer_binding_is_conservative(self) -> None:
         reading = "print(open('/etc/passwd').read())"
@@ -1978,9 +1997,10 @@ class HeredocShellTests:
             "python3 - 3<<'PY' 0<&3\n%s\nPY" % reading,
             "cat <<'PY' | python3 -\n%s\nPY" % reading,
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert analysis.stdin_program, analysis.as_dict()
-            assert not analysis.opaque, analysis.as_dict()
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert analysis.stdin_program, analysis.as_dict()
+                assert not analysis.opaque, analysis.as_dict()
         # 管道左段名为 cat 也不能抢先归纯数据：正文按脚本，reset 证据保留。
         pipeline = shell.analyze(
             "cat <<'EOF' | cat\ngit reset --hard\nEOF", cwd="/tmp/base"
@@ -2019,9 +2039,10 @@ class HeredocShellTests:
             "sudo cat <<'EOF'\nhello\nEOF",
             "command wc -l <<'EOF'\nhello\nEOF",
         ):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert read_paths(analysis) == [], analysis.as_dict()
-            assert not analysis.stdin_program
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert read_paths(analysis) == [], analysis.as_dict()
+                assert not analysis.stdin_program
         # 显式文件参数仍是读取目标。
         explicit = shell.analyze("env cat file.txt <<'EOF'\nhello\nEOF", cwd="/tmp/base")
         assert read_paths(explicit) == ["file.txt"]
@@ -2066,8 +2087,9 @@ class HeredocShellTests:
         assert entry_cwds(continuation.writes) == ["/tmp/base/sub"]
         # 引号里的 `<<` 是数据，不触发整次回退。
         for command in ("echo 'a << b'", 'echo "a << b"'):
-            analysis = shell.analyze(command, cwd="/tmp/base")
-            assert not analysis.opaque, analysis.as_dict()
+            with subtests.test(command=command):
+                analysis = shell.analyze(command, cwd="/tmp/base")
+                assert not analysis.opaque, analysis.as_dict()
 
     def test_heredoc_body_depth_limit_preserves_legacy_evidence(self) -> None:
         command = "sh <<'EOF'\ngit reset --hard\ntouch protected\nEOF"
@@ -2104,17 +2126,19 @@ class HeredocShellTests:
             (8, True, [("reset", ["--hard"])], [(None, False), ("protected", True)]),
             (9, True, [], []),
         ):
-            analysis = shell.analyze(chain[level])
-            assert analysis.opaque == opaque, analysis.as_dict()
-            assert not analysis.too_deep
-            assert git_actions(analysis) == git
-            assert write_targets(analysis) == writes
+            with subtests.test(level=level):
+                analysis = shell.analyze(chain[level])
+                assert analysis.opaque == opaque, analysis.as_dict()
+                assert not analysis.too_deep
+                assert git_actions(analysis) == git
+                assert write_targets(analysis) == writes
         for level, opaque in ((7, False), (8, False), (9, True)):
-            analysis = shell.analyze(("env " * level) + base)
-            assert analysis.opaque == opaque, analysis.as_dict()
-            assert not analysis.too_deep
-            assert git_actions(analysis) == [("reset", ["--hard"])]
-            assert write_targets(analysis) == [(None, False), ("protected", True)]
+            with subtests.test(wrapper=level):
+                analysis = shell.analyze(("env " * level) + base)
+                assert analysis.opaque == opaque, analysis.as_dict()
+                assert not analysis.too_deep
+                assert git_actions(analysis) == [("reset", ["--hard"])]
+                assert write_targets(analysis) == [(None, False), ("protected", True)]
 
     def test_heredoc_scan_is_bounded(self) -> None:
         # 近上限正文：一次线性消费，不逐行 analyze。

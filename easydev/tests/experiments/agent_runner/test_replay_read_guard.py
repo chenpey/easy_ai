@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from conftest import subtests
 
 AGENT_RUNNER_ROOT = Path(__file__).resolve().parent
 EXPERIMENTS_ROOT = AGENT_RUNNER_ROOT.parent
@@ -257,8 +258,9 @@ class ReplayReadGuardTests:
             "未知 cd": "cd unknown-dir; cat sentinel.txt",
         }
         for label, command in cases.items():
-            value = self.run_guard(self.bash(command))
-            assert self.decision(value) == "deny", (label, value)
+            with subtests.test(case=label):
+                value = self.run_guard(self.bash(command))
+                assert self.decision(value) == "deny", (label, value)
         # 允许根内的同样写法仍然放行。
         assert self.decision(self.run_guard(self.bash("grep -f patterns.txt src/app.py"))) == "allow"
 
@@ -656,48 +658,51 @@ class DeployedGuardCommandTests:
         """DR-02：`find -exec/-execdir/-ok` 的被执行程序不可证明，部署守卫必须拒绝，
         且原命令不执行（sentinel 内容不会出现在任何输出里）。"""
         for action in ("-exec", "-execdir", "-ok"):
-            command = self.find_exec_command(action)
-                # 终止符 `;` 确实在 find 的 argv 里（否则测的只是“命令不完整”）。
-            analysis = guard.shell.analyze(command)
-            assert analysis.commands[0][-1] == ";", analysis.commands
-            assert analysis.read_unknown, analysis.as_dict()
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None, command
-            assert self.current_health() == "target_unresolved", result
-            assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
+            with subtests.test(action=action):
+                command = self.find_exec_command(action)
+                    # 终止符 `;` 确实在 find 的 argv 里（否则测的只是“命令不完整”）。
+                analysis = guard.shell.analyze(command)
+                assert analysis.commands[0][-1] == ";", analysis.commands
+                assert analysis.read_unknown, analysis.as_dict()
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None, command
+                assert self.current_health() == "target_unresolved", result
+                assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
         # 对照：没有 exec 动作的 find 仍放行并真的执行。
         for command, expected in (("find .", "./src/app.py"), ("find . -name '*.py'", "./src/app.py")):
-            result = self.host_run(command)
-            assert result["decision"] == "allow", (command, result)
-            assert result["executed"] is not None, command
-            assert expected in result["executed"].stdout
+            with subtests.test(command=command):
+                result = self.host_run(command)
+                assert result["decision"] == "allow", (command, result)
+                assert result["executed"] is not None, command
+                assert expected in result["executed"].stdout
 
     def test_find_exec_is_denied_at_guard_entry_without_host_stand_in(self) -> None:
         """不经宿主替身：守卫自己的入口对“带真实终止符的 find -exec”同样拒绝。"""
         policy = json.loads(Path(self.info["policy_path"]).read_text(encoding="utf-8"))
         for action in ("-exec", "-execdir", "-ok"):
-            command = self.find_exec_command(action)
-            with pytest.raises(guard.GuardFailure) as caught:
+            with subtests.test(action=action):
+                command = self.find_exec_command(action)
+                with pytest.raises(guard.GuardFailure) as caught:
+                    guard.check_request(
+                        {
+                            "tool_name": "Bash",
+                            "tool_input": {"command": command},
+                            "cwd": str(self.workspace),
+                        },
+                        policy,
+                    )
+                assert caught.value.code == "target_unresolved"
+                assert "不可证明" in caught.value.message
+                # 对照：同样带终止符的普通 find 不触发任何拒绝。
                 guard.check_request(
                     {
                         "tool_name": "Bash",
-                        "tool_input": {"command": command},
+                        "tool_input": {"command": "find . -name '*.py'"},
                         "cwd": str(self.workspace),
                     },
                     policy,
                 )
-            assert caught.value.code == "target_unresolved"
-            assert "不可证明" in caught.value.message
-            # 对照：同样带终止符的普通 find 不触发任何拒绝。
-            guard.check_request(
-                {
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "find . -name '*.py'"},
-                    "cwd": str(self.workspace),
-                },
-                policy,
-            )
 
     def test_unknown_cwd_from_condition_cd_is_denied(self) -> None:
         """DR-05：条件 cd 让 cwd 不可证明时，替换内的相对读取必须拒绝。"""
@@ -792,10 +797,11 @@ class DeployedGuardCommandTests:
             "rg -nf%s src/app.py" % self.sentinel,
             "grep -n -f %s src/app.py" % self.sentinel,
         ):
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None
-            assert "outside_allowed" in result["health"]
+            with subtests.test(command=command):
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None
+                assert "outside_allowed" in result["health"]
         # 允许根内的同一组写法放行，并且真的执行了原工具。
         inside = self.host_run("grep -nfpatterns.txt src/app.py")
         assert inside["decision"] == "allow", inside
@@ -828,13 +834,15 @@ class DeployedGuardCommandTests:
             ("ls", {"path": str(dangling)}),
             ("grep", {"path": str(loop)}),
         ):
-            result = self.host_run_tool(tool, tool_input)
-            assert result["decision"] == "deny", (tool, tool_input, result)
-            assert "symlink_unresolved" in result["health"]
+            with subtests.test(tool=tool, target=tool_input['path']):
+                result = self.host_run_tool(tool, tool_input)
+                assert result["decision"] == "deny", (tool, tool_input, result)
+                assert "symlink_unresolved" in result["health"]
         for command in ("cat self-loop", "cat dangling", "cat cycle-a"):
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None
+            with subtests.test(command=command):
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None
         # 对照：允许根内普通文件仍放行。
         assert self.host_run_tool("read_file", {"path": str(healthy)})["decision"] == "allow"
 
@@ -858,10 +866,11 @@ class DeployedGuardCommandTests:
         first.symlink_to(second)
         second.symlink_to(first)
         for command in ("rg PATTERN .", "find .", "grep -R PATTERN ."):
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None
-            assert "symlink_unresolved" in result["health"]
+            with subtests.test(command=command):
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None
+                assert "symlink_unresolved" in result["health"]
         for link in (loop, dangling, first, second):
             link.unlink()
         clean = self.host_run("rg PATTERN .")
@@ -899,18 +908,20 @@ class DeployedGuardCommandTests:
             "install --target-directory %s %s" % (source_dir, self.sentinel),
             "cp -t %s %s %s" % (source_dir, inside, self.sentinel),
         ):
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None
-            assert "outside_allowed" in result["health"]
+            with subtests.test(command=command):
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None
+                assert "outside_allowed" in result["health"]
         # 允许根内的源放行；本机 macOS 无 GNU -t，不执行也不宣称已真实复制。
         for command in (
             "cp -t %s %s" % (source_dir, inside),
             "install -t %s %s" % (source_dir, inside),
             "cp -t %s %s %s" % (source_dir, inside, inside),
         ):
-            result = self.host_run_tool("Bash", {"command": command})
-            assert result["decision"] == "allow", (command, result)
+            with subtests.test(command=command):
+                result = self.host_run_tool("Bash", {"command": command})
+                assert result["decision"] == "allow", (command, result)
 
     def test_rg_files_roots_are_all_checked(self) -> None:
         """T06：`rg --files` 的位置参数全是根，不能把第一个当成搜索 pattern。"""
@@ -941,14 +952,15 @@ class DeployedGuardCommandTests:
             "python3 - <<'PY'\nprint(open(%r).read())\nPY" % str(self.sentinel),
             "(python3 -) <<'PY'\nprint(open(%r).read())\nPY" % str(self.sentinel),
         ):
-            analysis = guard.shell.analyze(command)
-            assert analysis.stdin_program, analysis.as_dict()
-            assert not analysis.opaque, analysis.as_dict()
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None, command
-            assert self.current_health() == "target_unresolved", result
-            assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
+            with subtests.test(command=command):
+                analysis = guard.shell.analyze(command)
+                assert analysis.stdin_program, analysis.as_dict()
+                assert not analysis.opaque, analysis.as_dict()
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None, command
+                assert self.current_health() == "target_unresolved", result
+                assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
 
     def test_fd_forwarded_heredoc_stdin_program_is_denied(self) -> None:
         """G1：非零 fd 的正文再经 `0<&3` 转接，仍不能证明是数据输入。"""
@@ -980,17 +992,18 @@ class DeployedGuardCommandTests:
             "sh <<< 'echo EASYDEV-HERESTRING-SENTINEL'",
         )
         for command in commands:
-            analysis = guard.shell.analyze(command)
-            # herestring 的执行/opaque/读写语义不变：正文不进入脚本分析。
-            assert analysis.stdin_program, analysis.as_dict()
-            assert not analysis.opaque, analysis.as_dict()
-            assert analysis.git == []
-            assert analysis.writes == []
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None, command
-            assert self.current_health() == "target_unresolved", result
-            assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
+            with subtests.test(command=command):
+                analysis = guard.shell.analyze(command)
+                # herestring 的执行/opaque/读写语义不变：正文不进入脚本分析。
+                assert analysis.stdin_program, analysis.as_dict()
+                assert not analysis.opaque, analysis.as_dict()
+                assert analysis.git == []
+                assert analysis.writes == []
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None, command
+                assert self.current_health() == "target_unresolved", result
+                assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
 
     def test_eval_herestring_program_stdin_is_denied(self) -> None:
         """G1：`eval 'python3 -' <<< …` 的正文随脚本文本继承 stdin，同样不能放行。"""
@@ -999,15 +1012,16 @@ class DeployedGuardCommandTests:
             'eval \'python3 -\' <<< "%s"' % reading,
             'env eval \'python3 -\' <<< "%s"' % reading,
         ):
-            analysis = guard.shell.analyze(command)
-            assert analysis.stdin_program, analysis.as_dict()
-            assert not analysis.opaque, analysis.as_dict()
-            assert analysis.reads == []
-            result = self.host_run(command)
-            assert result["decision"] == "deny", (command, result)
-            assert result["executed"] is None, command
-            assert self.current_health() == "target_unresolved", result
-            assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
+            with subtests.test(command=command):
+                analysis = guard.shell.analyze(command)
+                assert analysis.stdin_program, analysis.as_dict()
+                assert not analysis.opaque, analysis.as_dict()
+                assert analysis.reads == []
+                result = self.host_run(command)
+                assert result["decision"] == "deny", (command, result)
+                assert result["executed"] is None, command
+                assert self.current_health() == "target_unresolved", result
+                assert "SENTINEL-OPERATOR-SECRET" not in json.dumps(result["raw"])
 
     def test_cat_heredoc_output_and_data_are_not_stdin_program(self) -> None:
         """G1：外层写形态与普通数据 heredoc 都不带该标记，守卫照常放行。"""

@@ -18,6 +18,7 @@ import pytest
 import subprocess
 import sys
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states, task_states
 
@@ -92,10 +93,11 @@ class X01CommentLexicalStateTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.redirect_deny_cases()):
-            value = self.dispatch_command("dev", command, "x01-dev-%d" % index)
-            # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
-            assert self.is_denied(value), value
-            assert "baseline/1.txt" in self.reason(value)
+            with subtests.test(command=command):
+                value = self.dispatch_command("dev", command, "x01-dev-%d" % index)
+                # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
+                assert self.is_denied(value), value
+                assert "baseline/1.txt" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_comment_quotes_do_not_unhide_dangerous_git(self) -> None:
@@ -104,33 +106,38 @@ class X01CommentLexicalStateTests(HookCase):
             self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT + self.COMMENT_TRAILING_BACKSLASH[:1]
         )
         for index, command in enumerate(git_cases):
-            # 危险 Git 只作为字符串投递，绝不执行。
-            reason = self.deny(self.shell("dev", command, tool_id="x01-git-%d" % index))
-            assert "Git" in reason
+            with subtests.test(command=command):
+                # 危险 Git 只作为字符串投递，绝不执行。
+                reason = self.deny(self.shell("dev", command, tool_id="x01-git-%d" % index))
+                assert "Git" in reason
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_the_same_forms(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.redirect_deny_cases()):
-            value = self.dispatch_command("rev", command, "x01-rev-%d" % index)
-            assert self.is_denied(value), value
-            assert "只读" in self.reason(value)
-            # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
-            violation = shell.reviewer_violation(command)
-            assert violation.get("targets") == ["1.txt"], violation
+            with subtests.test(command=command):
+                value = self.dispatch_command("rev", command, "x01-rev-%d" % index)
+                assert self.is_denied(value), value
+                assert "只读" in self.reason(value)
+                # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
+                violation = shell.reviewer_violation(command)
+                assert violation.get("targets") == ["1.txt"], violation
         for index, command in enumerate(self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT):
-            value = self.run_core(self.shell("rev", command, tool_id="x01-rev-git-%d" % index))[1]
-            assert self.is_denied(value), value
+            with subtests.test(command=command):
+                value = self.run_core(self.shell("rev", command, tool_id="x01-rev-git-%d" % index))[1]
+                assert self.is_denied(value), value
         self.assert_sentinels_intact()
 
     def test_lexical_state_is_shared_across_comment_quote_and_operator(self) -> None:
         for command in self.redirect_deny_cases():
-            analysis = shell.analyze(command)
-            assert not analysis.opaque, analysis.as_dict()
-            assert [item.get("target") for item in analysis.writes] == ["1.txt"]
-            assert analysis.commands == [["printf", "x"]]
+            with subtests.test(command=command):
+                analysis = shell.analyze(command)
+                assert not analysis.opaque, analysis.as_dict()
+                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
+                assert analysis.commands == [["printf", "x"]]
         for command in self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT:
-            assert shell.analyze(command).commands == [["git", "reset", "--hard"]]
+            with subtests.test(command=command):
+                assert shell.analyze(command).commands == [["git", "reset", "--hard"]]
         # 注释行尾的反斜杠不续行：下一物理行是真实命令。
         assert shell.analyze("# note \\\ngit reset --hard").commands == [["git", "reset", "--hard"]]
 

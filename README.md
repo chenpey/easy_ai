@@ -5,7 +5,7 @@
 | 名称 | 版本 | 简单说明 |
 | --- | --- | --- |
 | [EasyThink](easythink/README.md) | 0.4.0 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
-| [EasyDev](easydev/README.md) | 1.4.9 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
+| [EasyDev](easydev/README.md) | 1.5.0 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
 
 ## Harness 兼容性
 

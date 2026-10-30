@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Set
 from unittest import mock
 
+from conftest import subtests
 from support import HookCase, core_module
 from test_heredoc_warnings import engine_warnings
 from test_r5_fixes import task_states
@@ -206,24 +207,26 @@ class MergeWriteEntriesTests:
     def test_unsafe_fingerprint_wins_over_clean_first(self) -> None:
         """后一次预取发现目标不是普通文件/不可读时，不能被先到的干净条目盖掉。"""
         for unsafe in ("nonregular", "toolarge", "unreadable"):
-            entries, unstable = core_module._merge_write_entries(
-                [self.entry("clean"), self.entry(unsafe)]
-            )
-            assert len(entries) == 1, entries
-            assert entries[0]["fingerprint"] == unsafe
-            assert unstable
-            assert entries[0].get("unstable"), entries
+            with subtests.test(fingerprint=unsafe):
+                entries, unstable = core_module._merge_write_entries(
+                    [self.entry("clean"), self.entry(unsafe)]
+                )
+                assert len(entries) == 1, entries
+                assert entries[0]["fingerprint"] == unsafe
+                assert unstable
+                assert entries[0].get("unstable"), entries
 
     def test_deadline_prefetch_is_not_a_state_change(self) -> None:
         """共享预算耗尽的 `deadline` 是取证降级，不是观察到的状态变化。"""
         for first, second in (("aaa", "deadline"), ("deadline", "aaa")):
-            entries, unstable = core_module._merge_write_entries(
-                [self.entry(first), self.entry(second)]
-            )
-            assert len(entries) == 1, entries
-            assert entries[0]["fingerprint"] == "aaa"
-            assert entries[0].get("deadline"), entries
-            assert not unstable
+            with subtests.test(order=(first, second)):
+                entries, unstable = core_module._merge_write_entries(
+                    [self.entry(first), self.entry(second)]
+                )
+                assert len(entries) == 1, entries
+                assert entries[0]["fingerprint"] == "aaa"
+                assert entries[0].get("deadline"), entries
+                assert not unstable
 
     def test_deadline_between_two_states_is_unstable(self) -> None:
         entries, unstable = core_module._merge_write_entries(
@@ -510,7 +513,8 @@ class WrappedStdinTests(WriteAccountingCase):
                 "cat <<'EOF' | bash -s\nprint(1)\nEOF",
             )
         ):
-            self.assert_gap_pre_and_post(command, "wrap-pipe-%d" % index, notice=index == 0)
+            with subtests.test(command=command):
+                self.assert_gap_pre_and_post(command, "wrap-pipe-%d" % index, notice=index == 0)
 
     def test_shell_script_file_argument_keeps_gap(self) -> None:
         """壳从脚本文件读脚本时，heredoc 正文只是子进程 stdin：写目标仍不可枚举。"""
@@ -528,7 +532,8 @@ class WrappedStdinTests(WriteAccountingCase):
                 "bash --rcfile -s consumer.sh <<'PY'\nimport writer\nPY",
             )
         ):
-            self.assert_gap_pre_and_post(command, "script-arg-%d" % index, notice=index == 0)
+            with subtests.test(command=command.splitlines()[0]):
+                self.assert_gap_pre_and_post(command, "script-arg-%d" % index, notice=index == 0)
 
     def test_stdin_unparsed_marks_only_unproven_bodies(self) -> None:
         cases = (
@@ -565,7 +570,8 @@ class WrappedStdinTests(WriteAccountingCase):
             ("sh <<< 'echo hi'", True),
         )
         for command, expected in cases:
-            assert shell_module.analyze(command).stdin_unparsed == expected
+            with subtests.test(command=command):
+                assert shell_module.analyze(command).stdin_unparsed == expected
 
 
 class InterpreterStdinTests(WriteAccountingCase):

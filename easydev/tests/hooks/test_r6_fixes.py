@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 
+from conftest import subtests
 from support import HookCase
 from test_r5_fixes import (
     AntigravityTranscriptMixin,
@@ -68,16 +69,18 @@ class U01FdWordRedirectTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, (command, target) in enumerate(self.FILE_TARGET_CASES):
-            reason = self.deny(self.shell("dev", command, tool_id="u01-dev-%d" % index))
-            # 拒绝必须点名被写的文件目标，而不是别的原因凑巧拒绝。
-            assert target in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("dev", command, tool_id="u01-dev-%d" % index))
+                # 拒绝必须点名被写的文件目标，而不是别的原因凑巧拒绝。
+                assert target in reason
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_fd_word_file_targets(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, (command, _target) in enumerate(self.FILE_TARGET_CASES):
-            reason = self.deny(self.shell("rev", command, tool_id="u01-rev-%d" % index))
-            assert "只读" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("rev", command, tool_id="u01-rev-%d" % index))
+                assert "只读" in reason
         self.assert_sentinels_intact()
 
     def test_multiple_fd_word_targets_do_not_hide_behind_fd_duplication(self) -> None:
@@ -90,7 +93,8 @@ class U01FdWordRedirectTests(HookCase):
     def test_fd_duplication_and_close_are_not_file_writes(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
-            self.allow(self.shell("rev", command, tool_id="u01-fd-%d" % index))
+            with subtests.test(command=command):
+                self.allow(self.shell("rev", command, tool_id="u01-fd-%d" % index))
         self.assert_sentinels_intact()
 
     def test_numeric_file_targets_without_ampersand_stay_protected(self) -> None:
@@ -98,8 +102,9 @@ class U01FdWordRedirectTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(("printf x > 1", "printf x >> 1", "printf x 2> 1")):
-            reason = self.deny(self.shell("dev", command, tool_id="u01-num-%d" % index))
-            assert "baseline/1" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("dev", command, tool_id="u01-num-%d" % index))
+                assert "baseline/1" in reason
         self.assert_sentinels_intact()
 
 
@@ -171,14 +176,15 @@ class U02DeactivationBoundaryMixin(object):
         path = self.deactivate("u02-follow.jsonl")
         # 停用后连续多个普通新回合：transcript 里仍有停用前的成功 SKILL 读取。
         for index in range(3):
-            self.append_user(path, self.FOLLOW_UP)
-            _code, value, _stderr = self.run_core(self.input_with_transcript("P", path))
-            assert not self.is_denied(value), value
-            assert self.actor_state("P")["activation_scope"] == "inactive"
-            assert not root_states(self.state)[0].get("active")
-            # 普通工具与危险 Git 继续放行：停用后不由本 Plugin 管。
-            self.allow(self.shell("P", "git reset --hard", tool_id="u02-git-%d" % index))
-            self.allow(self.write_tool("P", "src/app.py", tool_id="u02-w-%d" % index))
+            with subtests.test(turn=index):
+                self.append_user(path, self.FOLLOW_UP)
+                _code, value, _stderr = self.run_core(self.input_with_transcript("P", path))
+                assert not self.is_denied(value), value
+                assert self.actor_state("P")["activation_scope"] == "inactive"
+                assert not root_states(self.state)[0].get("active")
+                # 普通工具与危险 Git 继续放行：停用后不由本 Plugin 管。
+                self.allow(self.shell("P", "git reset --hard", tool_id="u02-git-%d" % index))
+                self.allow(self.write_tool("P", "src/app.py", tool_id="u02-w-%d" % index))
         # 旧 child 的 pre/post/Stop 都不推进旧任务写序列与审查检查点。
         self.child_write("u02-child")
         self.allow(self.child_done_payload("P", agent="agent-dev", report="**[P1] 证据**\n"))

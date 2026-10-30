@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from conftest import subtests
 from support import HookCase
 
 
@@ -78,10 +79,11 @@ class DispatchMixin(object):
         )
         self.activate()
         for value in ("", "   ", 123, True, ["x"], {"path": "x"}, None):
-            self.write_context(models_file=value)
-            reason = self.deny(self.dispatch_payload("s1", self.developer_handoff()))
-            assert "对话指定" in reason
-            assert "不能静默回退" in reason
+            with subtests.test(value=value):
+                self.write_context(models_file=value)
+                reason = self.deny(self.dispatch_payload("s1", self.developer_handoff()))
+                assert "对话指定" in reason
+                assert "不能静默回退" in reason
 
     def test_explicit_missing_models_file_denies(self) -> None:
         self.activate()
@@ -136,13 +138,14 @@ class DispatchMixin(object):
             "角色/读写边界/项目与规则路径/授权基线：reviewer，只读",
         )
         for index, head in enumerate(heads):
-            prompt = "%s\n只读审查以下 diff。\n角色路径：%s\n**[P级] 简短标题**\n" % (
-                head,
-                role_path,
-            )
-            self.allow(
-                self.dispatch_payload("s1", prompt, tool_id="decl-%d" % index)
-            )
+            with subtests.test(head=head):
+                prompt = "%s\n只读审查以下 diff。\n角色路径：%s\n**[P级] 简短标题**\n" % (
+                    head,
+                    role_path,
+                )
+                self.allow(
+                    self.dispatch_payload("s1", prompt, tool_id="decl-%d" % index)
+                )
 
     def test_missing_handoff_message_names_the_literal_to_add(self) -> None:
         """只报“缺什么”模型只能猜格式；拒绝理由必须给出可照抄的字面量。"""

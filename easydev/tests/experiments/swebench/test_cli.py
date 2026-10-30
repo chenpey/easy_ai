@@ -25,6 +25,7 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from conftest import subtests
 
 
 SWEBENCH = Path(__file__).resolve().parent
@@ -532,22 +533,23 @@ class SwebenchCliTest:
             ("chained symlink", chained_symlink, "pwn"),
         )
         for label, writer, escaped_name in cases:
-            name = label.replace(" ", "-")
-            assets = self.make_assets(name, template=writer)
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub(name + "-stub")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            assert completed.returncode != 0, completed.stdout
-            assert "unsafe tar" in completed.stdout
-            run_path = self.run_path(experiment)
-            assert not (self.root / escaped_name).exists(), f"{label} created {self.root / escaped_name}"
-            assert not (run_path / escaped_name).exists()
-            assert not (run_path / "repo" / escaped_name).exists()
+            with subtests.test(case=label):
+                name = label.replace(" ", "-")
+                assets = self.make_assets(name, template=writer)
+                experiment = self.install_experiment(assets, "experiment")
+                stub = self.make_stub(name + "-stub")
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=self.complete_plan(),
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                )
+                assert completed.returncode != 0, completed.stdout
+                assert "unsafe tar" in completed.stdout
+                run_path = self.run_path(experiment)
+                assert not (self.root / escaped_name).exists(), f"{label} created {self.root / escaped_name}"
+                assert not (run_path / escaped_name).exists()
+                assert not (run_path / "repo" / escaped_name).exists()
 
     def test_read_only_template_directories_stay_usable(self) -> None:
         assets = self.make_assets("read-only", template=read_only_template)
@@ -577,17 +579,18 @@ class SwebenchCliTest:
             ("experiment directory", experiment),
             ("ancestor directory", assets.root),
         ):
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                extra=("--protect-paths", target),
-            )
-            assert completed.returncode != 0
-            assert "refusing to protect" in completed.stdout
-            assert not (experiment / "protected-modes.json").exists()
-            assert (experiment / "dataset.json").exists()
+            with subtests.test(case=label):
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=self.complete_plan(),
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                    extra=("--protect-paths", target),
+                )
+                assert completed.returncode != 0
+                assert "refusing to protect" in completed.stdout
+                assert not (experiment / "protected-modes.json").exists()
+                assert (experiment / "dataset.json").exists()
 
     def test_protection_locks_during_run_and_restores_afterwards(self) -> None:
         assets = self.make_assets("protect-normal")
@@ -943,25 +946,26 @@ class SwebenchCliTest:
             ),
         )
         for label, plan, reason, agent_timeout in cases:
-            name = label.replace(" ", "-").replace(".", "")
-            assets = self.make_assets("invalid-" + name)
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("invalid-" + name + "-stub")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=plan,
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-                agent_timeout=agent_timeout,
-            )
-            assert completed.returncode != 0, completed.stdout
-            invalid = json.loads(
-                (
-                    self.run_path(experiment) / "invalid-result.json"
-                ).read_text(encoding="utf-8")
-            )
-            assert reason in invalid["reason"]
-            assert not (self.run_path(experiment) / "result.json").exists()
+            with subtests.test(case=label):
+                name = label.replace(" ", "-").replace(".", "")
+                assets = self.make_assets("invalid-" + name)
+                experiment = self.install_experiment(assets, "experiment")
+                stub = self.make_stub("invalid-" + name + "-stub")
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=plan,
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                    agent_timeout=agent_timeout,
+                )
+                assert completed.returncode != 0, completed.stdout
+                invalid = json.loads(
+                    (
+                        self.run_path(experiment) / "invalid-result.json"
+                    ).read_text(encoding="utf-8")
+                )
+                assert reason in invalid["reason"]
+                assert not (self.run_path(experiment) / "result.json").exists()
 
     def test_run_reports_p2p_regressions(self) -> None:
         assets = self.make_assets("run-regression")
@@ -1147,41 +1151,42 @@ class SwebenchCliTest:
             ("f2p_pass with failed f2p", f2p_contradiction),
         )
         for label, mutate in cases:
-            clone = self.clone_experiment(
-                experiment, "corrupt-" + label.replace(" ", "-")
-            )
-            mutate(clone)
-            completed = self.summarize(clone)
-            assert completed.returncode != 0, completed.stdout
-            assert "no completed runs" in completed.stdout
-            if label == "missing events file":
-                # discover_runs requires events.jsonl, so the attribution
-                # CLI reports the run directory as absent instead of valid.
-                attributed = subprocess.run(
-                    [
-                        sys.executable,
-                        "-B",
-                        str(SWEBENCH / "analyze_events.py"),
-                        "--experiment",
-                        str(clone),
-                        "--format",
-                        "json",
-                    ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    errors="replace",
-                    timeout=60,
-                    env=os.environ.copy(),
+            with subtests.test(case=label):
+                clone = self.clone_experiment(
+                    experiment, "corrupt-" + label.replace(" ", "-")
                 )
-                assert attributed.returncode != 0
-                assert "no runs with events.jsonl" in attributed.stdout
-                continue
-            payload = self.attribution(clone)
-            run = payload["runs"][0]
-            assert not run["result_valid"], (label, run)
-            assert run["declared_initial_path"] == "quick"
+                mutate(clone)
+                completed = self.summarize(clone)
+                assert completed.returncode != 0, completed.stdout
+                assert "no completed runs" in completed.stdout
+                if label == "missing events file":
+                    # discover_runs requires events.jsonl, so the attribution
+                    # CLI reports the run directory as absent instead of valid.
+                    attributed = subprocess.run(
+                        [
+                            sys.executable,
+                            "-B",
+                            str(SWEBENCH / "analyze_events.py"),
+                            "--experiment",
+                            str(clone),
+                            "--format",
+                            "json",
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        errors="replace",
+                        timeout=60,
+                        env=os.environ.copy(),
+                    )
+                    assert attributed.returncode != 0
+                    assert "no runs with events.jsonl" in attributed.stdout
+                    continue
+                payload = self.attribution(clone)
+                run = payload["runs"][0]
+                assert not run["result_valid"], (label, run)
+                assert run["declared_initial_path"] == "quick"
         historical_clone = self.clone_experiment(experiment, "corrupt-historical")
         drop_protocol(historical_clone)
         historical = self.attribution(historical_clone)["runs"][0]
@@ -1213,12 +1218,13 @@ class SwebenchCliTest:
             ("inconsistent baseline", inconsistent_baseline),
         )
         for label, mutate in cases:
-            clone = self.clone_experiment(
-                experiment, "damage-" + label.replace(" ", "-")
-            )
-            mutate(clone)
-            completed = self.summarize(clone)
-            assert completed.returncode != 0, completed.stdout
+            with subtests.test(case=label):
+                clone = self.clone_experiment(
+                    experiment, "damage-" + label.replace(" ", "-")
+                )
+                mutate(clone)
+                completed = self.summarize(clone)
+                assert completed.returncode != 0, completed.stdout
         clone = self.clone_experiment(experiment, "damage-extra-status")
         path = clone / "task-baselines" / f"{TASK['id']}.json"
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -1389,25 +1395,26 @@ class SwebenchCliTest:
             ("relative path", json.dumps({"dataset.json": 0o644})),
         )
         for label, payload in cases:
-            assets = self.make_assets("record-" + label.replace(" ", "-"))
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
-            sentinel = assets.root / "sentinel.txt"
-            sentinel.write_text("keep\n", encoding="utf-8")
-            sentinel.chmod(0o640)
-            record = experiment / "protected-modes.json"
-            record.write_text(payload, encoding="utf-8")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            assert completed.returncode != 0, completed.stdout
-            assert "protected-modes.json" in completed.stdout
-            assert "chmod" in completed.stdout
-            assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
-            assert record.exists()
+            with subtests.test(case=label):
+                assets = self.make_assets("record-" + label.replace(" ", "-"))
+                experiment = self.install_experiment(assets, "experiment")
+                stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
+                sentinel = assets.root / "sentinel.txt"
+                sentinel.write_text("keep\n", encoding="utf-8")
+                sentinel.chmod(0o640)
+                record = experiment / "protected-modes.json"
+                record.write_text(payload, encoding="utf-8")
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=self.complete_plan(),
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                )
+                assert completed.returncode != 0, completed.stdout
+                assert "protected-modes.json" in completed.stdout
+                assert "chmod" in completed.stdout
+                assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
+                assert record.exists()
 
         assets = self.make_assets("record-parent-component")
         experiment = self.install_experiment(assets, "experiment")
@@ -1436,43 +1443,44 @@ class SwebenchCliTest:
             ("valid symlink", "{}", False),
             ("dangling symlink", None, True),
         ):
-            assets = self.make_assets("record-" + label.replace(" ", "-"))
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
-            sentinel = assets.root / "sentinel.txt"
-            sentinel.write_text("keep\n", encoding="utf-8")
-            sentinel.chmod(0o640)
-            outside = assets.root / "outside-record.json"
-            record = experiment / "protected-modes.json"
-            if dangling:
-                record.symlink_to(outside)
-            else:
-                outside.write_text(target_payload, encoding="utf-8")
-                outside.chmod(0o640)
-                record.symlink_to(outside)
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            assert completed.returncode != 0, completed.stdout
-            assert str(record) in completed.stdout
-            assert "refusing to use the protected mode record" in completed.stdout
-            assert "symlink" in completed.stdout
-            assert record.is_symlink()
-            assert os.readlink(record) == str(outside)
-            assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
-            if dangling:
-                assert not outside.exists()
-                assert not record.exists()
-            else:
-                assert outside.read_text(encoding="utf-8") == target_payload
-                assert stat.S_IMODE(outside.stat().st_mode) == 0o640
+            with subtests.test(case=label):
+                assets = self.make_assets("record-" + label.replace(" ", "-"))
+                experiment = self.install_experiment(assets, "experiment")
+                stub = self.make_stub("record-" + label.replace(" ", "-") + "-stub")
+                sentinel = assets.root / "sentinel.txt"
+                sentinel.write_text("keep\n", encoding="utf-8")
+                sentinel.chmod(0o640)
+                outside = assets.root / "outside-record.json"
+                record = experiment / "protected-modes.json"
+                if dangling:
+                    record.symlink_to(outside)
+                else:
+                    outside.write_text(target_payload, encoding="utf-8")
+                    outside.chmod(0o640)
+                    record.symlink_to(outside)
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=self.complete_plan(),
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                )
+                assert completed.returncode != 0, completed.stdout
+                assert str(record) in completed.stdout
+                assert "refusing to use the protected mode record" in completed.stdout
+                assert "symlink" in completed.stdout
+                assert record.is_symlink()
+                assert os.readlink(record) == str(outside)
+                assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
+                if dangling:
+                    assert not outside.exists()
+                    assert not record.exists()
+                else:
+                    assert outside.read_text(encoding="utf-8") == target_payload
+                    assert stat.S_IMODE(outside.stat().st_mode) == 0o640
 
-            # Reading the link first would chmod the target's mode-0 path before
-            # the symlink itself is refused, leaving a mode the tool never
-            # promised to restore.
+                # Reading the link first would chmod the target's mode-0 path before
+                # the symlink itself is refused, leaving a mode the tool never
+                # promised to restore.
         assets = self.make_assets("record-symlink-mode-zero")
         experiment = self.install_experiment(assets, "experiment")
         stub = self.make_stub("record-symlink-mode-zero-stub")
@@ -1752,32 +1760,33 @@ class SwebenchCliTest:
             ("subdir relative symlink", subdir_template),
         )
         for label, writer in cases:
-            assets = self.make_assets(
-                "links-" + label.replace(" ", "-"), template=writer
-            )
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("links-" + label.replace(" ", "-") + "-stub")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            assert completed.returncode == 0, completed.stdout
-            repo = self.run_path(experiment) / "repo"
-            if label == "inside symlink":
-                link = repo / "link.txt"
-                assert link.is_symlink()
-                assert link.read_text(encoding="utf-8") == "content\n"
-            elif label == "inside hardlink":
-                first = repo / "a.txt"
-                second = repo / "b.txt"
-                assert not second.is_symlink()
-                assert second.read_text(encoding="utf-8") == "content\n"
-                assert first.stat().st_ino == second.stat().st_ino
-            else:
-                link = repo / "sub" / "link"
-                assert link.read_text(encoding="utf-8") == "content\n"
+            with subtests.test(case=label):
+                assets = self.make_assets(
+                    "links-" + label.replace(" ", "-"), template=writer
+                )
+                experiment = self.install_experiment(assets, "experiment")
+                stub = self.make_stub("links-" + label.replace(" ", "-") + "-stub")
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=self.complete_plan(),
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                )
+                assert completed.returncode == 0, completed.stdout
+                repo = self.run_path(experiment) / "repo"
+                if label == "inside symlink":
+                    link = repo / "link.txt"
+                    assert link.is_symlink()
+                    assert link.read_text(encoding="utf-8") == "content\n"
+                elif label == "inside hardlink":
+                    first = repo / "a.txt"
+                    second = repo / "b.txt"
+                    assert not second.is_symlink()
+                    assert second.read_text(encoding="utf-8") == "content\n"
+                    assert first.stat().st_ino == second.stat().st_ino
+                else:
+                    link = repo / "sub" / "link"
+                    assert link.read_text(encoding="utf-8") == "content\n"
 
     def test_template_rejects_directory_escape_and_hardlink_escape_keeps_target(self) -> None:
         external = self.root / "external-target.txt"
@@ -1796,21 +1805,22 @@ class SwebenchCliTest:
             ("directory escape", directory_escape),
             ("hardlink escape", hardlink_escape),
         ):
-            assets = self.make_assets(
-                "escape-" + label.replace(" ", "-"), template=writer
-            )
-            experiment = self.install_experiment(assets, "experiment")
-            stub = self.make_stub("escape-" + label.replace(" ", "-") + "-stub")
-            completed = self.run_command(
-                stub,
-                experiment,
-                plan=self.complete_plan(),
-                statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
-            )
-            assert completed.returncode != 0, completed.stdout
-            assert "unsafe tar" in completed.stdout
-            assert not (self.run_path(experiment).parent / "evil").exists()
-            assert external.read_text(encoding="utf-8") == "keep\n"
+            with subtests.test(case=label):
+                assets = self.make_assets(
+                    "escape-" + label.replace(" ", "-"), template=writer
+                )
+                experiment = self.install_experiment(assets, "experiment")
+                stub = self.make_stub("escape-" + label.replace(" ", "-") + "-stub")
+                completed = self.run_command(
+                    stub,
+                    experiment,
+                    plan=self.complete_plan(),
+                    statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+                )
+                assert completed.returncode != 0, completed.stdout
+                assert "unsafe tar" in completed.stdout
+                assert not (self.run_path(experiment).parent / "evil").exists()
+                assert external.read_text(encoding="utf-8") == "keep\n"
 
     def test_template_reversed_chain_and_delayed_directory_attributes(self) -> None:
         def reversed_chain(path: Path) -> None:

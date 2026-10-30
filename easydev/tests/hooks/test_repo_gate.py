@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+from conftest import subtests
 from support import CaseBase, EASYDEV_ROOT
 
 CHECK_SH = EASYDEV_ROOT / "scripts" / "check.sh"
@@ -127,25 +128,28 @@ class RepoPythonGateTests(CaseBase):
 
     def assert_rejected(self, sources, name: str) -> None:
         for interpreter in interpreters():
-            code, output = self.run_gate(sources, interpreter)
-            assert code == 1, output
-            assert name in output
+            with subtests.test(interpreter=interpreter, fixture=name):
+                code, output = self.run_gate(sources, interpreter)
+                assert code == 1, output
+                assert name in output
 
     def assert_accepted(self, source: str, name: str) -> None:
         for interpreter in interpreters():
-            code, output = self.run_gate({name: source}, interpreter)
-            assert code == 0, output
+            with subtests.test(interpreter=interpreter, fixture=name):
+                code, output = self.run_gate({name: source}, interpreter)
+                assert code == 0, output
 
     # ---- 非法转义必须判负 ------------------------------------------
     def test_invalid_escape_is_rejected(self) -> None:
         # 内层用例由 RepoPythonGateReportingTests 直接调用，保持循环而不是参数化。
         for interpreter in interpreters():
-            code, output = self.run_gate({"bad.py": INVALID_ESCAPE}, interpreter)
-            assert code == 1, output
-            # 诊断点名文件与可定位行号，不是只报一句“有告警”。
-            assert "bad.py" in output
-            assert "line 1" in output
-            assert "invalid escape sequence" in output
+            with subtests.test(interpreter=interpreter):
+                code, output = self.run_gate({"bad.py": INVALID_ESCAPE}, interpreter)
+                assert code == 1, output
+                # 诊断点名文件与可定位行号，不是只报一句“有告警”。
+                assert "bad.py" in output
+                assert "line 1" in output
+                assert "invalid escape sequence" in output
 
     def test_invalid_escapes_in_literal_forms_are_rejected(self) -> None:
         cases = {
@@ -222,11 +226,12 @@ class RepoPythonGateTests(CaseBase):
 
     def test_gate_ignores_caller_warning_suppression(self) -> None:
         for interpreter in interpreters():
-            code, output = self.run_gate(
-                {"bad.py": INVALID_ESCAPE}, interpreter, {"PYTHONWARNINGS": "ignore"}
-            )
-            assert code == 1, output
-            assert "bad.py" in output
+            with subtests.test(interpreter=interpreter):
+                code, output = self.run_gate(
+                    {"bad.py": INVALID_ESCAPE}, interpreter, {"PYTHONWARNINGS": "ignore"}
+                )
+                assert code == 1, output
+                assert "bad.py" in output
 
     # ---- 提取机制本身 ----------------------------------------------
     def test_scan_boundary_is_full_unique_line(self) -> None:

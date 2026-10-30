@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase
 
 if str(HOOKS_ROOT) not in sys.path:
@@ -171,17 +172,18 @@ class S02StateCorruptionTests(R4Case):
                     ("坏 UTF-8", b"\xff\xfe\x00garbage"),
                     ("schema 错误", b'{"schema_version": 99}'),
                 ):
-                    target = files[0]
-                    target.write_bytes(payload)
-                    os.chmod(target, 0o600)
-                    try:
-                        reason = self.deny(
-                            self.shell("s1", "git reset --hard", tool_id="bad-" + kind)
-                        )
-                        assert "Git" in reason
-                    finally:
-                        target.write_bytes(backups[target])
+                    with subtests.test(kind=kind, case=label):
+                        target = files[0]
+                        target.write_bytes(payload)
                         os.chmod(target, 0o600)
+                        try:
+                            reason = self.deny(
+                                self.shell("s1", "git reset --hard", tool_id="bad-" + kind)
+                            )
+                            assert "Git" in reason
+                        finally:
+                            target.write_bytes(backups[target])
+                            os.chmod(target, 0o600)
         finally:
             for path, data in backups.items():
                 path.write_bytes(data)
@@ -229,8 +231,9 @@ class S03BareRedirectTests(HookCase):
         self.use_manual_baseline()
         self.activate("s1")
         for index, command in enumerate(("> src/app.py", ">> src/app.py", "<> src/app.py")):
-            reason = self.deny(self.shell("s1", command, tool_id="red-%d" % index))
-            assert "baseline" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("s1", command, tool_id="red-%d" % index))
+                assert "baseline" in reason
         assert (self.repo / "src" / "app.py").read_text(encoding="utf-8") == "USER CONTENT\n"
         # 未跟踪文件不因“没有命令名”被跳过。
         self.deny(self.shell("s1", "> notes.txt", tool_id="red-untracked"))

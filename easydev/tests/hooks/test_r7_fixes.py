@@ -15,6 +15,7 @@ import pytest
 import subprocess
 import sys
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states
 
@@ -88,37 +89,42 @@ class V01LineContinuationTests(HookCase):
         self.use_manual_baseline()
         self.activate("dev")
         for index, command in enumerate(self.REDIRECT_CASES):
-            value = self.dispatch_command("dev", command, "v01-dev-%d" % index)
-            # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
-            assert self.is_denied(value), value
-            assert "baseline/1.txt" in self.reason(value)
+            with subtests.test(command=command):
+                value = self.dispatch_command("dev", command, "v01-dev-%d" % index)
+                # 拒绝必须点名真实词法目标，而不是别的原因凑巧拒绝。
+                assert self.is_denied(value), value
+                assert "baseline/1.txt" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_readonly_reviewer_denies_continuation_redirects(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.REDIRECT_CASES):
-            value = self.dispatch_command("rev", command, "v01-rev-%d" % index)
-            assert self.is_denied(value), value
-            assert "只读" in self.reason(value)
+            with subtests.test(command=command):
+                value = self.dispatch_command("rev", command, "v01-rev-%d" % index)
+                assert self.is_denied(value), value
+                assert "只读" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_git_continuation_variants_are_denied(self) -> None:
         self.activate("dev")
         for index, command in enumerate(self.GIT_CASES):
-            reason = self.deny(self.shell("dev", command, tool_id="v01-git-%d" % index))
-            assert "Git" in reason
+            with subtests.test(command=command):
+                reason = self.deny(self.shell("dev", command, tool_id="v01-git-%d" % index))
+                assert "Git" in reason
 
     def test_fd_duplication_and_numeric_targets_regress(self) -> None:
         self.use_manual_baseline()
         self.activate("rev", self.reviewer_handoff())
         for index, command in enumerate(self.FD_CASES):
-            value = self.dispatch_command("rev", command, "v01-fd-%d" % index)
-            assert not self.is_denied(value), value
+            with subtests.test(command=command):
+                value = self.dispatch_command("rev", command, "v01-fd-%d" % index)
+                assert not self.is_denied(value), value
         self.activate("dev")
         for index, command in enumerate(self.NUMERIC_CASES):
-            value = self.dispatch_command("dev", command, "v01-num-%d" % index)
-            assert self.is_denied(value), value
-            assert "baseline/1" in self.reason(value)
+            with subtests.test(command=command):
+                value = self.dispatch_command("dev", command, "v01-num-%d" % index)
+                assert self.is_denied(value), value
+                assert "baseline/1" in self.reason(value)
         self.assert_sentinels_intact()
 
     def test_continuation_is_removed_from_redirect_words_and_git_argv(self) -> None:
@@ -127,8 +133,9 @@ class V01LineContinuationTests(HookCase):
         assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]
         # 单引号外（含双引号内）消除续接。
         for command in ("printf x >&1\\\n.txt", 'printf x >&"1\\\n.txt"'):
-            analysis = shell.analyze(command)
-            assert [item.get("target") for item in analysis.writes] == ["1.txt"]
+            with subtests.test(command=command):
+                analysis = shell.analyze(command)
+                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
         assert shell.argv_of("g\\\nit reset --hard") == [["git", "reset", "--hard"]]
         assert shell.argv_of('echo "a\\\nb"') == [["echo", "ab"]]
         assert shell.argv_of("echo 'a\\\nb'") == [["echo", "a\\\nb"]]
@@ -292,14 +299,15 @@ class V02DirectSkillReadRestoreMixin(object):
             ("other-path", dict(path=str(other))),
         )
         for index, (name, options) in enumerate(cases):
-            session = "n%d" % index
-            self.allow(self.input_payload(session, "使用 easydev，完成这个改动"))
-            self.deactivate(session)
-            self.allow(self.skill_read_payload(session, "neg-%d" % index, **options))
-            assert self.actor_state(session)["activation_scope"] == "inactive"
-            root = self.root_for(session)
-            assert not root.get("active")
-            assert int(root["epoch"]) == 1
+            with subtests.test(case=name):
+                session = "n%d" % index
+                self.allow(self.input_payload(session, "使用 easydev，完成这个改动"))
+                self.deactivate(session)
+                self.allow(self.skill_read_payload(session, "neg-%d" % index, **options))
+                assert self.actor_state(session)["activation_scope"] == "inactive"
+                root = self.root_for(session)
+                assert not root.get("active")
+                assert int(root["epoch"]) == 1
 
     def test_first_skill_read_still_activates_in_epoch_one(self) -> None:
         # 对照：从未激活的会话，首次成功读取 SKILL.md 仍是契约允许的激活入口。

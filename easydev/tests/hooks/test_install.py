@@ -12,6 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from conftest import subtests
 from support import HOOKS_ROOT, HookCase, clean_env, core_module
 
 INSTALL = HOOKS_ROOT / "hooks" / "install.py"
@@ -823,7 +824,8 @@ class PiExtensionTests(HookCase):
         lines = self.warning_lines(completed.stderr)
         assert len(lines) == len(messages), completed.stderr
         for index, (message, labels) in enumerate(CORE_DIAGNOSTIC_CATALOG):
-            assert lines[index] == ("[easydev-hooks] warning: " + catalog_summary(labels))
+            with subtests.test(message=message):
+                assert lines[index] == ("[easydev-hooks] warning: " + catalog_summary(labels))
         self.assert_no_detail_leak(completed.stderr, "UNCLASSIFIED-SENTINEL", "STATE-ROOT-SENTINEL")
 
 
@@ -903,11 +905,12 @@ class CoreDiagnosticProducerTests(HookCase):
             ({"agent_id": "other-actor"}, ("actor", True)),
             ({}, ("", False)),
         ):
-            path.write_text(
-                json.dumps({"type": "session_meta", "payload": payload}) + "\n",
-                encoding="utf-8",
-            )
-            assert engine._transcript_identity_problem(record, str(path)) == expected
+            with subtests.test(payload=payload):
+                path.write_text(
+                    json.dumps({"type": "session_meta", "payload": payload}) + "\n",
+                    encoding="utf-8",
+                )
+                assert engine._transcript_identity_problem(record, str(path)) == expected
 
 
 class AntigravityNamedGroupTests(HookCase):

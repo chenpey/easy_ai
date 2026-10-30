@@ -20,6 +20,7 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from conftest import subtests
 
 
 TESTS_ROOT = Path(__file__).resolve().parents[2]
@@ -506,17 +507,18 @@ class RunnerCliTest:
             ),
         )
         for label, content, extra_env, expected in cases:
-            plan = self.b01_plan()
-            plan["mutations"] = [{"path": "src/ui.py", "content": content}]
-            fixture = self.stub_environment(
-                "b01-label-" + label.replace(" ", "-"), plan
-            )
-            fixture.env.update(extra_env)
-            completed = self.run_scenario(fixture, "b01")
-            assert completed.returncode == expected, completed.stdout + completed.stderr
-            result = self.result(fixture, "b01")
-            if expected:
-                assert "runtime import passes" in self.failed_checks(result)
+            with subtests.test(case=label):
+                plan = self.b01_plan()
+                plan["mutations"] = [{"path": "src/ui.py", "content": content}]
+                fixture = self.stub_environment(
+                    "b01-label-" + label.replace(" ", "-"), plan
+                )
+                fixture.env.update(extra_env)
+                completed = self.run_scenario(fixture, "b01")
+                assert completed.returncode == expected, completed.stdout + completed.stderr
+                result = self.result(fixture, "b01")
+                if expected:
+                    assert "runtime import passes" in self.failed_checks(result)
 
     def test_run_b01_detects_runtime_skill_tampering(self) -> None:
         fixture = self.stub_environment(
@@ -543,18 +545,19 @@ class RunnerCliTest:
             ("malformed line", {"invalid_events": "malformed"}, "malformed_event_lines"),
         )
         for label, overrides, field in cases:
-            fixture = self.stub_environment(
-                "b01-events-" + label.replace(" ", "-").replace(".", ""),
-                self.b01_plan(**overrides),
-            )
-            completed = self.run_scenario(fixture, "b01")
-            assert completed.returncode == 1
-            result = self.result(fixture, "b01")
-            assert not result["valid_invocation"]
-            if field == "turn_completed":
-                assert not result["agent"]["turn_completed"]
-            else:
-                assert result["agent"]["malformed_event_lines"] > 0
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b01-events-" + label.replace(" ", "-").replace(".", ""),
+                    self.b01_plan(**overrides),
+                )
+                completed = self.run_scenario(fixture, "b01")
+                assert completed.returncode == 1
+                result = self.result(fixture, "b01")
+                assert not result["valid_invocation"]
+                if field == "turn_completed":
+                    assert not result["agent"]["turn_completed"]
+                else:
+                    assert result["agent"]["malformed_event_lines"] > 0
 
     def test_run_b01_records_agent_exit_code(self) -> None:
         fixture = self.stub_environment("b01-exit", self.b01_plan(exit_code=7))
@@ -619,21 +622,22 @@ class RunnerCliTest:
             ),
         )
         for label, source, expected_exit, failed in cases:
-            fixture = self.stub_environment(
-                "b02-" + label.replace(" ", "-"),
-                {
-                    "agent_messages": ["采用 full。", "完成"],
-                    "reviewer": True,
-                    "reviewer_report": "未发现确定缺陷。",
-                    "mutations": [{"path": "src/access.py", "content": source}],
-                },
-            )
-            completed = self.run_scenario(fixture, "b02")
-            assert completed.returncode == (0 if expected_exit else 1)
-            result = self.result(fixture, "b02")
-            assert result["evaluation"]["passed"] == expected_exit
-            for name in failed:
-                assert name in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b02-" + label.replace(" ", "-"),
+                    {
+                        "agent_messages": ["采用 full。", "完成"],
+                        "reviewer": True,
+                        "reviewer_report": "未发现确定缺陷。",
+                        "mutations": [{"path": "src/access.py", "content": source}],
+                    },
+                )
+                completed = self.run_scenario(fixture, "b02")
+                assert completed.returncode == (0 if expected_exit else 1)
+                result = self.result(fixture, "b02")
+                assert result["evaluation"]["passed"] == expected_exit
+                for name in failed:
+                    assert name in self.failed_checks(result)
 
     # -- b61 normal review loop ------------------------------------------
     def b61_plan(self, **overrides: object) -> dict:
@@ -861,13 +865,14 @@ class RunnerCliTest:
             ),
         )
         for label, overrides, failed in cases:
-            fixture = self.stub_environment(
-                "b61-" + label.replace(" ", "-"), self.b61_plan(**overrides)
-            )
-            completed = self.run_scenario(fixture, "b61")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b61")
-            assert failed in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b61-" + label.replace(" ", "-"), self.b61_plan(**overrides)
+                )
+                completed = self.run_scenario(fixture, "b61")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b61")
+                assert failed in self.failed_checks(result)
 
     # -- b16 run contracts ----------------------------------------------
     def test_run_b16_detects_read_only_violation(self) -> None:
@@ -964,14 +969,15 @@ class RunnerCliTest:
             ),
         )
         for label, overrides, failed_check in cases:
-            fixture = self.stub_environment(
-                "b01-negative-" + label.replace(" ", "-").replace(".", ""),
-                self.b01_plan(**overrides),
-            )
-            completed = self.run_scenario(fixture, "b01")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b01")
-            assert failed_check in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b01-negative-" + label.replace(" ", "-").replace(".", ""),
+                    self.b01_plan(**overrides),
+                )
+                completed = self.run_scenario(fixture, "b01")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b01")
+                assert failed_check in self.failed_checks(result)
 
     def test_run_b02_rejects_quick_candidate_tiers_and_unfinished_review(self) -> None:
         cases = (
@@ -996,18 +1002,19 @@ class RunnerCliTest:
             ),
         )
         for label, messages, overrides, failed_check in cases:
-            plan = {
-                "agent_messages": messages,
-                "mutations": [{"path": "src/access.py", "content": B02_SOLUTION}],
-            }
-            plan.update(overrides)
-            fixture = self.stub_environment(
-                "b02-negative-" + label.replace(" ", "-"), plan
-            )
-            completed = self.run_scenario(fixture, "b02")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b02")
-            assert failed_check in self.failed_checks(result)
+            with subtests.test(case=label):
+                plan = {
+                    "agent_messages": messages,
+                    "mutations": [{"path": "src/access.py", "content": B02_SOLUTION}],
+                }
+                plan.update(overrides)
+                fixture = self.stub_environment(
+                    "b02-negative-" + label.replace(" ", "-"), plan
+                )
+                completed = self.run_scenario(fixture, "b02")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b02")
+                assert failed_check in self.failed_checks(result)
 
     def test_run_b16_rejects_invalid_findings_reports(self) -> None:
         limits = "限制：未检查并发写入路径。"
@@ -1052,14 +1059,15 @@ class RunnerCliTest:
             ),
         )
         for label, messages, failed_check in cases:
-            fixture = self.stub_environment(
-                "b16-negative-" + label.replace(" ", "-"),
-                {"agent_messages": messages},
-            )
-            completed = self.run_scenario(fixture, "b16")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b16")
-            assert failed_check in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b16-negative-" + label.replace(" ", "-"),
+                    {"agent_messages": messages},
+                )
+                completed = self.run_scenario(fixture, "b16")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b16")
+                assert failed_check in self.failed_checks(result)
 
     def test_run_public_contract_rejects_reserved_files_and_metadata_access(self) -> None:
         solution = [
@@ -1094,24 +1102,25 @@ class RunnerCliTest:
             ),
         )
         for label, mutations, commands, failed_check in cases:
-            plan = {
-                "agent_messages": [
-                    "采用 full，这是公共契约变更。",
-                    "已完成适配并验证。独立审查已完成。",
-                ],
-                "reviewer": True,
-                "reviewer_report": "**未发现确定缺陷。**",
-                "mutations": mutations,
-            }
-            if commands:
-                plan["commands"] = commands
-            fixture = self.stub_environment(
-                "public-negative-" + label.replace(" ", "-"), plan
-            )
-            completed = self.run_scenario(fixture, "public-contract-callers")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "public-contract-callers")
-            assert failed_check in self.failed_checks(result)
+            with subtests.test(case=label):
+                plan = {
+                    "agent_messages": [
+                        "采用 full，这是公共契约变更。",
+                        "已完成适配并验证。独立审查已完成。",
+                    ],
+                    "reviewer": True,
+                    "reviewer_report": "**未发现确定缺陷。**",
+                    "mutations": mutations,
+                }
+                if commands:
+                    plan["commands"] = commands
+                fixture = self.stub_environment(
+                    "public-negative-" + label.replace(" ", "-"), plan
+                )
+                completed = self.run_scenario(fixture, "public-contract-callers")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "public-contract-callers")
+                assert failed_check in self.failed_checks(result)
 
     def test_acceptance_does_not_execute_workspace_sitecustomize(self) -> None:
         marker = self.root / "sitecustomize-ran.txt"
@@ -1166,16 +1175,17 @@ class RunnerCliTest:
             ),
         )
         for label, overrides, changed in cases:
-            fixture = self.stub_environment(
-                "b01-index-" + label.replace(" ", "-"),
-                self.b01_plan(**overrides),
-            )
-            completed = self.run_scenario(fixture, "b01")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b01")
-            assert result["index_changed"], result
-            assert "git index stayed unchanged" in self.failed_checks(result)
-            assert result["changed_paths"] == changed
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b01-index-" + label.replace(" ", "-"),
+                    self.b01_plan(**overrides),
+                )
+                completed = self.run_scenario(fixture, "b01")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b01")
+                assert result["index_changed"], result
+                assert "git index stayed unchanged" in self.failed_checks(result)
+                assert result["changed_paths"] == changed
 
     def test_capture_does_not_execute_agent_hook_or_clean_filter(self) -> None:
         marker = self.root / "hook-or-filter-ran.txt"
@@ -1266,25 +1276,26 @@ class RunnerCliTest:
             ),
         )
         for label, mutations, expected_exit, failed in cases:
-            fixture = self.stub_environment(
-                "public-" + label.replace(" ", "-"),
-                {
-                    "agent_messages": [
-                        "采用 full，这是公共契约变更。",
-                        "已完成适配并验证。独立审查已完成。",
-                    ],
-                    "reviewer": True,
-                    "reviewer_report": "**未发现确定缺陷。**",
-                    "mutations": mutations,
-                },
-            )
-            completed = self.run_scenario(fixture, "public-contract-callers")
-            assert completed.returncode == (0 if expected_exit == 0 else 1), completed.stderr + completed.stdout
-            result = self.result(fixture, "public-contract-callers")
-            assert result["evaluation"]["passed"] == (expected_exit == 0)
-            for name in failed:
-                assert name in self.failed_checks(result)
-            assert "no test or case-file changes" not in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "public-" + label.replace(" ", "-"),
+                    {
+                        "agent_messages": [
+                            "采用 full，这是公共契约变更。",
+                            "已完成适配并验证。独立审查已完成。",
+                        ],
+                        "reviewer": True,
+                        "reviewer_report": "**未发现确定缺陷。**",
+                        "mutations": mutations,
+                    },
+                )
+                completed = self.run_scenario(fixture, "public-contract-callers")
+                assert completed.returncode == (0 if expected_exit == 0 else 1), completed.stderr + completed.stdout
+                result = self.result(fixture, "public-contract-callers")
+                assert result["evaluation"]["passed"] == (expected_exit == 0)
+                for name in failed:
+                    assert name in self.failed_checks(result)
+                assert "no test or case-file changes" not in self.failed_checks(result)
 
 
     # -- b67 run contracts ----------------------------------------------
@@ -1333,17 +1344,18 @@ class RunnerCliTest:
             ),
         )
         for label, mutations, failed in cases:
-            fixture = self.stub_environment(
-                "b67-negative-" + label.replace(" ", "-"),
-                {
-                    "agent_messages": ["已完成。"],
-                    "mutations": mutations,
-                },
-            )
-            completed = self.run_scenario(fixture, "b67")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b67")
-            assert failed in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b67-negative-" + label.replace(" ", "-"),
+                    {
+                        "agent_messages": ["已完成。"],
+                        "mutations": mutations,
+                    },
+                )
+                completed = self.run_scenario(fixture, "b67")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b67")
+                assert failed in self.failed_checks(result)
 
     def test_run_b67_rejects_runtime_skill_edits(self) -> None:
         fixture = self.stub_environment(
@@ -1413,11 +1425,12 @@ class RunnerCliTest:
             ),
         )
         for label, overrides, failed in cases:
-            fixture = self.stub_environment(
-                "b67-review-negative-" + label.replace(" ", "-"),
-                overrides,
-            )
-            completed = self.run_scenario(fixture, "b67-review")
-            assert completed.returncode == 1, completed.stdout
-            result = self.result(fixture, "b67-review")
-            assert failed in self.failed_checks(result)
+            with subtests.test(case=label):
+                fixture = self.stub_environment(
+                    "b67-review-negative-" + label.replace(" ", "-"),
+                    overrides,
+                )
+                completed = self.run_scenario(fixture, "b67-review")
+                assert completed.returncode == 1, completed.stdout
+                result = self.result(fixture, "b67-review")
+                assert failed in self.failed_checks(result)

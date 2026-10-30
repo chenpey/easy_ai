@@ -2,6 +2,21 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 1.5.0 更新说明（2026-10-30）
+
+恢复 1.4.9 迁移到 pytest 时丢掉的红跑定位粒度：`unittest.subTest` 被移除后，其中 110 处"前置准备 + 循环 + 后置断言"结构退化成普通循环，一个参数失败就跳出函数，既定位不到是哪个参数，也看不到同函数其余参数的结果。本版给出 `subTest` 的等价物并逐处还原；**运行时扩展行为零变化**（`conftest.py` 与 `tests/` 都不在 hooks 分发文件集内，`SKILL.md` 与 `references/` 规则正文未变，总量仍 131715 字节）。
+
+- **P2 测试红跑粒度变粗**：`easydev/conftest.py` 新增 `SubTests` / 模块级 `subtests` / `pytest_runtest_call`（`pytest.hookimpl(wrapper=True)`，不用旧式 hookwrapper 以免 pluggy 告警）。单个参数失败或 `pytest.skip` 只记账、循环继续，用例结束时按参数标签汇总成一次失败；只有跳过、没有失败时整例按 `skipped` 上报且理由包含全部标签（与 `subTest` 的 `skipTest` 语义一致：只跳过当前参数）。**失败优先**：已记录的子用例失败不会被后续 `skip` 或循环外异常吞掉（`failure → skip` 曾经只会报成 skipped、rc=0；现在报 failed 并附 skip 理由；循环外异常与已记录失败一并报告）；`KeyboardInterrupt`/`SystemExit` 原样中止；非 pytest 调用阶段（脚本直接 import）退化为立即失败；不引入 `pytest-subtests` 依赖。
+- **110 处循环还原**：19 个测试文件按 `c56bd3e^` 的原始标签还原成 `with subtests.test(command=command):`（标签逐条取自迁移前源码，不是新编）。另 5 处早已是 `@pytest.mark.parametrize`（每参数独立用例，粒度更好），7 处是循环外的单例标签块（不存在"剩余参数被吃掉"问题，改动会把"首个失败中止"变成"继续执行"，故不动）。
+- **机制自测**：新增 `tests/hooks/test_subtests.py` 10 项，在子进程里跑真实 pytest 会话，固定可观察行为：单参数失败其余参数照跑并按标签汇总、全通过为绿、`failure → skip` 不得退化成 skipped、子用例内 skip 只跳当前参数、`skip → 失败 → 后续参数`三者叠加、失败 + 循环外异常两者都保留、同一会话内失败与跳过记录都不污染下一个用例（交替跑失败/全过/只跳过/全过）、无子用例的普通失败原样上报、`run_inner` 式间接调用不得假绿、非调用阶段立即失败、无 pluggy 旧式 hookwrapper 告警。
+- **文档**：`tests/README.md` 记录 `subtests` 用法与 skip 语义、自测覆盖与计数（hooks 1202 项＝迁移后 1192＋自测 10；相对迁移前多出 49 项＝`parametrize` 展开 39＋自测 10）。
+
+影响面：只动维护材料（`conftest.py`、19 个测试文件、`tests/README.md`）与版本号；hooks 分发件、`core.py` 判定逻辑、`SKILL.md`/`references/` 规则正文均未改，已安装扩展的行为不变。
+
+验证（本机 macOS、Python 3.12、pytest 8.4.2，基线 `c56bd3e` / 1.4.9）：红→绿证据——把某参数用例的断言临时改坏后，报告给出 `3 个子用例失败（同函数其余参数已照常执行）` 并逐条列出 `[1/3] command='printf x > 1'` 等三个参数（普通循环只会报第 1 个）。机制侧四个变异探针各自变红后还原：去掉最终汇总 `raise` → 自测 1 red；把 `Skipped` 改回直接抛出 → 1 red；失败不再记账 → 6 red（含 3 项新测）；只删 `skips.clear()` → 状态隔离用例 red（`1 failed, 1 passed, 2 skipped`）。结构性核对：110 个 `with subtests.test(...)` 全部是某个 `for` 的 `body[0]`，标签多重集与 `c56bd3e^` 源码逐条一致（差集仅 5 个参数化函数与 swebench 的 7 个循环外单例标签）。`python3 -m pytest tests/hooks` **1202 passed（134s）**、`tests/experiments/agent_runner` **92 passed**、`tests/experiments/swebench` **56 passed**、`test_role_metric.py` **18 passed**；四个 case 脚本 rc=0；`bash scripts/check.sh` rc=0（§3 五处版本一致 1.5.0、§10 总量未超棘轮）；`SMOKE_TMP=<临时目录> bash scripts/smoke-install.sh` rc=0。独立审查 4 轮（`r=4/5`，未启用设计环节 `d=0/3`）：首轮报 **1 个 P1**——`failure → skip` 会把已记录失败吞成 skipped（实测 `2 skipped`、rc=0），修复后第 2 轮复核关闭；第 3、4 轮只审测试/文档增量，无 P0/P1/P2，其指出的两处覆盖边界（skip 记录跨用例清理、单独删除 `skips.clear()`）已补测试并实测。
+
+未验证：Linux/CI 结果待推送后以 CI 为准；独立审查为静态复审（未独立执行测试，运行结果为作者自述）；四宿主真实 Hook probe 未重跑（本版未改 `core.py`，无新增运行时路径）。流程偏离：本机 `~/.config/easydev/models.json` 指定了 `developer: opencode-go/deepseek-v4.1-flash`，按 full 编排应委派开发实例，本版修复由主代理实施（改动与首轮同源、面小），独立审查仍按要求分派。
+
 ## 1.4.9 更新说明（2026-10-30）
 
 修写序列记账的两处失真（post 阶段的问题指纹会被写成「成功指纹」、执行型 stdin 的同一句缺口提醒重复），并把测试运行方式统一到 pytest（easydev 规则正文即 `SKILL.md` 与 `references/` 未变，总量仍为 131715 字节）。

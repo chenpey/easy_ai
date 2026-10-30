@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 
+from conftest import subtests
 from support import HookCase
 
 
@@ -256,8 +257,9 @@ class RegressionMixin(object):
                 "使用 easydev，修这个 bug，不要修改 hook 的现有行为",
             )
         ):
-            self.activate("s1", prompt)
-            self.allow(self.write_tool("s1", "src/app.py", tool_id="disc-%d" % index))
+            with subtests.test(prompt=prompt):
+                self.activate("s1", prompt)
+                self.allow(self.write_tool("s1", "src/app.py", tool_id="disc-%d" % index))
 
     @pytest.mark.parametrize(
         "prompt",

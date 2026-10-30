@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from conftest import subtests
 
 HOOKS_ROOT = Path(__file__).resolve().parents[2]
 if str(HOOKS_ROOT) not in sys.path:
@@ -113,14 +114,15 @@ class HunkBodyIsNotFileHeaderTests:
         assert paths.patch_targets(text) == (["src/app.py"], True)
         # 垂直制表符/U+0085 同理：它们留在正文里，不产生额外行。
         for separator in ("\u000b", "\u0085", "\u001c"):
-            text = (
-                "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-"
-                + "x"
-                + separator
-                + "y"
-                + "\n+c\n"
-            )
-            assert paths.patch_targets(text) == (["src/app.py"], True)
+            with subtests.test(separator=repr(separator)):
+                text = (
+                    "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-"
+                    + "x"
+                    + separator
+                    + "y"
+                    + "\n+c\n"
+                )
+                assert paths.patch_targets(text) == (["src/app.py"], True)
 
     def test_hunk_body_line_equal_to_three_plus_header_is_not_a_target(self) -> None:
         """正文行恰为 `+++ x`（新增一行的内容是 `++ x`）：不是文件头，只留真实目标。"""
