@@ -1,102 +1,186 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" role="img" aria-labelledby="title desc">
-  <title id="title">EasyThink：从模糊困扰到可验证的判断</title>
-  <desc id="desc">六个按需使用的思考分支：明确问题，梳理信息，概念与尺度，证据与推理，判断与取舍，行动与更新。保留感受与价值，核对信息来源，尊重风险偏好，并随证据、目标与约束的变化更新判断和建议。只需陪伴时先回应感受，现实危险优先处理安全。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1160" viewBox="0 0 1440 1160" role="img" aria-labelledby="title desc">
+  <title id="title">EasyThink 0.5.0 全局思考框架全景</title>
+  <desc id="desc">EasyThink 思考框架：安全总闸、启动分寸与后果分层、六大核心思考支点、三大追问视角（拆到约束、失败预演、后续影响）及多轮更新与行为底线。</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
-    .eyebrow { font-size: 15px; font-weight: 700; letter-spacing: 2px; fill: #526176; }
-    .heading { font-size: 32px; font-weight: 700; fill: #162338; }
-    .subtitle { font-size: 18px; fill: #526176; }
-    .branch-title { font-size: 25px; font-weight: 700; fill: #162338; }
-    .body { font-size: 19px; fill: #34445a; }
-    .number { font-size: 16px; font-weight: 700; fill: #fff; text-anchor: middle; }
-    .connector { fill: none; stroke-width: 3.5; stroke-linecap: round; }
-    .foot { font-size: 17px; fill: #526176; }
+    .eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 2px; fill: #64748b; }
+    .heading { font-size: 30px; font-weight: 800; fill: #0f172a; }
+    .subtitle { font-size: 16px; fill: #475569; }
+    .card-title { font-size: 20px; font-weight: 700; fill: #0f172a; }
+    .card-desc { font-size: 14px; fill: #334155; }
+    .number-badge { font-size: 14px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+    .connector { fill: none; stroke-width: 2.5; stroke-linecap: round; }
+    .banner-title { font-size: 15px; font-weight: 700; }
+    .banner-text { font-size: 13.5px; }
+    .perspective-title { font-size: 18px; font-weight: 700; }
+    .perspective-cond { font-size: 13.5px; font-weight: 600; }
+    .perspective-body { font-size: 13.5px; }
+    .foot-label { font-size: 14px; font-weight: 700; fill: #475569; }
+    .foot-text { font-size: 13.5px; fill: #334155; }
   </style>
 
-  <rect width="1440" height="980" rx="24" fill="#f8fafc"/>
-  <text x="48" y="45" class="eyebrow">EASYTHINK · 清晰思考</text>
-  <text x="48" y="91" class="heading">把模糊困扰变成可验证的判断</text>
-  <text x="48" y="126" class="subtitle">六个思考支点，按需取用；不必逐项走完。</text>
+  <!-- Canvas Background -->
+  <rect width="1440" height="1160" rx="24" fill="#f8fafc"/>
 
-  <!-- Branch order is indicated by numbers; connectors express a hierarchy, not mandatory steps. -->
+  <!-- Top Header -->
+  <text x="48" y="42" class="eyebrow">EASYTHINK 0.5.0 · 思考框架全景</text>
+  <text x="48" y="80" class="heading">把模糊困扰变成可验证的判断</text>
+  <text x="48" y="112" class="subtitle">六大核心支点 · 三大追问视角 · 三级安全响应 · 启动分寸与后果分层</text>
+
+  <!-- Top Banners: Safety & Consequence Layers -->
+  <!-- Safety Banner (Left) -->
+  <g>
+    <rect x="48" y="132" width="656" height="92" rx="14" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+    <text x="68" y="158" class="banner-title" fill="#991b1b">● 安全总闸（最高优先级 · 受影响者判定）</text>
+    <text x="68" y="184" class="banner-text" fill="#7f1d1d">三级：现实人身威胁 / 自伤准备 / 急性医疗 → 暂停任务，查 safety.md 先保安全</text>
+    <text x="68" y="206" class="banner-text" fill="#7f1d1d">二级：持续痛苦无意义感 → 纯倾诉先共情 / 任务后附安全确认；一级口语习语脱敏交付</text>
+  </g>
+
+  <!-- Consequence Banner (Right) -->
+  <g>
+    <rect x="736" y="132" width="656" height="92" rx="14" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+    <text x="756" y="158" class="banner-title" fill="#1e40af">◆ 启动分寸与后果分层（只用相称分量）</text>
+    <text x="756" y="184" class="banner-text" fill="#1e3a8a">不启动：简单事实 / 翻译 / 明确执行任务；低后果：轻松建议或二选一</text>
+    <text x="756" y="206" class="banner-text" fill="#1e3a8a">中后果灰区：2～3 维度条件建议不全套推导；高后果：失败预演并锁定可承受损失底线</text>
+  </g>
+
+  <!-- Connectors from Center Node to 6 Branches -->
   <g class="connector">
-    <path d="M 584 472 C 540 472 552 260 500 260" stroke="#147d91"/>
-    <path d="M 584 500 L 500 500" stroke="#367358"/>
-    <path d="M 584 528 C 540 528 552 740 500 740" stroke="#98671d"/>
-    <path d="M 856 472 C 900 472 888 260 940 260" stroke="#4e62b7"/>
-    <path d="M 856 500 L 940 500" stroke="#8750a4"/>
-    <path d="M 856 528 C 900 528 888 740 940 740" stroke="#b25b45"/>
+    <path d="M 508 450 C 476 450 492 312 472 312" stroke="#0284c7"/>
+    <path d="M 508 472 L 472 472" stroke="#059669"/>
+    <path d="M 508 494 C 476 494 492 632 472 632" stroke="#d97706"/>
+    <path d="M 932 450 C 964 450 948 312 968 312" stroke="#4f46e5"/>
+    <path d="M 932 472 L 968 472" stroke="#7c3aed"/>
+    <path d="M 932 494 C 964 494 948 632 968 632" stroke="#e11d48"/>
   </g>
 
+  <!-- Center Hub: Clear Thinking -->
   <g>
-    <rect x="584" y="432" width="272" height="136" rx="28" fill="#192d46"/>
-    <text x="720" y="477" text-anchor="middle" font-size="27" font-weight="700" fill="#fff">清晰思考</text>
-    <text x="720" y="512" text-anchor="middle" font-size="18" fill="#e0e9f5">问题清楚 · 判断有据</text>
-    <text x="720" y="541" text-anchor="middle" font-size="18" fill="#e0e9f5">下一步可验证</text>
+    <rect x="508" y="402" width="424" height="140" rx="20" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+    <text x="720" y="445" text-anchor="middle" font-size="24" font-weight="800" fill="#ffffff">清晰思考</text>
+    <text x="720" y="472" text-anchor="middle" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="1.5">EASYTHINK CORE</text>
+    <text x="720" y="501" text-anchor="middle" font-size="15" font-weight="600" fill="#e2e8f0">问题清楚 · 判断有据 · 下一步可验证</text>
+    <text x="720" y="524" text-anchor="middle" font-size="13" fill="#94a3b8">按需取用支点 · 视角提问推进</text>
   </g>
 
+  <!-- Left Column: Branches 01 - 03 -->
+  <!-- 01 明确问题 -->
   <g>
-    <rect x="48" y="168" width="452" height="184" rx="20" fill="#edf8fa" stroke="#b4dce3"/>
-    <rect x="72" y="190" width="38" height="32" rx="10" fill="#147d91"/>
-    <text x="91" y="212" class="number">01</text>
-    <text x="125" y="216" class="branch-title">明确问题</text>
-    <text x="74" y="258" class="body">描述具体事件、目标与困扰</text>
-    <text x="74" y="292" class="body">明确范围、约束和成功标准</text>
-    <text x="74" y="326" class="body">辨别陪伴、澄清或决策诉求</text>
+    <rect x="48" y="244" width="424" height="136" rx="16" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1.5"/>
+    <rect x="68" y="262" width="34" height="26" rx="8" fill="#0284c7"/>
+    <text x="85" y="280" class="number-badge">01</text>
+    <text x="114" y="283" class="card-title">明确问题</text>
+    <text x="68" y="318" class="card-desc">描述具体事件、目标、约束与成功标准</text>
+    <text x="68" y="342" class="card-desc">辨别陪伴倾诉、澄清问题或决策比较诉求</text>
+    <text x="68" y="366" class="card-desc">识别未证实的预设，不写进结论也不盘问</text>
   </g>
 
+  <!-- 02 梳理信息 -->
   <g>
-    <rect x="48" y="408" width="452" height="184" rx="20" fill="#eff8f2" stroke="#bddcc9"/>
-    <rect x="72" y="430" width="38" height="32" rx="10" fill="#367358"/>
-    <text x="91" y="452" class="number">02</text>
-    <text x="125" y="456" class="branch-title">梳理信息</text>
-    <text x="74" y="498" class="body">观察与记录：注明来源与口径</text>
-    <text x="74" y="532" class="body">推断与假设：保留未知和条件</text>
-    <text x="74" y="566" class="body">感受与价值：保留；不据此读心</text>
+    <rect x="48" y="404" width="424" height="136" rx="16" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
+    <rect x="68" y="422" width="34" height="26" rx="8" fill="#059669"/>
+    <text x="85" y="440" class="number-badge">02</text>
+    <text x="114" y="443" class="card-title">梳理信息</text>
+    <text x="68" y="478" class="card-desc">观察与数据：注明口径、来源与核实状态</text>
+    <text x="68" y="502" class="card-desc">推断与因果：指出依赖的观察、假设与未知</text>
+    <text x="68" y="526" class="card-desc">感受与价值：保留真实性，不据此主观读心</text>
   </g>
 
+  <!-- 03 概念与尺度 -->
   <g>
-    <rect x="48" y="648" width="452" height="184" rx="20" fill="#fcf7eb" stroke="#e4d3ac"/>
-    <rect x="72" y="670" width="38" height="32" rx="10" fill="#98671d"/>
-    <text x="91" y="692" class="number">03</text>
-    <text x="125" y="696" class="branch-title">概念与尺度</text>
-    <text x="74" y="738" class="body">概念：定义、边界与正反例</text>
-    <text x="74" y="772" class="body">数据：样本、单位、时间窗和分母</text>
-    <text x="74" y="806" class="body">体验：评分锚点；序数不默认等距</text>
+    <rect x="48" y="564" width="424" height="136" rx="16" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
+    <rect x="68" y="582" width="34" height="26" rx="8" fill="#d97706"/>
+    <text x="85" y="600" class="number-badge">03</text>
+    <text x="114" y="603" class="card-title">概念与尺度</text>
+    <text x="68" y="638" class="card-desc">只定义影响分歧的核心词，给正反边界</text>
+    <text x="68" y="662" class="card-desc">可测量指标须有样本、时间窗与明确分母</text>
+    <text x="68" y="686" class="card-desc">体验感受提供评分锚点，序数不默认等距</text>
   </g>
 
+  <!-- Right Column: Branches 04 - 06 -->
+  <!-- 04 证据与推理 -->
   <g>
-    <rect x="940" y="168" width="452" height="184" rx="20" fill="#f0f3fc" stroke="#c8d0ef"/>
-    <rect x="964" y="190" width="38" height="32" rx="10" fill="#4e62b7"/>
-    <text x="983" y="212" class="number">04</text>
-    <text x="1017" y="216" class="branch-title">证据与推理</text>
-    <text x="966" y="258" class="body">分别检查前提、推理与结论</text>
-    <text x="966" y="292" class="body">核查来源、反证和替代解释</text>
-    <text x="966" y="326" class="body">保留限定条件；相关不等于因果</text>
+    <rect x="968" y="244" width="424" height="136" rx="16" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.5"/>
+    <rect x="988" y="262" width="34" height="26" rx="8" fill="#4f46e5"/>
+    <text x="1005" y="280" class="number-badge">04</text>
+    <text x="1034" y="283" class="card-title">证据与推理</text>
+    <text x="988" y="318" class="card-desc">分别检查前提、推理与结论，保留限定词</text>
+    <text x="988" y="342" class="card-desc">关键外部事实环境允许时默认检索 1～3 次核实</text>
+    <text x="988" y="366" class="card-desc">提出可区分的候选解释，相关不等于因果</text>
   </g>
 
+  <!-- 05 判断与取舍 -->
   <g>
-    <rect x="940" y="408" width="452" height="184" rx="20" fill="#f8f1fb" stroke="#dcc6e6"/>
-    <rect x="964" y="430" width="38" height="32" rx="10" fill="#8750a4"/>
-    <text x="983" y="452" class="number">05</text>
-    <text x="1017" y="456" class="branch-title">判断与取舍</text>
-    <text x="966" y="498" class="body">结论匹配证据，写明适用条件</text>
-    <text x="966" y="532" class="body">比较收益、代价和可逆性</text>
-    <text x="966" y="566" class="body">区分风险偏好与实际承受能力</text>
+    <rect x="968" y="404" width="424" height="136" rx="16" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5"/>
+    <rect x="988" y="422" width="34" height="26" rx="8" fill="#7c3aed"/>
+    <text x="1005" y="440" class="number-badge">05</text>
+    <text x="1034" y="443" class="card-title">判断与取舍</text>
+    <text x="988" y="478" class="card-desc">结论匹配证据强度，写明适用条件与缺口</text>
+    <text x="988" y="502" class="card-desc">多维度比较收益、代价、可逆性与稳健性</text>
+    <text x="988" y="526" class="card-desc">分别确认风险偏好与承受力，不代设偏好</text>
   </g>
 
+  <!-- 06 行动与更新 -->
   <g>
-    <rect x="940" y="648" width="452" height="184" rx="20" fill="#fcf2ed" stroke="#e9c9bc"/>
-    <rect x="964" y="670" width="38" height="32" rx="10" fill="#b25b45"/>
-    <text x="983" y="692" class="number">06</text>
-    <text x="1017" y="696" class="branch-title">行动与更新</text>
-    <text x="966" y="738" class="body">选择必要核实或小规模试行</text>
-    <text x="966" y="772" class="body">设定成本边界、停止与复查条件</text>
-    <text x="966" y="806" class="body">新证据或目标变化后，更新建议</text>
+    <rect x="968" y="564" width="424" height="136" rx="16" fill="#fff1f2" stroke="#fecdd3" stroke-width="1.5"/>
+    <rect x="988" y="582" width="34" height="26" rx="8" fill="#e11d48"/>
+    <text x="1005" y="600" class="number-badge">06</text>
+    <text x="1034" y="603" class="card-title">行动与更新</text>
+    <text x="988" y="638" class="card-desc">给出少量下一步：必要核实或低成本试行</text>
+    <text x="988" y="662" class="card-desc">设定试行成本边界、观察指标与止损复查线</text>
+    <text x="988" y="686" class="card-desc">新证据改变事实、新目标改变建议时及时更新</text>
   </g>
 
-  <path d="M 48 868 H 1392" stroke="#d9e1eb"/>
-  <text x="48" y="906" class="foot">使用分寸</text>
-  <text x="160" y="906" class="foot">只想倾诉 → 先回应感受　　现实危险 → 安全优先　　专业问题 → 结合专业流程</text>
-  <text x="48" y="944" class="foot">中性措辞 ≠ 已核实事实　　主观打分 ≠ 客观测量　　信息不足 → 标明未知与条件</text>
+  <!-- Three Questioning Perspectives Section (0.5.0 Core) -->
+  <text x="48" y="736" font-size="18" font-weight="800" fill="#0f172a">三大追问视角</text>
+  <text x="176" y="736" font-size="13.5" fill="#64748b">（0.5.0 核心 · 命中条件才用 · 用提问表达不报术语 · 产物落入结论与下一步）</text>
+
+  <!-- Perspective 1: 拆到约束 -->
+  <g>
+    <rect x="48" y="752" width="424" height="236" rx="16" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+    <text x="68" y="784" class="perspective-title" fill="#15803d">视角 1 · 拆到约束</text>
+    <text x="68" y="812" class="perspective-cond" fill="#166534">命中条件：被“一直这样”“行业惯例”或类比卡住</text>
+    <text x="68" y="842" class="perspective-body" fill="#14532d">• 追问核心：真正的目标是什么，而非现有做法</text>
+    <text x="68" y="870" class="perspective-body" fill="#14532d">• 区分硬约束（物理/法律/预算）与惯例性约束</text>
+    <text x="68" y="898" class="perspective-body" fill="#14532d">• 唯硬约束不可动；现有惯例仅作为备选项之一</text>
+    <text x="68" y="926" class="perspective-body" fill="#14532d">• 探究惯例承载的未明说信息，小步低成本试行</text>
+    <text x="68" y="954" class="perspective-body" fill="#15803d">→ 产物直接融入选项比较，不另立清单</text>
+  </g>
+
+  <!-- Perspective 2: 失败预演 -->
+  <g>
+    <rect x="508" y="752" width="424" height="236" rx="16" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+    <text x="528" y="784" class="perspective-title" fill="#b91c1c">视角 2 · 失败预演</text>
+    <text x="528" y="812" class="perspective-cond" fill="#991b1b">命中条件：中高后果难撤回，或用户已有明显倾向</text>
+    <text x="528" y="842" class="perspective-body" fill="#7f1d1d">• 追问核心：假设一段时间后失败了，怎么发生的？</text>
+    <text x="528" y="870" class="perspective-body" fill="#7f1d1d">• 倒推最可能的 2～3 条具体路径，挂钩已知事实</text>
+    <text x="528" y="898" class="perspective-body" fill="#7f1d1d">• 提炼早期预警信号，设定明确的止损与回退线</text>
+    <text x="528" y="926" class="perspective-body" fill="#7f1d1d">• 衔接重大抉择：绝不推荐杠杆/标的，要求止损上限</text>
+    <text x="528" y="954" class="perspective-body" fill="#b91c1c">→ 产物转化为具体止损线与监测指标</text>
+  </g>
+
+  <!-- Perspective 3: 后续影响 -->
+  <g>
+    <rect x="968" y="752" width="424" height="236" rx="16" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+    <text x="988" y="784" class="perspective-title" fill="#7e22ce">视角 3 · 后续影响</text>
+    <text x="988" y="812" class="perspective-cond" fill="#6b21a8">命中条件：行动引发他人反应、时间延迟或反馈回路</text>
+    <text x="988" y="842" class="perspective-body" fill="#581c87">• 追问核心：然后呢？至多推演两层（一阶与二阶）</text>
+    <text x="988" y="870" class="perspective-body" fill="#581c87">• 谁会如何反应；是自我强化还是自我抵消/适应</text>
+    <text x="988" y="898" class="perspective-body" fill="#581c87">• 人际场景：他人反应只给“若…则可能…”并标为假设</text>
+    <text x="988" y="926" class="perspective-body" fill="#581c87">• 看激励与约束不主观读心，不断言他人动机</text>
+    <text x="988" y="954" class="perspective-body" fill="#7e22ce">→ 显著二阶后果并入方案成本与可逆性评估</text>
+  </g>
+
+  <!-- Divider -->
+  <path d="M 48 1014 H 1392" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Footer: Update Rules & Boundaries -->
+  <text x="48" y="1046" class="foot-label">更新机制</text>
+  <text x="130" y="1046" class="foot-text">事实判断随证据与论证更新 · 行动建议随目标与约束更新 · 多轮增量交代“什么变了、为什么变” · 仅有重复施压时不改口</text>
+
+  <text x="48" y="1078" class="foot-label">行为底线</text>
+  <text x="130" y="1078" class="foot-text">尊重合法价值排序，不代做决定 · 不诊断人格、不主观读心 · 拒绝协助违法或有害手段 · 面对重大风险守住安全边界</text>
+
+  <text x="48" y="1110" class="foot-label">专业边界</text>
+  <text x="130" y="1110" class="foot-text">编码、医学、法律、投资等专业领域，仅辅助梳理逻辑与选项，明确标出需由合格专业人士确认的环节</text>
 </svg>
