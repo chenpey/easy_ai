@@ -49,33 +49,62 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认所有角色继承宿主，无须额外配置。
+默认所有角色继承宿主，无须额外配置（等价于各角色均设为 `inherit`、`upgrades` 为空）。
+
+如果自行配置，**需要使用当前 Harness（宿主/运行环境，如 Antigravity、Codex 等）能识别的完整模型 ID 与供应商前缀**；原样照抄到没有对应 Provider 的宿主上，会在第一次分派时按 [模型配置](references/environment.md#模型配置) 暂停报受阻，不会静默回退到 `inherit`。规则本身不固化特定供应商版本。
+
+下面的内联示例演示了一组典型的跨供应商升级分配方案（开发与审查分属不同供应商，`upgrades` 在升级阶段切换更强模型与更高推理档位）：
 
 ```json
 {
   "developer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "reasoning_effort": "high"
   },
   "reviewer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
   "designer": {
-    "model": "inherit",
-    "reasoning_effort": "inherit"
+    "model": "codex/gpt-6.1-sol",
+    "reasoning_effort": "high"
   },
-  "upgrades": []
+  "upgrades": [
+    {
+      "developer": {
+        "model": "antigravity/gemini-4-argon",
+        "reasoning_effort": "high"
+      },
+      "reviewer": {
+        "model": "codex/gpt-6.1-sol",
+        "reasoning_effort": "max"
+      }
+    }
+  ]
 }
 ```
 
-### 效果说明
+### 选型考虑与说明示例
 
-- **继承宿主**：开发、审查、设计角色均继承当前宿主默认模型与推理深度，不依赖特定供应商或外部模型 ID。
-- **不自动升级**：`upgrades` 为空，修复失败重试时不自动切换更高阶模型或推理档位。
-- **实例分离**：委派时仍按规则分离不同实例；若宿主无委派能力则自动触发能力降级自查。
+各角色的模型选取考虑（数字基于实测与公开基准，仅供选型参考）：
 
-来源优先级与详细规范见 [环境与模型配置](references/environment.md#模型配置)。
+- **开发角色**：示例采用 `deepseek-v4.1-flash`。在日常实现与长任务中单价低、缓存读取成本低、执行稳定。日常路径占用量最大，核心诉求是高性价比与长任务成功率。
+- **审查角色**：示例采用 `gpt-6.1-sol`（配置 `high` 档）。缺陷发现与边界分析能力强，是独立审查中能稳定捕捉漏洞的关键选择；审查占子代理核心支出，避免因省成本导致漏审。
+- **升级阶段开发（`upgrades`）**：示例切换为 `antigravity/gemini-4-argon`。在基准与代码任务中具备更高的解决上限，用于在初次修复失败后补足实现能力。
+- **升级阶段审查（`upgrades`）**：示例将 `gpt-6.1-sol` 提升至 `max` 推理档位。用更高的推理代价换取更严苛的复审深度，且仅在修复失败重试时触发。
+- **其他未采用/特殊模型考量**：
+  - `grok-4.7`：代码与审查基准评分偏低，缓存重读与调用单价偏高，不适合作为常规主力或升级位。
+  - `gpt-6-astra` 与其他 `zed/*`：虽有一定发现能力，但额度消耗或受限率高，波动较大。
+  - `antigravity/claude-opus-5-5`：能力顶尖但配额极为珍贵，建议作为对话中针对特定关键问题的单次显式指定覆盖，不放入自动升级链占用常规额度。
+- **推理深度**：只填写当前 Harness 实际支持的档位（例如 Antigravity 支持 low/medium/high，Codex 支持到 max；超出支持档位会映射或提示受阻）。
+
+例如在 macOS/Linux 查看个人配置（存在时）：
+
+```bash
+cat ~/.config/easydev/models.json
+```
+
+Windows 路径、字段、模型阶段和实际生效核对统一见 [environment.md](references/environment.md#模型配置)。示例不会自动加载，安装更新不修改个人配置。
 
 ## 验证与交付
 
