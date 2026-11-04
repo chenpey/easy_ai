@@ -1,13 +1,17 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-把仓库内的规则文件显式发布到用户级运行目录，并提供只读核对模式（Windows / PowerShell 版）。
+把规则文件显式发布到用户级运行目录，并提供只读核对模式（Windows / PowerShell 版）。
 
 .DESCRIPTION
-职责边界与 scripts/sync-agent-rules.sh 一致：不安装技能、不创建或修复 harness 入口、不提交、不提权、不监听变化。
-默认 -Check 只读核对；-Apply 用同目录临时文件替换。退出码：0 一致、1 不一致或拓扑异常、2 用法错误。
+支持两种源模式：
+1. 本地仓库：若本地存在 AGENTS.md 则直接使用本地文件（方便本地开发测试）。
+2. 远端模式：若无本地仓库或远程执行，自动从 GitHub 远端拉取最新规则，无需 clone 代码。
+职责边界：不安装技能、不提交、不提权、不监听变化。
+默认 -Check 只读核对；-Apply 幂等初始化软链入口并用同目录临时文件替换规则文件。
+退出码：0 一致、1 不一致或拓扑异常、2 用法错误。
 
-入口与目标路径沿用 POSIX 版的 $HOME 布局。若某个 harness 在 Windows 使用不同路径，改下面三个数组即可。
+入口与目标路径沿用 POSIX 版的 $HOME 布局。
 链接目标必须是完全限定路径（盘符绝对或 UNC）；`\foo`、`C:foo` 与相对路径一律拒绝。用法错误（未知参数或同时传 `-Check -Apply`）退出 2。
 #>
 param(
@@ -28,12 +32,17 @@ $Mode = if ($Apply) { 'Apply' } else { 'Check' }
 
 $ErrorActionPreference = 'Stop'
 
-$RootDir = Split-Path -Parent $PSScriptRoot
+# 兼容老旧 Windows PowerShell 5.1 默认未开启 TLS 1.2 的情况
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
 
-$Sources = @(
-    (Join-Path $RootDir 'AGENTS.md'),
-    (Join-Path $RootDir 'agent-rules/antigravity.md')
-)
+$RawBase = if ($env:EASY_AI_RAW_BASE) { $env:EASY_AI_RAW_BASE } else { 'https://raw.githubusercontent.com/chenpey/easy_ai/main' }
+$RelPaths = @('AGENTS.md', 'agent-rules/antigravity.md')
+
+$PSScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { '' }
+$RootDir = if ($PSScriptDir) { Split-Path -Parent $PSScriptDir } else { '' }
+
 $Targets = @(
     (Join-Path $HOME '.config/agent-rules/AGENTS.md'),
     (Join-Path $HOME '.gemini/config/rules/antigravity.md')
@@ -77,55 +86,115 @@ function Get-Sha256([string]$Path) {
     (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLower()
 }
 
-# 入口必须是符号链接且指向通用规则的发布目标；相对目标视为异常。
-foreach ($entry in $Entries) {
-    if (-not (Test-IsSymlink $entry)) { Fail "Unexpected rule entry: $entry" }
-    $target = Get-LinkTarget $entry
-    if ($null -eq $target) { Fail "Unexpected relative rule entry target: $entry" }
-    if ($target -ne [IO.Path]::GetFullPath($Targets[0])) { Fail "Unexpected rule entry: $entry" }
+$useLocal = $false
+if ($RootDir -and (Test-Path -LiteralPath (Join-Path $RootDir $RelPaths[0]) -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $RootDir $RelPaths[1]) -PathType Leaf)) {
+    $useLocal = $true
 }
 
-for ($i = 0; $i -lt 2; $i++) {
-    if (-not (Test-Path -LiteralPath $Sources[$i] -PathType Leaf)) { Fail "Missing source: $($Sources[$i])" }
-    if (Test-Path -LiteralPath $Targets[$i] -PathType Container) { Fail "Target is a directory: $($Targets[$i])" }
-}
+$remoteTempDir = $null
+$Sources = @()
 
-# 通用规则的发布文件必须是普通文件；硬链接仍是普通文件，不算软链。
-if (Test-IsSymlink $Targets[0]) { Fail 'Shared rule target must be a regular file' }
-if ((Test-IsSymlink $Targets[1])) {
-    $target = Get-LinkTarget $Targets[1]
-    if (($null -eq $target) -or ($target -ne [IO.Path]::GetFullPath($Sources[1]))) {
-        Fail 'Unexpected AGY symlink target'
+try {
+    if ($useLocal) {
+        $Sources = @(
+            (Join-Path $RootDir $RelPaths[0]),
+            (Join-Path $RootDir $RelPaths[1])
+        )
+    } else {
+        $remoteTempDir = Join-Path ([IO.Path]::GetTempPath()) ('easy_ai_rules_' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $remoteTempDir -Force | Out-Null
+        $Sources = @(
+            (Join-Path $remoteTempDir 'AGENTS.md'),
+            (Join-Path $remoteTempDir 'antigravity.md')
+        )
+        for ($i = 0; $i -lt 2; $i++) {
+            $url = "$RawBase/$($RelPaths[$i])"
+            try {
+                Invoke-RestMethod -Uri $url -OutFile $Sources[$i]
+            } catch {
+                Fail "Failed to download $url : $_"
+            }
+        }
     }
-}
 
-if ($Mode -eq 'Apply') {
+    # 入口检查与初始化
+    if ($Mode -eq 'Apply') {
+        foreach ($entry in $Entries) {
+            $entryDir = Split-Path -Parent $entry
+            if (-not (Test-Path -LiteralPath $entryDir)) {
+                New-Item -ItemType Directory -Path $entryDir -Force | Out-Null
+            }
+            if (Test-IsSymlink $entry) {
+                $target = Get-LinkTarget $entry
+                if (($null -eq $target) -or ($target -ne [IO.Path]::GetFullPath($Targets[0]))) {
+                    Fail "已有非预期软链入口: $entry"
+                }
+            } elseif (Test-Path -LiteralPath $entry) {
+                Fail "已有非预期入口（非符号链接），请先核对并备份: $entry"
+            } else {
+                New-Item -ItemType SymbolicLink -Path $entry -Target $Targets[0] | Out-Null
+            }
+        }
+    } else {
+        foreach ($entry in $Entries) {
+            if (-not (Test-IsSymlink $entry)) { Fail "Unexpected rule entry: $entry" }
+            $target = Get-LinkTarget $entry
+            if ($null -eq $target) { Fail "Unexpected relative rule entry target: $entry" }
+            if ($target -ne [IO.Path]::GetFullPath($Targets[0])) { Fail "Unexpected rule entry: $entry" }
+        }
+    }
+
     for ($i = 0; $i -lt 2; $i++) {
-        $targetDir = Split-Path -Parent $Targets[$i]
-        if (-not (Test-Path -LiteralPath $targetDir)) {
-            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        }
-        $tmp = Join-Path $targetDir ('.agent-rule.' + [guid]::NewGuid().ToString('N') + '.tmp')
-        try {
-            Copy-Item -LiteralPath $Sources[$i] -Destination $tmp -Force
-            if ((Get-Sha256 $Sources[$i]) -ne (Get-Sha256 $tmp)) { Fail "Copy verification failed: $tmp" }
-            Move-Item -LiteralPath $tmp -Destination $Targets[$i] -Force
-        }
-        finally {
-            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+        if (-not (Test-Path -LiteralPath $Sources[$i] -PathType Leaf)) { Fail "Missing source: $($Sources[$i])" }
+        if (Test-Path -LiteralPath $Targets[$i] -PathType Container) { Fail "Target is a directory: $($Targets[$i])" }
+    }
+
+    if (Test-IsSymlink $Targets[0]) { Fail 'Shared rule target must be a regular file' }
+    if (Test-IsSymlink $Targets[1]) {
+        if ($useLocal) {
+            $target = Get-LinkTarget $Targets[1]
+            if (($null -eq $target) -or ($target -ne [IO.Path]::GetFullPath($Sources[1]))) {
+                Fail 'Unexpected AGY symlink target'
+            }
+        } else {
+            Fail 'Shared rule target must be a regular file'
         }
     }
-}
 
-for ($i = 0; $i -lt 2; $i++) {
-    if (Test-IsSymlink $Targets[$i]) { Fail "Runtime rule must be a regular file: $($Targets[$i])" }
-    if ((Get-Sha256 $Sources[$i]) -ne (Get-Sha256 $Targets[$i])) {
-        Fail "Files differ: $($Sources[$i]) -> $($Targets[$i])"
+    if ($Mode -eq 'Apply') {
+        for ($i = 0; $i -lt 2; $i++) {
+            $targetDir = Split-Path -Parent $Targets[$i]
+            if (-not (Test-Path -LiteralPath $targetDir)) {
+                New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+            }
+            $tmp = Join-Path $targetDir ('.agent-rule.' + [guid]::NewGuid().ToString('N') + '.tmp')
+            try {
+                Copy-Item -LiteralPath $Sources[$i] -Destination $tmp -Force
+                if ((Get-Sha256 $Sources[$i]) -ne (Get-Sha256 $tmp)) { Fail "Copy verification failed: $tmp" }
+                Move-Item -LiteralPath $tmp -Destination $Targets[$i] -Force
+            }
+            finally {
+                if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+            }
+        }
+    }
+
+    for ($i = 0; $i -lt 2; $i++) {
+        if (Test-IsSymlink $Targets[$i]) { Fail "Runtime rule must be a regular file: $($Targets[$i])" }
+        if (-not (Test-Path -LiteralPath $Targets[$i] -PathType Leaf)) { Fail "Missing target file: $($Targets[$i])" }
+        if ((Get-Sha256 $Sources[$i]) -ne (Get-Sha256 $Targets[$i])) {
+            Fail "Files differ: $($Sources[$i]) -> $($Targets[$i])"
+        }
+    }
+
+    foreach ($path in ($Sources + $Targets)) {
+        '{0}  {1}' -f (Get-Sha256 $path), $path
+    }
+    Write-Output 'Rule files match; harness loading has not been verified.'
+}
+finally {
+    if ($remoteTempDir -and (Test-Path -LiteralPath $remoteTempDir)) {
+        Remove-Item -LiteralPath $remoteTempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-
-foreach ($path in ($Sources + $Targets)) {
-    '{0}  {1}' -f (Get-Sha256 $path), $path
-}
-Write-Output 'Rule files match; harness loading has not been verified.'
 exit 0
