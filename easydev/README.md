@@ -49,59 +49,33 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认所有角色继承宿主，无须配置（等价于三者都写 `inherit`、`upgrades` 为空）。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，规则本身不固化供应商版本。
-
-下面的内联示例是仓库里唯一的模型配置示例（不再另存示例文件），取自维护者 2026-10-27 复评的一组分配：开发与审查分属不同供应商，`upgrades` 在升级阶段换上更强的实现模型、并把审查提到同一模型支持的更高推理档位，两级都保持实现与审查不同供应商。模型 ID 与供应商取决于宿主，换宿主须逐字替换为本机支持的完整 ID；原样照抄到没有对应 provider 的宿主上，会在第一次分派时按 [模型配置](references/environment.md#模型配置) 暂停报受阻，不会回落到 `inherit`。不另放全 `inherit` 的示例文件：内置默认已是三个角色 `inherit`、`upgrades` 为空，重复一份只会与默认值漂移。示例不会自动加载，复制到选定位置或在对话中明确指定：
+默认所有角色继承宿主，无须额外配置。
 
 ```json
 {
   "developer": {
-    "model": "opencode-go/deepseek-v4.1-flash",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
   "reviewer": {
-    "model": "codex/gpt-6.1-sol",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
   "designer": {
-    "model": "codex/gpt-6.1-sol",
-    "reasoning_effort": "high"
+    "model": "inherit",
+    "reasoning_effort": "inherit"
   },
-  "upgrades": [
-    {
-      "developer": {
-        "model": "antigravity/gemini-4-argon",
-        "reasoning_effort": "high"
-      },
-      "reviewer": {
-        "model": "codex/gpt-6.1-sol",
-        "reasoning_effort": "max"
-      }
-    }
-  ]
+  "upgrades": []
 }
 ```
 
-这组分配的判据是同一天的实测用量、公开基准与路由可用性；数字随模型版本变化，不构成仓库保证。同一档位才有可比性：本基准里同一模型 `high` 与 `max` 能差出 7–18 分，跨档位比较会把结论反过来。
+### 效果说明
 
-- 开发用 `deepseek-v4.1-flash`：DeepSWE 77.0 在可调用模型中第二高（仅次于 Argon 的 77.9），单价 0.15/0.6、缓存读取 0.003；182 次子代理运行中 39 次开发任务 0 失败、平均 121s。日常路径占用量最大，所以这里要的是单价与长任务成功率，不是榜单第一。
-- 审查用 `gpt-6.1-sol`：Bug Hunt Bench max 44.3（配置的 high 档实测 36.5）、AA Intelligence 51.8，是主循环里可稳定付费调用且缺陷发现能力最强的选项。审查占实测子代理支出的 62%，换更便宜的模型省的是钱、付出的是漏审。
-- 升级阶段开发换 `gemini-4-argon`（Antigravity 订阅）：DeepSWE 77.9、SWE-bench Pro 81.5（估算）、AA Intelligence 52.6、Bug Hunt 40.7（实测于 Antigravity CLI high 档，正是本机请求的路径与档位）。它是唯一在两条实现指标上都不低于阶段 0 的候选：DeepSWE 77.9 ≥ 77.0，SWE-bench Pro 81.5 补上 62.7 的短板。
-- 升级阶段审查把 `gpt-6.1-sol` 提到 `max`：同一模型 44.3 对 high 的 36.5，代价约 1.8× 成本与 2× 墙上时间，且只在一次修复失败后触发。不换成 Antigravity 的 Claude：`sonnet-5-5` 的 51.3 是 Claude Code 的 `max` 档，Antigravity 只到 high，同档实测 34.3（`opus-5-5` 为 31.7），并不高于 Sol 的 36.5。
-- 未采用 `grok-4.7`：Bug Hunt high 19.3（自身最高 xhigh 29.0）是可调用模型里最低一档，DeepSWE 71.0 低于阶段 0 开发，单价 2/6 且缓存读 0.5 是 `deepseek-v4.1-flash` 的百倍量级，代理负载（约八成是缓存重读）折算约 19×；它只在 AA Agentic 58.4 上占优，不足以支撑一个升级位。
-- 未采用 `gpt-6-astra` 与其他 `zed/*`：Astra 的 Bug Hunt max 45.0 与 Sol 的 44.3 之差在重跑噪声内（本基准同配置重跑的中位偏移为 1.8 分），却要 5× credits 与 5–45 条/5h 的额度；`zed/*` 实测 403（额度耗尽）。
-- `antigravity/claude-opus-5-5` 不进 `upgrades`：SWE-bench Pro 89.9 实测最强，但订阅额度只够偶尔手动调用，按对话显式指定作一次性覆盖，不占用自动升级位。
-- 深度只写模型实际支持的档位：Antigravity 侧 low/medium/high 有区分，`xhigh`/`max` 会映射为 high；Codex 侧可到 `max`，但请求值是否真的生效要按 [模型配置](references/environment.md#模型配置) 用实际返回值核对，不能凭请求记账。
+- **继承宿主**：开发、审查、设计角色均继承当前宿主默认模型与推理深度，不依赖特定供应商或外部模型 ID。
+- **不自动升级**：`upgrades` 为空，修复失败重试时不自动切换更高阶模型或推理档位。
+- **实例分离**：委派时仍按规则分离不同实例；若宿主无委派能力则自动触发能力降级自查。
 
-仅真正分派或用户要求配置时读取。当前对话角色字段覆盖优先；基础文件按对话指定文件、项目根 `.easydev/models.json`、用户配置、内置默认的顺序选取，文件不合并。选中配置无效或不可读时暂停相关分派，不静默回退。
-
-例如在 macOS/Linux 查看个人配置（存在时）：
-
-```bash
-cat ~/.config/easydev/models.json
-```
-
-Windows 路径、字段、模型阶段和实际生效核对统一见 [environment.md](references/environment.md#模型配置)。项目级覆盖及对话指定文件优先于用户配置是本版变化；未设置更高来源时，原用户配置继续有效。示例不会自动生效，安装更新不修改个人配置。
+来源优先级与详细规范见 [环境与模型配置](references/environment.md#模型配置)。
 
 ## 验证与交付
 
