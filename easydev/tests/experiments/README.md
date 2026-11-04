@@ -9,7 +9,7 @@
 | --- | --- |
 | `stubs/codex_stub.py` | 模拟 `codex exec ...`；由 `EASYDEV_STUB_PLAN` JSON 控制事件、reviewer、文件改动、索引暂存、运行时 Skill 编辑、退出码、挂起与子进程。 |
 | `stubs/pytest_stub.py` | 模拟 `venv/bin/python -m pytest`；由 `EASYDEV_PYTEST_PLAN` JSON 决定每个 nodeid 的状态，输出 pytest 风格行并写 JUnit XML。 |
-| `agent_runner/` | 单宿主行为 runner、B01/B02/B16/B61/public-contract-callers 场景与 CLI 测试。 |
+| `agent_runner/` | 单宿主行为 runner、B01/B02/B16/B61/B67（含 `b67-review`）/public-contract-callers 场景与 CLI 测试。 |
 | `swebench/` | SWE-bench Lite 小样本运行器、事件归因与 CLI 测试。 |
 | `review-ablation/README.md` | 四臂审查消融协议文档；只定义对照与记录口径，不含可执行检查或实验结果。 |
 | `routing-replay/README.md` | 三任务 × 三档的路由复放协议；只定义记录字段与判读规则，不含可执行检查或实验结果。 |

@@ -28,7 +28,7 @@ EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过
 
 normal 审完整任务 diff、直接调用方和相关测试；首轮仅局部 P2 时允许一次局部修复与定向复审，其余必关发现转 full，继承已用审查和修复预算。风险被证据排除时允许降低流程，用户指定档位及未关闭必关项不能被自动降级。完整判断、边界示例及状态转换以 [流程规则](references/workflow.md#分流判定) 为准。
 
-1.1.0 保留 quick/full 名称，新增 normal；原聊天表达 normal/lite/ultra 已移除，normal 现在表示实现路径。聊天长短遵循用户要求，推理深度仍由 reasoning_effort 指定。
+normal 是实现路径，不是聊天轻重档：回复长短遵循用户要求，推理深度由 reasoning_effort 指定。
 
 ## 安装
 

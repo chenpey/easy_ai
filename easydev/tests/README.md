@@ -134,10 +134,6 @@ tests/
 
 `tests/experiments/review-ablation/README.md` 与 `tests/experiments/routing-replay/README.md` 是协议文档，不含测试断言或夹具，因此不随本次测试材料重建删除。`tests/experiments/b67-replay/<date>/` 存放 B67 的真实回放记录（B67 的判拒口径由 `agent_runner` 的 `b67`/`b67-review` 离线覆盖，回放记录不构成回归保护）；首轮为 `2026-10-27`，两个工作区各一次真实模型运行。`tests/experiments/behavior-replay/<date>/` 存放四场景的行为回放记录（同一口径，同样不构成回归保护）；`2026-10-27` 那批的宿主是本地 pi 子代理 + `antigravity` 外部 CLI，没有 codex 适配器的工作区隔离与断网约束，执行者确实读过仓库外的 `~/.config/easydev/models.json`，因此只能当线索、不能当隔离环境下的证据。
 
-## 0.12.1 回归补充
+## 版本历史与历史记录
 
-逐项裁决见 [审计处置](audit-0.12.1.md)。新增裸命令 PATH、正常退出后代清理、嵌套 `.git`、B02/公共契约提前退出、B02 空打开硬编码、运行期数据变化、SWE-bench 伪造 stdout 及相对资产路径、验收超时与继承输出句柄检查。固定补丁验收另接受两种合法的调用者已知 ID 异常文案，11 类伪修复仍须被拒绝。
-
-## 1.2.0 – 1.2.3 验证边界
-
-入口 4096 字节上限由仓库 `scripts/check.sh` 校验，链接、版本和配置示例沿用原门禁。normal 的首轮局部 P2 修复与至多一次定向复审、两次独立审查硬上限、转 full 时 `r=1` 或 `r=2` 的继承，以及门控第 5 项「高风险边界但未改变行为/决策/数据流时不启用」由 design-gate 状态机覆盖；normal 声明及升降级由事件分析 CLI 覆盖，上下文继承与实例分离由 design-gate 替身覆盖。B65 的 20 条上限与保留策略由 audit-overflow 覆盖。B61–B66 的行为结果仍须真实回放；字节数和替身结果不证明实际 token、费用或耗时收益。1.2.1 另由文档契约锁定定向复审的直接调用方范围、「现成检查」口径、高风险边界的实际影响判定与计量键序；1.2.2 把计量改为按角色分段并锁定该口径（第 14 条），新增 `tests/experiments/routing-replay/README.md` 复放协议。真实回放仍未覆盖 normal 微闭环、计量格式与角色分段的读取事件来源。
+各版本的验证边界与回归补充见 [CHANGELOG](../CHANGELOG.md) 对应条目；`0.12.1` 的逐项裁决保存在 [审计处置](audit-0.12.1.md)。

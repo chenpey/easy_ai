@@ -21,4 +21,4 @@
 | `design-gate` | normal 初审、至多一次局部 P2 修复与定向复审、转 full 继承已用轮次，以及独立设计环节的门控、账本、施工闸和可达性 | `bash tests/cases/design-gate/run.sh` |
 | `audit-overflow` | 23 条发现时正文 20 条、附录完整保留、溢出 P1 摘要与分片覆盖披露 | `bash tests/cases/audit-overflow/run.sh` |
 
-其余行为场景由 [tests/behavior.md](../behavior.md) 定义；其中 B01、B02、B16 与 `public-contract-callers` 已有离线可执行载体，由 `tests/experiments/agent_runner/` 的替身驱动；B61 与 B60 的确定性部分由 `design-gate` 覆盖，B65 的确定性部分由 `audit-overflow` 覆盖，行为部分仍需回放。只有需要固定仓库材料、参考补丁或独立验收的场景才在此建立目录。
+其余行为场景由 [tests/behavior.md](../behavior.md) 定义；其中 B01、B02、B16、B61（观测部分）、B67（实施侧与审查侧）与 `public-contract-callers` 已有离线可执行载体，由 `tests/experiments/agent_runner/` 的替身驱动；B60 与 B61（确定性部分）由 `design-gate` 覆盖，B65（确定性部分）由 `audit-overflow` 覆盖，行为部分仍需回放。只有需要固定仓库材料、参考补丁或独立验收的场景才在此建立目录。

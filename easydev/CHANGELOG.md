@@ -18,6 +18,8 @@
 
 - **规则总量棘轮下调**：`check.sh` §10 的 `MAX_TOTAL` 从 55000 降到 53142 字节（当前实测值），`SKILL.md` + `references/*.md` 合计不得超过 53142 字节；后续新增规则必须同步删减等量篇幅，扩容仍需按本文件说明理由。
 
+- **维护材料文档漂移修复**：`references/review.md` 删掉 2.0.0 已并入 `engineering.md` 的 `code-quality.md` 残留括注；`tests/cases/design-gate/README.md` 的文档契约计数 20 → 25 条、机制自检 4 → 6 组；`tests/experiments/README.md` 与 `tests/cases/README.md` 的离线载体清单补 B67（含 `b67-review`）与 B61 观测部分；`scripts/check.sh` §9 注释改指向现行 `engineering.md`；删除 `tests/README.md` 与 `tests/cases/design-gate/README.md` 中与版本演进重复的段落，`tests/README.md` 改为指向 CHANGELOG 与 `audit-0.12.1.md`；`easydev/README.md` 的 1.1.0 命名说明改为现行口径。规则正文 53,142 → 53,119 字节，`check.sh` §10 的 `MAX_TOTAL` 同步降到 53119，后续 `SKILL.md` + `references/*.md` 合计不得超过 53119 字节。
+
 未验证：CI/Linux 结果待推送后确认；真实模型回放不在维护材料范围内，四宿主 Hook 已随 2.0.0 移除。
 
 ## 2.0.0 更新说明（2026-11-04）
