@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 import sys
 from pathlib import Path
 
@@ -728,14 +729,23 @@ DOC_CONTRACT = [
 ]
 
 
+HEADING_RE = re.compile(r"^(#{1,6})\s")
+
+
 def _scope_body(text: str, anchor: str, scope: str) -> str | None:
-    """断言作用域：file=整份文件；section=锚点起截到下一个行首 `## `（围栏内伪标题不计）。"""
+    """断言作用域：file=整份文件；section=锚点起截到同级或更高级标题（围栏内伪标题不计）。
+
+    标题锚点按自身层级截断，所以 `### 来源优先级` 的断言不会越到 `### 字段规范`；
+    非标题锚点沿用「截到下一个二级标题」。
+    """
     idx = text.find(anchor)
     if idx < 0:
         return None
     if scope == "file":
         # 文件作用域断言的是“整份文件里存在”，锚点只用于确认文件结构未走样。
         return text
+    anchor_heading = HEADING_RE.match(anchor)
+    level = len(anchor_heading.group(1)) if anchor_heading else 2
     # 锚点可能落在围栏内（账本模板就是围栏里的多行块），必须先用前缀推出进入时的围栏状态，
     # 否则会把围栏的闭合行当成开启，导致作用域越出小节。
     fence: str | None = None
@@ -752,7 +762,7 @@ def _scope_body(text: str, anchor: str, scope: str) -> str | None:
         if fence is None:
             if stripped.startswith(("```", "~~~")):
                 fence = stripped[:3]
-            elif line.startswith("## "):
+            elif HEADING_RE.match(line) and len(HEADING_RE.match(line).group(1)) <= level:
                 break
             body.append(line)
         else:
@@ -878,6 +888,16 @@ def run_doc_contract_mechanism() -> None:
         text = text.replace("设计环节（门控命中项或不启用理由）/design.md 版本与冻结时间/设计者：", "设计环节（门控命中项或不启用理由）/design.md 版本与快照/设计者：", 1)
         return text.replace("## 审查与修复", "## 审查与修复\n\n冻结时间：见上。", 1)
 
+    def move_source_priority(text: str) -> str:
+        moved = (
+            "- **文件不合并**：选定最高优先级的基础文件后再应用对话局部覆盖。"
+            "选中配置无效或不可读时暂停相关分派并报错，不静默回退。\n"
+        )
+        if moved not in text or "### 字段规范" not in text:
+            raise RuleError("environment.md 的结构与预期不符")
+        text = text.replace(moved, "", 1)
+        return text.replace("### 字段规范", "### 字段规范\n" + moved, 1)
+
     def move_generate_section(text: str) -> str:
         marker = "### 注释与生成文件"
         if marker not in text:
@@ -891,6 +911,7 @@ def run_doc_contract_mechanism() -> None:
         ("normal 契约移到邻节必须判负", "easydev/references/workflow.md", move_normal_contract, "normal 流程要求实现改动", False),
         ("围栏内锚点的断言不越出小节", "easydev/references/workflow.md", move_ledger_needle, "账本模板含门控判定", False),
         ("文件作用域允许跨节搬动", "easydev/references/engineering.md", move_generate_section, "注释与生成文件判据", True),
+        ("来源规则搬到三级邻节必须判负", "easydev/references/environment.md", move_source_priority, "environment 的来源优先级", False),
     )
     for label, rel, transform, label_part, should_pass in cases:
         with tempfile.TemporaryDirectory() as tmp:

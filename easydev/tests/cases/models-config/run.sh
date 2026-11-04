@@ -35,9 +35,12 @@ BASE = {
     "developer": {"model": "openai/gpt-6", "reasoning_effort": "high"},
     "reviewer": {"model": "anthropic/claude-5", "reasoning_effort": "medium"},
 }
+# 用户配置刻意带一个项目配置没有的可选角色：若实现做了跨文件合并（补齐缺失键或
+# 低优先级覆盖），designer 会出现在结果里，下面的「文件不合并」断言才抓得住。
 OTHER = {
     "developer": {"model": "google/gemini-4", "reasoning_effort": "low"},
     "reviewer": {"model": "xai/grok-5", "reasoning_effort": "high"},
+    "designer": {"model": "xai/grok-5", "reasoning_effort": "high"},
 }
 
 failures = []
@@ -174,11 +177,14 @@ USER_CONFIG.unlink()
 
 check("对话指定文件不存在时不回退",
       lambda: expect_error("不存在", context={"models_file": str(WORK / "missing.json")}))
+# 恢复一份内容不同的项目配置：否则这条只验证了相对路径解析，没验证与项目配置的优先级。
+write(PROJECT_CONFIG, BASE)
 write(WORK / "explicit.json", OTHER)
 check("对话指定相对路径按 repo_root 解析并优先于项目配置",
       lambda: expect_selection("对话指定文件", OTHER,
                                context={"models_file": "explicit.json", "repo_root": str(WORK)},
                                project_root=str(PROJECT)))
+PROJECT_CONFIG.unlink()
 
 overridden = json.loads(json.dumps(models.builtin_config()))
 overridden["reviewer"]["model"] = "openai/gpt-6"

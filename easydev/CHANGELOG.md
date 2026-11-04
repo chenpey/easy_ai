@@ -8,11 +8,13 @@
 
 - **单入口可跑**：`easydev/pytest.ini` 设 `--import-mode=importlib`。`agent_runner/test_cli.py` 与 `swebench/test_cli.py` 同名且两个目录都没有 `__init__.py`，在 `easydev/` 根执行 `python3 -m pytest`（或 `python3 -m pytest tests/experiments`）会因模块名冲突直接报收集错误，与仓库「每个仓库只保留一个测试入口」的约定冲突；CI 拆成三条分目录命令把问题掩盖了。
 - **新增模型配置用例**（`tests/cases/models-config/run.sh`，24 项）：`scripts/models.py` 的 schema/validator 与来源选择此前只有 `check.sh` 验证 README 正例，B48 的配置规则没有任何可执行载体。现在固定重复键、非法 JSON、未知顶层键、缺必需角色、`model` 缺供应商、`reasoning_effort` 越界、`designer` 缺字段、`upgrades` 超两项/缺角色/含 designer/相邻级同值、`role_overrides` 空对象；以及「项目 > 用户 > 内置默认」「文件之间不合并」「无效或缺失文件不静默回退」「软链不当作配置文件」。红跑证据：把 `MAX_UPGRADES` 改为 3 并跳过项目配置后 3 项失败，还原后通过。
-- **`environment.md` 纳入文档契约**：`design-gate` 的 `DOC_CONTRACT` 增加 4 条（来源优先级与不回退、能力降级三档与审查包、敏感原内容 `0700`/`0600` 与软链判定、工作区收尾须用户授权），21 → 25 条，该用例 84 → 88 项。此前 2.0.0 收敛出的 `environment.md` 整份不受保护，把「文件不合并」改成允许合并后设计门禁仍全绿。
+- **`environment.md` 纳入文档契约**：`design-gate` 的 `DOC_CONTRACT` 增加 4 条（来源优先级与不回退、能力降级三档与审查包、敏感原内容 `0700`/`0600` 与软链判定、工作区收尾须用户授权），21 → 25 条，该用例 84 → 89 项（含 1 条「来源规则搬到三级邻节必须判负」的机制自检）。此前 2.0.0 收敛出的 `environment.md` 整份不受保护，把「文件不合并」改成允许合并后设计门禁仍全绿。
 - **清理 hook 体系移除后的残留**：`tests/README.md` 删除 core 诊断类别与四宿主 Hook probe 两条已不成立的未覆盖说明（对应子系统在 2.0.0 移除）、`self.defer` 约定改为 `teardown_method`、耗时目标按实测改为 < 240s；`tests/behavior.md` 删除 B68 行与它的载体声明（`tests/hooks/test_*.py` 已不存在）；`scripts/check.sh` §6 注释改为指向 `scripts/models.py`；`conftest.py` 删除已无对应机制的 `pytest_runtest_teardown` 清理兜底（全仓已无 `self.defer`）。
 - **文档与版本**：`tests/README.md`（八项检查、十项 CI 矩阵、目录树与覆盖清单）、`tests/cases/README.md` 用例表、CI 矩阵同步；版本号 2.0.1（`SKILL.md`、两份 README、本文件四处一致）。
 
-验证（本机 macOS、Python 3.12、pytest 8.4.2）：`python3 -m pytest` 162 passed；`agent_runner` 90 passed、`swebench` + `test_role_metric` 72 passed；五个 case 脚本 rc=0（design-gate 88/88、audit-overflow 16/16、models-config 24/24）；`bash scripts/check.sh` rc=0。
+验证（本机 macOS、Python 3.12、pytest 8.4.2）：`python3 -m pytest` 162 passed；`agent_runner` 90 passed、`swebench` + `test_role_metric` 72 passed；五个 case 脚本 rc=0（design-gate 89/89、audit-overflow 16/16、models-config 24/24）；`bash scripts/check.sh` rc=0。
+
+- **独立审查（GPT-6.1 Sol/high）复审追加**：首轮审查认为六条修复方向正确、无 P0/P1，但报出 3 条 P2 均为新增测试的漏检强度不足，已修并各自补红跑证据：①「文件不合并」夹具原先两个配置的键集合相同，补字段式合并不可观测 —— 用户配置改为带一个项目配置没有的 `designer`；②「显式文件优先于项目配置」一例执行时项目配置已被前面的用例删除 —— 该检查前恢复内容不同的项目配置，检查后再清理；③ 新增的 `### 来源优先级` 契约越过了相邻 `###` 小节 —— `_scope_body()` 改为按锚点标题层级截断（非标题锚点行为不变）。红跑：把项目选择改成「项目再补用户缺失键」、把项目选择排到显式文件之前、把「文件不合并」搬到 `### 字段规范`，三者分别让对应检查失败，还原后全绿。
 
 未验证：CI/Linux 结果待推送后确认；真实模型回放不在维护材料范围内，四宿主 Hook 已随 2.0.0 移除。
 
