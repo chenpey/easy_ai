@@ -432,9 +432,9 @@ class RunnerCliTest:
         assert patch.strip()
         assert ".agents/skills" not in patch
 
-    def test_run_b01_allows_routing_reference(self) -> None:
+    def test_run_b01_allows_workflow_reference(self) -> None:
         fixture = self.stub_environment(
-            "b01-routing", self.b01_plan(commands=["cat references/routing.md"])
+            "b01-workflow", self.b01_plan(commands=["cat references/workflow.md"])
         )
         completed = self.run_scenario(fixture, "b01")
         assert completed.returncode == 0, completed.stderr + completed.stdout
@@ -442,7 +442,7 @@ class RunnerCliTest:
 
     def test_run_b01_rejects_other_references(self) -> None:
         fixture = self.stub_environment(
-            "b01-execution", self.b01_plan(commands=["cat references/execution.md"])
+            "b01-engineering", self.b01_plan(commands=["cat references/engineering.md"])
         )
         completed = self.run_scenario(fixture, "b01")
         assert completed.returncode == 1, completed.stderr + completed.stdout
@@ -1395,6 +1395,33 @@ class RunnerCliTest:
         }
         assert checks["review reports the costly nesting"]
         assert checks["review does not report pure style"]
+        assert result["evaluation"]["details"]["code_quality_loaded"] is False
+
+    def test_run_b67_review_tracks_code_quality_module_access(self) -> None:
+        report = (
+            "限制：未审并发写入路径。\n\n"
+            "```easydev-findings\n"
+            + B67_COST_FINDING
+            + "\n```"
+        )
+        fixture_unread = self.stub_environment(
+            "b67-review-unread",
+            {"agent_messages": [report], "commands": ["cat src/report.py"]},
+        )
+        self.run_scenario(fixture_unread, "b67-review")
+        result_unread = self.result(fixture_unread, "b67-review")
+        assert result_unread["evaluation"]["details"]["code_quality_loaded"] is False
+
+        fixture_read = self.stub_environment(
+            "b67-review-read",
+            {
+                "agent_messages": [report],
+                "commands": ["cat src/report.py", "cat references/engineering.md"],
+            },
+        )
+        self.run_scenario(fixture_read, "b67-review")
+        result_read = self.result(fixture_read, "b67-review")
+        assert result_read["evaluation"]["details"]["code_quality_loaded"] is True
 
     def test_run_b67_review_rejects_style_noise_and_missing_block(self) -> None:
         style_report = (

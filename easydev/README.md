@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`1.5.2`
+当前版本：`2.0.0`
 
 EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
 
@@ -26,7 +26,7 @@ EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过
 | review / audit | 单次只读审查或分片审计 |
 | spike | 最小可行性实验，产物标 throwaway |
 
-normal 审完整任务 diff、直接调用方和相关测试；首轮仅局部 P2 时允许一次局部修复与定向复审，其余必关发现转 full，继承已用审查和修复预算。风险被证据排除时允许降低流程，用户指定档位及未关闭必关项不能被自动降级。完整判断、边界示例及状态转换以 [分流规则](references/routing.md) 为准。
+normal 审完整任务 diff、直接调用方和相关测试；首轮仅局部 P2 时允许一次局部修复与定向复审，其余必关发现转 full，继承已用审查和修复预算。风险被证据排除时允许降低流程，用户指定档位及未关闭必关项不能被自动降级。完整判断、边界示例及状态转换以 [流程规则](references/workflow.md#分流判定) 为准。
 
 1.1.0 保留 quick/full 名称，新增 normal；原聊天表达 normal/lite/ultra 已移除，normal 现在表示实现路径。聊天长短遵循用户要求，推理深度仍由 reasoning_effort 指定。
 
@@ -45,13 +45,13 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 检查技能和引用文件完整性、链接有效性，报告路径、版本和生效步骤；未验证宿主实际加载时明确说明。优先使用已有工具，避免安装不必要的依赖。
 ```
 
-模型、密钥、网络、沙箱与子代理能力由宿主提供。安装成功不代表宿主已经加载；能力要求与故障处理见 [环境适配](references/setup.md)。
+模型、密钥、网络、沙箱与子代理能力由宿主提供。安装成功不代表宿主已经加载；能力要求与故障处理见 [环境与能力适配](references/environment.md#宿主适配与能力降级)。
 
 ## 模型配置
 
 默认所有角色继承宿主，无须配置（等价于三者都写 `inherit`、`upgrades` 为空）。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，规则本身不固化供应商版本。
 
-下面的内联示例是仓库里唯一的模型配置示例（不再另存示例文件），取自维护者 2026-10-27 复评的一组分配：开发与审查分属不同供应商，`upgrades` 在升级阶段换上更强的实现模型、并把审查提到同一模型支持的更高推理档位，两级都保持实现与审查不同供应商。模型 ID 与供应商取决于宿主，换宿主须逐字替换为本机支持的完整 ID；原样照抄到没有对应 provider 的宿主上，会在第一次分派时按 [模型配置](references/models.md) 暂停报受阻，不会回落到 `inherit`。不另放全 `inherit` 的示例文件：内置默认已是三个角色 `inherit`、`upgrades` 为空，重复一份只会与默认值漂移。示例不会自动加载，复制到选定位置或在对话中明确指定：
+下面的内联示例是仓库里唯一的模型配置示例（不再另存示例文件），取自维护者 2026-10-27 复评的一组分配：开发与审查分属不同供应商，`upgrades` 在升级阶段换上更强的实现模型、并把审查提到同一模型支持的更高推理档位，两级都保持实现与审查不同供应商。模型 ID 与供应商取决于宿主，换宿主须逐字替换为本机支持的完整 ID；原样照抄到没有对应 provider 的宿主上，会在第一次分派时按 [模型配置](references/environment.md#模型配置) 暂停报受阻，不会回落到 `inherit`。不另放全 `inherit` 的示例文件：内置默认已是三个角色 `inherit`、`upgrades` 为空，重复一份只会与默认值漂移。示例不会自动加载，复制到选定位置或在对话中明确指定：
 
 ```json
 {
@@ -91,7 +91,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 - 未采用 `grok-4.7`：Bug Hunt high 19.3（自身最高 xhigh 29.0）是可调用模型里最低一档，DeepSWE 71.0 低于阶段 0 开发，单价 2/6 且缓存读 0.5 是 `deepseek-v4.1-flash` 的百倍量级，代理负载（约八成是缓存重读）折算约 19×；它只在 AA Agentic 58.4 上占优，不足以支撑一个升级位。
 - 未采用 `gpt-6-astra` 与其他 `zed/*`：Astra 的 Bug Hunt max 45.0 与 Sol 的 44.3 之差在重跑噪声内（本基准同配置重跑的中位偏移为 1.8 分），却要 5× credits 与 5–45 条/5h 的额度；`zed/*` 实测 403（额度耗尽）。
 - `antigravity/claude-opus-5-5` 不进 `upgrades`：SWE-bench Pro 89.9 实测最强，但订阅额度只够偶尔手动调用，按对话显式指定作一次性覆盖，不占用自动升级位。
-- 深度只写模型实际支持的档位：Antigravity 侧 low/medium/high 有区分，`xhigh`/`max` 会映射为 high；Codex 侧可到 `max`，但请求值是否真的生效要按 [模型配置](references/models.md) 用实际返回值核对，不能凭请求记账。
+- 深度只写模型实际支持的档位：Antigravity 侧 low/medium/high 有区分，`xhigh`/`max` 会映射为 high；Codex 侧可到 `max`，但请求值是否真的生效要按 [模型配置](references/environment.md#模型配置) 用实际返回值核对，不能凭请求记账。
 
 仅真正分派或用户要求配置时读取。当前对话角色字段覆盖优先；基础文件按对话指定文件、项目根 `.easydev/models.json`、用户配置、内置默认的顺序选取，文件不合并。选中配置无效或不可读时暂停相关分派，不静默回退。
 
@@ -101,13 +101,13 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 cat ~/.config/easydev/models.json
 ```
 
-Windows 路径、字段、模型阶段和实际生效核对统一见 [models.md](references/models.md)。项目级覆盖及对话指定文件优先于用户配置是本版变化；未设置更高来源时，原用户配置继续有效。示例不会自动生效，安装更新不修改个人配置。
+Windows 路径、字段、模型阶段和实际生效核对统一见 [environment.md](references/environment.md#模型配置)。项目级覆盖及对话指定文件优先于用户配置是本版变化；未设置更高来源时，原用户配置继续有效。示例不会自动生效，安装更新不修改个人配置。
 
 ## 验证与交付
 
-- 复用充分检查，只为明确覆盖缺口新增行为测试；按项目脚本运行，独立无冲突项并行，依赖项顺序执行。详细规则见 [execution](references/execution.md)。
-- quick 报自查；normal 报独立定向审查（含必要的一次局部 P2 复审）；full 按 [编排与预算](references/orchestration.md) 判定闭环。达到预算上限不等于完成，修复尝试以 [尝试预算](references/routing.md#尝试预算) 为准。
-- 缺独立能力时完成授权范围内自查，给可交接审查包并明确缺口；不能称独立审查通过或 full 闭环完成。不同实例继承上下文时披露隔离限制，见 [setup](references/setup.md#能力降级与审查包)。
+- 复用充分检查，只为明确覆盖缺口新增行为测试；按项目脚本运行，独立无冲突项并行，依赖项顺序执行。详细规则见 [工程实践](references/engineering.md)。
+- quick 报自查；normal 报独立定向审查（含必要的一次局部 P2 复审）；full 按 [流程编排](references/workflow.md#full-编排) 判定闭环。达到预算上限不等于完成，修复尝试以 [尝试预算](references/workflow.md#尝试预算) 为准。
+- 缺独立能力时完成授权范围内自查，给可交接审查包并明确缺口；不能称独立审查通过或 full 闭环完成。不同实例继承上下文时披露隔离限制，见 [能力降级与审查包](references/environment.md#能力降级与审查包)。
 - audit 按模块或信任边界分片，记录覆盖与跨片接口；正文最多 20 条，全部发现保留附录/审查产物，关键缺陷不会因截断丢失。
 - 待审脚本执行与凭证隔离遵守 [审查规程](references/review.md#不可信代码执行)。保留用户改动；提交、推送、发布和对外动作遵循明确授权。
 
@@ -115,13 +115,12 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [models.md]
 
 运行规则以 [SKILL.md](SKILL.md) 和按需引用模块为准，README 不维护第二份细则。
 
-- [开发角色](references/developer-role.md)、[审查角色](references/reviewer-role.md)：短交接入口，不重新遍历完整技能
-- [独立设计](references/design.md)、[计划](references/planning.md)、[候选评审](references/candidates.md)
-- [重构](references/refactoring.md)、[排障](references/debugging.md)、[产品验证](references/verification.md)
-- [代码质量判据](references/code-quality.md)：克制复杂度、边界校验、结构与抽象、控制流、类型与异常、同步与异步、依赖方向、术语、注释、生成文件（代码写法的唯一细则源）
-- [基线恢复](references/baseline-safety.md)、[工作区](references/worktree.md)
+- [角色定义](references/roles.md)：开发与审查角色交接入口
+- [流程编排](references/workflow.md)：分流、normal 与 full 编排、两本账与尝试预算
+- [工程实践](references/engineering.md)：实现、代码质量判据、测试、排障、重构与验证
+- [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选评审
+- [审查规程](references/review.md)：审查原则、强度分档与全仓审计规程
+- [环境与安全](references/environment.md)：模型配置、宿主能力降级、基线安全与工作区隔离
 - [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[版本历史](CHANGELOG.md)
 
 `tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。
-
-入口 4096 字节上限触顶时按固定顺序腾挪，不临时压缩措辞、不放宽上限：先合并按需加载表里相近的行，或把新模块并入现有行，再把计量与报告格式细节移进 routing，然后才考虑把入口的高风险边界枚举压成一句并指向 routing，最后才把按需加载表移进 routing（quick 需要它，因此放最后）。只改措辞、计数或错别字的补丁（不改判定条件、预算、状态机或可执行断言）最多跑一轮 normal 独立审查，不按 full 闭环反复复审；这一轮报 P0/P1、或改动实际超出措辞与计数范围时，按 [routing](references/routing.md) 的转 full 规则执行。

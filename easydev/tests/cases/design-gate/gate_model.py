@@ -1,6 +1,6 @@
 """流程状态机中可判定的部分：normal 转 full、设计门控与两本账记账。
 
-编码 `references/routing.md` 的 normal 一次独立定向审查与升级继承，
+编码 `references/workflow.md` 的 normal 一次独立定向审查与升级继承，
 以及 `references/design.md` 里能被判定成布尔或整数的五项门控、`d/3` 与
 `r/5` 的消耗与上限、施工闸、停止条件。不模拟模型是否遵守规则，也不覆盖
 任何需要真实宿主的分派、暂停或实例隔离行为——那些只能靠行为回放。
@@ -59,7 +59,7 @@ def resolve_designer(
             "mode": DESIGNER_FALLBACK,
             "counts_dr": False,
             "gate": "open_self_checked",
-            "reason": "用户明确禁止委派（setup.md 硬约束优先），按无能力兜底",
+            "reason": "用户明确禁止委派（environment.md 硬约束优先），按无能力兜底",
         }
     if not delegation_available:
         return {
@@ -149,7 +149,7 @@ class NormalReviewFlow:
 
     @staticmethod
     def _is_local_p2(finding: dict) -> bool:
-        """局部 P2：按 routing.md「normal 流程」的「局部 P2 判定」，四条判据同时成立。
+        """局部 P2：按 workflow.md「normal 流程」的「局部 P2 判定」，四条判据同时成立。
 
         fixture 字段到判据的对应：`in_scope` 承担判据①②③（不触公共契约、不改
         数据或状态语义、不引入依赖且不越出已改文件与直接调用方）；`acceptance_gap`
@@ -270,10 +270,17 @@ def decide_gate(task: dict) -> dict:
 class Budget:
     """两本账状态机。事件名对应 design.md 里会消耗轮次或改变闸状态的动作。"""
 
-    def __init__(self, *, candidate_second_opt_in: bool = False, design_enabled: bool = True):
+    def __init__(
+        self,
+        *,
+        candidate_second_opt_in: bool = False,
+        design_enabled: bool = True,
+        pure_design: bool = False,
+    ):
         self.d = 0
         self.r = 0
-        self.design_enabled = design_enabled
+        self.pure_design = pure_design
+        self.design_enabled = design_enabled and not pure_design
         self.candidate_rounds = 0
         self.design_reviewed = False
         self.design_frozen = False
@@ -281,7 +288,7 @@ class Budget:
         self.rework_count = 0  # 升版次数；版本号 = 1 + rework_count
         self.open_findings = 0  # 未关闭的确认缺陷（含范围内 P2、验收缺口）
         # 未启用本环节时没有施工闸，直接按 full 其余流程施工。
-        self.gate_open = not design_enabled
+        self.gate_open = not self.design_enabled and not pure_design
         # 用户是否明确要求候选第二轮并接受「设计审查将无升版重审余量」
         self.candidate_second_opt_in = candidate_second_opt_in
         self.log = []
@@ -303,11 +310,19 @@ class Budget:
         return R_CAP - self.r
 
     def _require_design_phase(self, why: str) -> None:
+        if self.pure_design:
+            raise RuleError(f"纯 design 路径无独立设计施工审查环节，不得{why}")
         if not self.design_enabled:
             raise RuleError(f"未启用独立设计环节，不得{why}")
 
     # --- 设计阶段 ---------------------------------------------------------
     def candidate(self) -> None:
+        if self.pure_design:
+            if self.candidate_rounds >= 2:
+                raise RuleError("纯 design 候选评审合计至多 2 轮")
+            self.candidate_rounds += 1
+            self.log.append(f"pure_design candidate round {self.candidate_rounds}")
+            return
         self._require_design_phase("组织候选评审")
         if self.design_reviewed:
             raise RuleError("候选评审应在设计审查之前")
@@ -389,6 +404,10 @@ class Budget:
             raise Stop("未完成", "完整初审报出缺陷但已无复审轮次")
 
     def rereview(self) -> None:
+        if self.pure_design:
+            raise RuleError("纯 design 路径无独立设计施工审查环节，不得发起施工复审")
+        if not self.gate_open:
+            raise RuleError("复审须在施工闸之后")
         self._spend_r("复审")
         self.resolve_findings()
 

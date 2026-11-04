@@ -2,6 +2,24 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.0.0 更新说明（2026-11-04）
+
+EasyDev 2.0.0：架构全面瘦身与去重，从细粒度碎片规约收敛为 6 大核心模块。
+
+- **模块收敛与深度去重**：将原 17 个碎片 references 文件（1,150 行 / 127 KiB）彻底收敛为 6 篇高内聚专题（`roles.md`、`workflow.md`、`engineering.md`、`design.md`、`review.md`、`environment.md`），行数降至 479 行，规则文档总字节数从 131 KiB 骤降至 52,218 字节（体积减少 60%）。
+  - **旧文件映射**：
+    - `developer-role.md`、`reviewer-role.md` → `roles.md`
+    - `routing.md`、`orchestration.md` → `workflow.md`
+    - `execution.md`、`code-quality.md`、`debugging.md`、`refactoring.md`、`verification.md` → `engineering.md`
+    - `planning.md`、`candidates.md`、`design.md` → `design.md`
+    - `review.md`（去重精简）→ `review.md`
+    - `models.md`、`setup.md`、`baseline-safety.md`、`worktree.md` → `environment.md`
+  - **升级说明**：旧版用户或本地已安装技能更新至 2.0.0 时，请清理 `~/.agents/skills/easydev/references/` 下已被移除的旧版文件，避免残留无用文档。
+- **纯粹运行态准则**：清理“4KB 腾挪顺序”、“维护补丁审查轮次”等开发维护元指令，移出运行时规则；去除“纯 Prompt 模拟调度器”中的过度微观分支，聚焦刚性底线（3 次尝试熔断、normal 至多 2 次审查、full 的 d/3 与 r/5 上限、设计施工闸、P0/P1 独立核实确认）。
+- **规则总量棘轮下调（`check.sh` §10）**：`SKILL.md` + `references/*.md` 合计不得超过 55000 字节（实测 52720 字节，远低于原 131662 上限），规则文档大幅精炼。
+- **审查与解析健壮性增强**：修复否定开发角色指令跨行误伤后续 reviewer 交接问题，保留换行句界并限定否定词作用域；扩展发现提取正则兼容单行冒号正例与列表项格式，同步规范 `review.md` 确定发现正例排版；强化 `gate_model` 在纯设计模式下对施工复审（`rereview`）及未过施工闸的严格拦截与负例断言。
+- **门禁与测试设施适配**：`check.sh`、`design-gate`、`audit-overflow` 与行为测试设施全面适配 2.0.0 模块结构，保持严密自动化保护。
+
 ## 1.5.2 更新说明（2026-10-30）
 
 修「reviewer 交接缺少：独立 reviewer 角色声明」的高频误拒：回放 11 份被拒的真实 reviewer 交接，其中 7 份其实已经写了角色声明或机器模板，只是被证据预处理的整行丢弃与过窄的字面量判定吃掉；修复后同类交接按原文被接受，**交接契约未放宽**（仍须角色声明 + 精确 `references/reviewer-role.md` + reviewer 机器模板）。

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """独立设计环节的确定性复验：门控判定、两本账记账、施工闸与停止条件。
 
-覆盖 `references/design.md` 中可判定的部分，以及 `references/routing.md` 的 normal 局部 P2 修复与双审查上限；
+覆盖 `references/design.md` 中可判定的部分，以及 `references/workflow.md` 的 normal 局部 P2 修复与双审查上限；
 并在最后枚举多方案任务的可达路径，回答「候选 2 轮 + 设计审查 1 轮是否会让多方案任务几乎必然停在施工闸前」。
 
 不覆盖：模型是否遵守规则、真实宿主的分派与实例隔离、受阻后用户显式豁免。
@@ -207,6 +207,54 @@ def run_budget_cases() -> None:
         ok("默认分配：候选 1 轮 + 设计审查 1 轮 + 升版重审 1 轮 = d/3，r=2 完成")
     else:
         bad("默认分配", f"d={b.d} r={b.r}")
+
+    # 纯 design / plan 路径：无 d/r 账，支持至多 2 轮候选评估无需 opt-in，第 3 轮被拒绝。
+    b = Budget(pure_design=True)
+    b.candidate()
+    b.candidate()
+    if (b.d, b.r) == (0, 0) and b.candidate_rounds == 2:
+        ok("纯 design 候选两轮无须 opt-in 且不占 d/r 账（d=0 r=0）")
+    else:
+        bad("纯 design 候选两轮", f"d={b.d} r={b.r} rounds={b.candidate_rounds}")
+    try:
+        b.candidate()
+    except RuleError as exc:
+        ok(f"纯 design 候选超过 2 轮被拒绝（{exc}）")
+    else:
+        bad("纯 design 候选超过 2 轮", "未被拒绝")
+    try:
+        b.design_review()
+    except RuleError as exc:
+        ok(f"纯 design 路径禁止发起施工设计审查（{exc}）")
+    else:
+        bad("纯 design 路径发起设计审查", "未被拒绝")
+    try:
+        b.rereview()
+    except RuleError as exc:
+        ok(f"纯 design 路径禁止发起施工复审（{exc}）")
+    else:
+        bad("纯 design 路径发起施工复审", "未被拒绝")
+    try:
+        b.full_review()
+    except RuleError as exc:
+        ok(f"纯 design 路径禁止发起完整初审（{exc}）")
+    else:
+        bad("纯 design 路径发起完整初审", "未被拒绝")
+    try:
+        b.incremental_review()
+    except RuleError as exc:
+        ok(f"纯 design 路径禁止发起阶段增量审查（{exc}）")
+    else:
+        bad("纯 design 路径发起阶段增量审查", "未被拒绝")
+
+    # 未过施工闸：不得发起复审。
+    b_premature = Budget()
+    try:
+        b_premature.rereview()
+    except RuleError as exc:
+        ok(f"未过施工闸禁止发起复审（{exc}）")
+    else:
+        bad("未过施工闸发起复审", "未被拒绝")
 
     # 设计审查受阻：不得据此进入施工。
     b = Budget()
@@ -526,8 +574,8 @@ def run_host_cases() -> None:
 DOC_CONTRACT = [
     (
         "账本模板含门控判定、冻结时间、设计者与两本账",
-        "easydev/references/orchestration.md",
-        "独立审查条件/审查强度",
+        "easydev/references/workflow.md",
+        "目标/验收/范围/授权基线",
         ["门控", "冻结时间", "设计者", "d/3", "r/5"],
     ),
     (
@@ -549,6 +597,12 @@ DOC_CONTRACT = [
         ["最多用 1 轮", "第 2 轮留给设计审查"],
     ),
     (
+        "纯 design 路径明确至多 2 轮候选评审且不使用 dr 账",
+        "easydev/references/design.md",
+        "纯 design / plan 路径",
+        ["无 `d`/`r` 账", "至多 2 轮独立循环"],
+    ),
+    (
         "按需加载表链接到门控正文",
         "easydev/SKILL.md",
         "独立设计环节门控",
@@ -564,37 +618,37 @@ DOC_CONTRACT = [
         "SKILL.md 的 quick 核心链接到尝试预算唯一事实源",
         "easydev/SKILL.md",
         "## quick 执行核心",
-        ["references/routing.md#尝试预算", "三次仍失败即停"],
+        ["references/workflow.md#尝试预算", "三次仍失败即停"],
     ),
     (
-        "routing.md 的判定依据引入可观察的第二视角信号",
-        "easydev/references/routing.md",
-        "## 判定依据",
+        "workflow.md 的判定依据引入可观察的第二视角信号",
+        "easydev/references/workflow.md",
+        "## 分流判定",
         ["第二视角信号"],
     ),
     (
-        "routing.md 的局部 P2 判定给出可观察条件",
-        "easydev/references/routing.md",
+        "workflow.md 的局部 P2 判定给出可观察条件",
+        "easydev/references/workflow.md",
         "局部 P2 判定",
         ["局部 P2", "公共契约", "验收缺口", "转 full"],
     ),
     (
-        "reviewer-role 的定向复审覆盖修复所在位置的直接调用方",
-        "easydev/references/reviewer-role.md",
+        "roles.md 的定向复审覆盖修复所在位置的直接调用方",
+        "easydev/references/roles.md",
         "normal 的定向审查",
         ["直接调用方", "不扩查"],
     ),
     (
-        "routing.md 的「现成检查」限定为改动前已存在",
-        "easydev/references/routing.md",
+        "workflow.md 的「现成检查」限定为改动前已存在",
+        "easydev/references/workflow.md",
         "第二视角信号",
         ["改动前已存在", "新增的测试"],
     ),
     (
-        "routing normal 流程要求实现改动先读代码质量判据",
-        "easydev/references/routing.md",
+        "workflow normal 流程要求实现改动先读代码质量判据",
+        "easydev/references/workflow.md",
         "## normal 流程",
-        ["code-quality.md"],
+        ["代码质量判据"],
     ),
     (
         "SKILL.md 的 quick 核心把计量降为按需",
@@ -604,55 +658,48 @@ DOC_CONTRACT = [
         {"forbidden": ["单行计量（见 routing 的计量节）"]},
     ),
     (
-        "routing.md 的高风险边界按实际影响判定而非关键词",
-        "easydev/references/routing.md",
+        "workflow.md 的高风险边界按实际影响判定而非关键词",
+        "easydev/references/workflow.md",
         "上表按实际影响判定",
         ["不因此进入 full", "已在 full"],
     ),
     (
-        "routing.md 的计量小节给出字段键序、缺省写法与角色分段",
-        "easydev/references/routing.md",
-        "## 计量",
-        ["计量：模块=", "审查=<N>；d=<x>/3；r=<y>/5", "未进 full 记", "main:", "reviewer:", "读取事件", "适用 normal 与 full", "quick 默认不写"],
-        {"forbidden": ["适用所有档位"]},
-    ),
-    (
-        "code-quality 声明为唯一细则源并覆盖关键判据",
-        "easydev/references/code-quality.md",
-        "# 代码质量判据",
+        "engineering 声明为唯一细则源并覆盖关键判据",
+        "easydev/references/engineering.md",
+        "## 代码质量判据",
         ["唯一细则源", "克制复杂度", "边界校验"],
         {"scope": "file"},
     ),
     (
-        "code-quality 覆盖注释与生成文件判据",
-        "easydev/references/code-quality.md",
-        "## 注释",
-        ["关键安全条件", "## 生成文件", "不手改"],
+        "engineering 覆盖注释与生成文件判据",
+        "easydev/references/engineering.md",
+        "### 注释与生成文件",
+        ["关键安全条件", "不手改"],
         {"scope": "file"},
     ),
     (
-        "execution 的最小充分实现链接代码质量判据并保留外部参考",
-        "easydev/references/execution.md",
+        "engineering 的最小充分实现链接代码质量判据并保留外部参考",
+        "easydev/references/engineering.md",
         "## 最小充分实现",
-        ["code-quality.md", "外部参考"],
+        ["代码质量判据", "外部参考"],
     ),
     (
         "review 给出代码质量 P3 口径",
         "easydev/references/review.md",
         "过滤噪音与归因",
-        ["code-quality.md", "P3", "位置和代价"],
+        ["代码质量判据", "P3", "位置和代价"],
     ),
     (
-        "reviewer-role 同步代码质量 P3 口径与位置代价",
-        "easydev/references/reviewer-role.md",
+        "roles.md 同步代码质量 P3 口径与位置代价",
+        "easydev/references/roles.md",
         "2. 只报有位置",
-        ["code-quality.md", "P3", "位置与代价"],
+        ["代码质量判据", "P3", "位置与代价"],
     ),
     (
-        "developer-role 链接代码质量判据",
-        "easydev/references/developer-role.md",
+        "roles.md 链接工程实践与代码质量判据",
+        "easydev/references/roles.md",
         "做最小完整改动",
-        ["code-quality.md"],
+        ["工程实践"],
     ),
 ]
 
@@ -792,34 +839,34 @@ def run_doc_contract_mechanism() -> None:
         )
 
     def move_normal_contract(text: str) -> str:
-        line = "2. 实施与验证沿用 quick 核心；实现改动（非纯文案与注释）先读 [代码质量判据](code-quality.md)，专项问题按需读 execution 等模块。"
+        line = "2. 实施与验证沿用 quick 核心；实现改动（非纯文案与注释）按 [代码质量判据](engineering.md#代码质量判据)。"
         if line not in text:
-            raise RuleError("routing.md 里没有 normal 第 2 条")
+            raise RuleError("workflow.md 里没有 normal 第 2 条")
         text = text.replace(line + "\n", "", 1)
         return text.replace(
-            "## 计量", line + "\n\n## 计量", 1
+            "## 尝试预算", line + "\n\n## 尝试预算", 1
         )
 
     def move_ledger_needle(text: str) -> str:
         needle = "冻结时间"
-        if needle not in text or "## 交接" not in text:
-            raise RuleError("orchestration.md 的结构与预期不符")
-        text = text.replace("与冻结时间（含被替换版本回查位置）", "与版本快照（含被替换版本回查位置）", 1)
-        return text.replace("## 交接", "## 交接\n\n冻结时间：见上。", 1)
+        if needle not in text or "## 审查与修复" not in text:
+            raise RuleError("workflow.md 的结构与预期不符")
+        text = text.replace("设计环节（门控命中项或不启用理由）/design.md 版本与冻结时间/设计者：", "设计环节（门控命中项或不启用理由）/design.md 版本与快照/设计者：", 1)
+        return text.replace("## 审查与修复", "## 审查与修复\n\n冻结时间：见上。", 1)
 
     def move_generate_section(text: str) -> str:
-        marker = "## 生成文件"
+        marker = "### 注释与生成文件"
         if marker not in text:
-            raise RuleError("code-quality.md 里没有生成文件小节")
+            raise RuleError("engineering.md 里没有生成文件小节")
         head, tail = text.split(marker, 1)
         return marker + tail + "\n" + head
 
     cases = (
         ("计量句移到邻节必须判负", "easydev/SKILL.md", move_metric, "计量降为按需", False),
         ("旧计量措辞与新措辞并存必须判负", "easydev/SKILL.md", legacy_metric, "计量降为按需", False),
-        ("normal 契约移到邻节必须判负", "easydev/references/routing.md", move_normal_contract, "normal 流程要求实现改动", False),
-        ("围栏内锚点的断言不越出小节", "easydev/references/orchestration.md", move_ledger_needle, "账本模板含门控判定", False),
-        ("文件作用域允许跨节搬动", "easydev/references/code-quality.md", move_generate_section, "注释与生成文件判据", True),
+        ("normal 契约移到邻节必须判负", "easydev/references/workflow.md", move_normal_contract, "normal 流程要求实现改动", False),
+        ("围栏内锚点的断言不越出小节", "easydev/references/workflow.md", move_ledger_needle, "账本模板含门控判定", False),
+        ("文件作用域允许跨节搬动", "easydev/references/engineering.md", move_generate_section, "注释与生成文件判据", True),
     )
     for label, rel, transform, label_part, should_pass in cases:
         with tempfile.TemporaryDirectory() as tmp:

@@ -147,6 +147,14 @@ def evaluate(
         details={
             "findings": entries,
             "format_problems": problems,
-            "code_quality_loaded": "code-quality.md" in module_access,
+            "code_quality_loaded": any(
+                key in module_access
+                for key in (
+                    "references/engineering.md",
+                    "engineering.md",
+                    "references/code-quality.md",
+                    "code-quality.md",
+                )
+            ),
         },
     )

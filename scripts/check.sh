@@ -554,10 +554,10 @@ limits = {
     "AGENTS.md": extract(
         r"同一问题累计修复\s*(\d+)\s*次仍未解决", read("AGENTS.md"), "AGENTS.md"
     ),
-    "easydev/references/routing.md": extract(
+    "easydev/references/workflow.md": extract(
         r"最多\s*([一二三四五六七八九十\d]+)\s*次有新证据的候选修复尝试",
-        read("easydev/references/routing.md"),
-        "easydev/references/routing.md「尝试预算」",
+        read("easydev/references/workflow.md"),
+        "easydev/references/workflow.md「尝试预算」",
     ),
     "easydev/SKILL.md": extract(
         r"([一二三四五六七八九十\d]+)\s*次仍失败即停",
@@ -575,24 +575,23 @@ else:
 
 # 全局规则与 easydev 同步检查：同仓分发自用，easydev 必须显式声明与全局规则 AGENTS.md §5/§6 同步，且关键规则一致。
 agents_text = read("AGENTS.md")
-cq_text = read("easydev/references/code-quality.md")
-exec_text = read("easydev/references/execution.md")
+eng_text = read("easydev/references/engineering.md")
 skill_text = read("easydev/SKILL.md")
 
-if "与全局规则 `AGENTS.md` §5 保持同步" not in cq_text:
-    errors.append("easydev/references/code-quality.md 缺少对全局规则 AGENTS.md §5 的同步引用声明")
-if "与全局规则 `AGENTS.md` §6 保持同步" not in exec_text:
-    errors.append("easydev/references/execution.md 缺少对全局规则 AGENTS.md §6 的同步引用声明")
+if "与全局规则 `AGENTS.md` §5 保持同步" not in eng_text:
+    errors.append("easydev/references/engineering.md 缺少对全局规则 AGENTS.md §5 的同步引用声明")
+if "与全局规则 `AGENTS.md` §6 保持同步" not in eng_text:
+    errors.append("easydev/references/engineering.md 缺少对全局规则 AGENTS.md §6 的同步引用声明")
 
 sync_pairs = [
-    ("默认写直线式代码", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
-    ("仅当同一逻辑有 2 处以上真实复用时才提取", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
-    ("不加未被要求的类、接口、配置项、参数、wrapper", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
-    ("不写备份、回退、降级、兼容旧版本逻辑", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
-    ("不对不可能发生的情况做防御性处理", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
-    ("只写用户视角的端到端测试", agents_text, exec_text, "AGENTS.md §6 <-> execution.md"),
-    ("不写单元测试，不用 mock 隔离内部实现", agents_text, exec_text, "AGENTS.md §6 <-> execution.md"),
-    ("只覆盖核心路径和关键失败场景", agents_text, exec_text, "AGENTS.md §6 <-> execution.md"),
+    ("默认写直线式代码", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
+    ("仅当同一逻辑有 2 处以上真实复用时才提取", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
+    ("不加未被要求的类、接口、配置项、参数、wrapper", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
+    ("不写备份、回退、降级、兼容旧版本逻辑", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
+    ("不对不可能发生的情况做防御性处理", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
+    ("只写用户视角的端到端测试", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
+    ("不写单元测试，不用 mock 隔离内部实现", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
+    ("只覆盖核心路径和关键失败场景", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
 ]
 for phrase, src, dst, label in sync_pairs:
     if phrase not in src or phrase not in dst:
@@ -613,9 +612,8 @@ PY
 echo "=== 10. 规则文档总量棘轮（只减不增） ==="
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
-# 基线取 1.4.0 实测总量（1.3.2 之后随 models.md 措辞与精简同步下调），之后只允许在删除正文后向下重设。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=131662
+MAX_TOTAL=55000
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

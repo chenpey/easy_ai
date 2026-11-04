@@ -72,13 +72,13 @@ UPGRADE_RE = re.compile(
 # `**[P0]/[P1]/[P2]/[P3] 简短标题**` 起头"）不算发现。
 # 标题不得以 `/`、`[` 或 `*` 开头，挡住模板回显与 `[P1]/[P2]` 这类并列写法。
 FINDING_RE = re.compile(
-    r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+)?(?:\*\*)?\[(P[0-3])\](?:\*\*)?[ \t]*"
-    r"(?![/\[*])([^\n*]+?)[ \t]*(?:\*\*)?[ \t]*$",
+    r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+)?[\"“']?(?:\*\*)?\[(P[0-3])\](?:\*\*)?[ \t]*"
+    r"(?![/\[*])([^\n*]+?)(?:[ \t]*\*\*[ \t]*[^\n]*$|[ \t]*(?:\*\*)?[ \t]*[\"”']?[ \t]*$)",
     re.MULTILINE,
 )
 FINDING_BULLET_RE = re.compile(
-    r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+)?\*\*(P[0-3])[:：][ \t]*"
-    r"([^*\n]+?)\*\*[ \t]*$",
+    r"^[ \t]*(?:[-*+][ \t]+|\d+\.[ \t]+)?[\"“']?\*\*(P[0-3])[:：][ \t]*"
+    r"([^*\n]+?)(?:[ \t]*\*\*[ \t]*[^\n]*$|[ \t]*(?:\*\*)?[ \t]*[\"”']?[ \t]*$)",
     re.MULTILINE,
 )
 REVIEW_PROMPT_MARKERS = (
@@ -102,21 +102,75 @@ REVIEW_PROMPT_MARKERS = (
     "review the diff",
     "review the changes",
 )
-REVIEWER_ROLE_PATH = "references/reviewer-role.md"
-DEVELOPER_ROLE_PATH = "references/developer-role.md"
-REVIEW_REFERENCE_PATHS = (REVIEWER_ROLE_PATH, "references/review.md")
-DEVELOPER_HANDOFF_MARKERS = (
-    DEVELOPER_ROLE_PATH,
+REVIEWER_ROLE_PATH = "references/roles.md"
+DEVELOPER_ROLE_PATH = "references/roles.md"
+LEGACY_REVIEWER_ROLE_PATH = "references/reviewer-role.md"
+LEGACY_DEVELOPER_ROLE_PATH = "references/developer-role.md"
+DEVELOPER_ROLE_ANCHORS = (
+    "references/roles.md#开发角色",
+    "roles.md#开发角色",
+    "references/roles.md#developer",
+    "roles.md#developer",
+)
+REVIEWER_ROLE_ANCHORS = (
+    "references/roles.md#审查角色",
+    "roles.md#审查角色",
+    "references/roles.md#reviewer",
+    "roles.md#reviewer",
+)
+REVIEW_REFERENCE_PATHS = (
+    REVIEWER_ROLE_PATH,
+    LEGACY_REVIEWER_ROLE_PATH,
+    "references/review.md",
+    *REVIEWER_ROLE_ANCHORS,
+)
+DEVELOPER_REFERENCE_PATHS = (
+    LEGACY_DEVELOPER_ROLE_PATH,
+    *DEVELOPER_ROLE_ANCHORS,
+)
+DEVELOPER_IDENTITY_MARKERS = (
     "你是开发实例",
-    "开发角色",
+    "你是开发角色",
+    "角色：developer",
+    "角色: developer",
+    "角色：开发",
+    "角色: 开发",
+    "role: developer",
+    "role: dev",
     "开发交接",
     "开发者交接",
-    "developer role",
     "developer handoff",
 )
+REVIEWER_IDENTITY_MARKERS = (
+    "你是审查实例",
+    "角色：reviewer",
+    "角色: reviewer",
+    "角色：审查",
+    "角色: 审查",
+    "role: reviewer",
+    "reviewer handoff",
+    "审查交接",
+)
+EXPLICIT_DEVELOPER_MARKERS = DEVELOPER_IDENTITY_MARKERS + DEVELOPER_REFERENCE_PATHS
+EXPLICIT_REVIEWER_MARKERS = REVIEWER_IDENTITY_MARKERS + (
+    LEGACY_REVIEWER_ROLE_PATH,
+    *REVIEWER_ROLE_ANCHORS,
+)
+DEVELOPER_HANDOFF_MARKERS = EXPLICIT_DEVELOPER_MARKERS + (
+    "开发角色",
+    "developer role",
+)
+DEVELOPER_PATH_NEGATION_PREFIX_RE = re.compile(
+    r"(?:不要|不得|禁止|无需|不必|不能|不|不再|没有|未|"
+    r"do\s+not|don't|without|never|no)"
+    r"[^，,。；;！!？?\n]{0,32}$",
+    re.IGNORECASE,
+)
 REVIEWER_ROLE_NEGATION_RE = re.compile(
-    r"(?:不要|不得|禁止|无需|不必|do\s+not|don't|without)"
-    r"[^。\n]{0,32}references/reviewer-role\.md",
+    r"(?:不要|不得|禁止|无需|不必|不能|不|不再|没有|未|"
+    r"do\s+not|don't|without|never|no)"
+    r"(?:(?!roles\.md|reviewer-role\.md)[^，,。；;！!？?\n]){0,32}"
+    r"(?:references/reviewer-role\.md|references/roles\.md(?!(?:#|%23)(?:开发角色|developer)))",
     re.IGNORECASE,
 )
 NEGATED_REVIEW_PREFIX_RE = re.compile(
@@ -880,16 +934,38 @@ def is_reviewer_prompt(prompt: str) -> bool:
     insufficient: the prompt needs an explicit, non-negated review action and
     must not be part of a developer handoff.
     """
-    text = re.sub(r"\s+", " ", prompt.lower())
-    if any(marker in text for marker in DEVELOPER_HANDOFF_MARKERS):
-        return False
-    if REVIEWER_ROLE_NEGATION_RE.search(text):
-        return False
-
+    text = re.sub(r"[^\S\n]+", " ", prompt.lower())
+    text = re.sub(r"\n+", "\n", text)
     clause_breaks = "，,。；;！!？?\n"
 
     def clause_start(offset: int) -> int:
         return max(text.rfind(separator, 0, offset) for separator in clause_breaks) + 1
+
+    if any(marker in text for marker in DEVELOPER_IDENTITY_MARKERS):
+        return False
+
+    def has_unnegated_developer_reference() -> bool:
+        for path in DEVELOPER_REFERENCE_PATHS:
+            for match in re.finditer(re.escape(path), text):
+                start = clause_start(match.start())
+                clause_prefix = text[start:match.start()]
+                if not DEVELOPER_PATH_NEGATION_PREFIX_RE.search(clause_prefix):
+                    return True
+        return False
+
+    if has_unnegated_developer_reference():
+        return False
+
+    has_explicit_reviewer = any(marker in text for marker in REVIEWER_IDENTITY_MARKERS) or any(
+        anchor in text for anchor in REVIEWER_ROLE_ANCHORS
+    )
+    if not has_explicit_reviewer and any(
+        marker in text for marker in ("开发角色", "developer role")
+    ):
+        return False
+
+    if REVIEWER_ROLE_NEGATION_RE.search(text):
+        return False
 
     def negated(offset: int) -> bool:
         return bool(

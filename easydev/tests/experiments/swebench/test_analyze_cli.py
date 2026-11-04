@@ -186,6 +186,51 @@ class AnalyzeEventsCliTest:
         assert self.run_by_task(payload, "quoted")["findings"] == []
         assert payload["summary"]["reviewer_finding_count"] == 0
 
+    def test_reviewer_finding_scan_extracts_inline_colon_and_quoted_positive_examples(
+        self,
+    ) -> None:
+        # review.md 发现标准对照中的正例格式（单行带冒号与说明，或带外层引号）必须被识别
+        experiment = self.root / "inline-findings"
+        self.write_run(
+            experiment,
+            "inline-colon",
+            [
+                agent_message(0, "采用 full。"),
+                spawn(),
+                reviewer_state(
+                    "**[P1] 并发刷新重复换发 Token**：`services/token.ts#refreshToken`。"
+                    "并发 401 请求同时进入刷新分支，写回不同 Token，部分请求因旧凭证失效而失败。"
+                    "证据：`refreshToken()` 无 Promise 缓存；旧 Token 立即失效。"
+                    "修复与验证：共享 pending Promise；并发 3 次请求验证仅刷新一次。"
+                ),
+                turn(),
+            ],
+        )
+        self.write_run(
+            experiment,
+            "bullet-and-p2",
+            [
+                agent_message(0, "采用 full。"),
+                spawn(),
+                reviewer_state(
+                    "- **[P2] 否定开发角色的指令会误伤后面的审查交接**：analyze_events.py:169\n"
+                    "1. **[P3] 新增纯设计模式仍能进入施工复审记账**：gate_model.py:282"
+                ),
+                turn(),
+            ],
+        )
+        payload = self.payload(experiment)
+        run1 = self.run_by_task(payload, "inline-colon")
+        assert run1["findings"] == [
+            {"severity": "P1", "title": "并发刷新重复换发 Token"}
+        ]
+        assert run1["reviewer_reports"] == 1
+        run2 = self.run_by_task(payload, "bullet-and-p2")
+        assert run2["findings"] == [
+            {"severity": "P2", "title": "否定开发角色的指令会误伤后面的审查交接"},
+            {"severity": "P3", "title": "新增纯设计模式仍能进入施工复审记账"},
+        ]
+
     def test_access_attribution_counts_observed_paths_only(self) -> None:
         experiment = self.root / "access"
         self.write_run(
@@ -570,6 +615,73 @@ class AnalyzeEventsCliTest:
                 "Do not perform any independent review; implement the change.",
                 0,
             ),
+            (
+                "new roles.md reviewer anchor handoff",
+                "按 references/roles.md#审查角色 做只读审查。",
+                1,
+            ),
+            (
+                "new roles.md reviewer handoff with explicit role",
+                "角色：reviewer\n按 references/roles.md#审查角色 做只读审查。",
+                1,
+            ),
+            (
+                "new roles.md reviewer handoff mentioning developer change",
+                "角色：reviewer\n按 references/roles.md#审查角色 审查。开发角色提交的改动在 git diff 中。",
+                1,
+            ),
+            (
+                "new roles.md developer handoff mentioning review",
+                "角色：developer\n按 references/roles.md#开发角色 实施开发；references/roles.md#审查角色 仅供参考。",
+                0,
+            ),
+            (
+                "new roles.md developer handoff with anchor",
+                "按 references/roles.md#开发角色 实施开发。",
+                0,
+            ),
+            (
+                "new roles.md negated reviewer anchor",
+                "不要读取 references/roles.md#审查角色；直接实施开发。",
+                0,
+            ),
+            (
+                "new roles.md reviewer handoff with negated developer reference",
+                "角色：reviewer\n"
+                "按 references/roles.md#审查角色 做只读审查。\n"
+                "不要读取 references/roles.md#开发角色。",
+                1,
+            ),
+            (
+                "new roles.md reviewer action with negated developer reference without explicit role",
+                "按 references/roles.md#审查角色 做只读审查。\n"
+                "不要读取 references/roles.md#开发角色。",
+                1,
+            ),
+            (
+                "new roles.md developer action with negated reviewer reference",
+                "按 references/roles.md#开发角色 实施开发。\n"
+                "不要读取 references/roles.md#审查角色。",
+                0,
+            ),
+            (
+                "new roles.md reviewer handoff with negated developer reference before reviewer action",
+                "角色：reviewer\n"
+                "不要读取 references/roles.md#开发角色\n"
+                "按 references/roles.md#审查角色 做只读审查。",
+                1,
+            ),
+            (
+                "new roles.md reviewer action with negated developer reference before reviewer action without explicit role",
+                "不要读取 references/roles.md#开发角色\n"
+                "按 references/roles.md#审查角色 做只读审查。",
+                1,
+            ),
+            (
+                "new roles.md reviewer action with negated developer reference inline before reviewer action",
+                "不要读取 references/roles.md#开发角色；按 references/roles.md#审查角色 做只读审查。",
+                1,
+            ),
         )
         experiment = self.root / "reviewer-prompt-intent"
         for index, (label, prompt, _expected) in enumerate(cases):
@@ -584,6 +696,31 @@ class AnalyzeEventsCliTest:
                 run = self.run_by_task(payload, f"reviewer-{index}")
                 assert run["reviewer_instances"] == expected
                 assert run["reviewer_completed_instances"] == expected
+
+    def test_reviewer_handoff_with_negated_developer_reference_counts_instance_and_report(
+        self,
+    ) -> None:
+        experiment = self.root / "negated-dev-handoff"
+        prompt = (
+            "角色：reviewer\n"
+            "按 references/roles.md#审查角色 做只读审查。\n"
+            "不要读取 references/roles.md#开发角色。"
+        )
+        self.write_run(
+            experiment,
+            "negated-dev-ref",
+            [
+                spawn(prompt=prompt),
+                reviewer_state("在本次审查范围内未发现确定缺陷。"),
+                turn(),
+            ],
+        )
+        payload = self.payload(experiment)
+        run = self.run_by_task(payload, "negated-dev-ref")
+        assert run["reviewer_instances"] == 1
+        assert run["reviewer_completed_instances"] == 1
+        assert run["reviewer_reports"] == 1
+        assert run["reviewer_zero_findings"]
 
     # -- access attribution --------------------------------------------
     def test_access_attribution_separates_reads_from_status_queries(self) -> None:

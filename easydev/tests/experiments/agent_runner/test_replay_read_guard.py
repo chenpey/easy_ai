@@ -46,7 +46,7 @@ class ReplayReadGuardTests:
         self.skill = base / "skill" / "easydev"
         (self.skill / "references").mkdir(parents=True)
         (self.skill / "SKILL.md").write_text("skill\n", encoding="utf-8")
-        (self.skill / "references" / "routing.md").write_text("routing\n", encoding="utf-8")
+        (self.skill / "references" / "workflow.md").write_text("workflow\n", encoding="utf-8")
         self.workspace = base / "workspace"
         self.workspace.mkdir()
         (self.workspace / "src").mkdir()
@@ -118,7 +118,7 @@ class ReplayReadGuardTests:
                     {
                         "hook_event_name": "PreToolUse",
                         "tool_name": "read_file",
-                        "tool_input": {"path": str(self.skill / "references" / "routing.md")},
+                        "tool_input": {"path": str(self.skill / "references" / "workflow.md")},
                         "cwd": str(self.workspace),
                     }
                 )
