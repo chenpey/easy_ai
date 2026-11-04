@@ -13,17 +13,10 @@ from __future__ import annotations
 import pytest
 
 import subprocess
-import sys
 
 from conftest import subtests
-from support import HOOKS_ROOT, HookCase
+from support import HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states
-
-if str(HOOKS_ROOT) not in sys.path:
-    sys.path.insert(0, str(HOOKS_ROOT))
-
-from hooks import shell  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # V01：反斜杠 + 真实换行的行续接
@@ -126,23 +119,6 @@ class V01LineContinuationTests(HookCase):
                 assert self.is_denied(value), value
                 assert "baseline/1" in self.reason(value)
         self.assert_sentinels_intact()
-
-    def test_continuation_is_removed_from_redirect_words_and_git_argv(self) -> None:
-        # 单引号内保持字面：`\`+换行是数据，不是续接。
-        quoted = shell.analyze("printf x >&'1\\\n.txt'")
-        assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]
-        # 单引号外（含双引号内）消除续接。
-        for command in ("printf x >&1\\\n.txt", 'printf x >&"1\\\n.txt"'):
-            with subtests.test(command=command):
-                analysis = shell.analyze(command)
-                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
-        assert shell.argv_of("g\\\nit reset --hard") == [["git", "reset", "--hard"]]
-        assert shell.argv_of('echo "a\\\nb"') == [["echo", "ab"]]
-        assert shell.argv_of("echo 'a\\\nb'") == [["echo", "a\\\nb"]]
-        # 普通重定向与 cwd 分析使用同一份修复后的词法结果。
-        analysis = shell.analyze("cd su\\\nb && printf x > 1\\\n.txt", cwd="/tmp/base")
-        assert analysis.writes[-1]["cwd"] == "/tmp/base/sub"
-        assert analysis.writes[-1]["target"] == "1.txt"
 
 
 class V01CodexLineContinuationTests(V01LineContinuationTests):

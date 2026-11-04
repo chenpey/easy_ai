@@ -772,14 +772,6 @@ def _read_access(
     return files, modules
 
 
-def extract_modules(command: str) -> Set[str]:
-    return _read_access(command)[1]
-
-
-def extract_files(command: str) -> Set[str]:
-    return _read_access(command)[0]
-
-
 def _metadata_markers(text: str) -> Set[str]:
     lowered = text.lower()
     return {

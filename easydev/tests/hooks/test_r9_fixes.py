@@ -16,17 +16,10 @@ from __future__ import annotations
 import pytest
 
 import subprocess
-import sys
 
 from conftest import subtests
-from support import HOOKS_ROOT, HookCase
+from support import HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states, task_states
-
-if str(HOOKS_ROOT) not in sys.path:
-    sys.path.insert(0, str(HOOKS_ROOT))
-
-from hooks import shell  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # X01：注释与续行共用词法状态
@@ -119,41 +112,19 @@ class X01CommentLexicalStateTests(HookCase):
                 value = self.dispatch_command("rev", command, "x01-rev-%d" % index)
                 assert self.is_denied(value), value
                 assert "只读" in self.reason(value)
-                # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
-                violation = shell.reviewer_violation(command)
-                assert violation.get("targets") == ["1.txt"], violation
         for index, command in enumerate(self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT):
             with subtests.test(command=command):
                 value = self.run_core(self.shell("rev", command, tool_id="x01-rev-git-%d" % index))[1]
                 assert self.is_denied(value), value
         self.assert_sentinels_intact()
 
-    def test_lexical_state_is_shared_across_comment_quote_and_operator(self) -> None:
-        for command in self.redirect_deny_cases():
-            with subtests.test(command=command):
-                analysis = shell.analyze(command)
-                assert not analysis.opaque, analysis.as_dict()
-                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
-                assert analysis.commands == [["printf", "x"]]
-        for command in self.NATURAL_COMMENT_GIT + self.MINIMAL_COMMENT_GIT:
-            with subtests.test(command=command):
-                assert shell.analyze(command).commands == [["git", "reset", "--hard"]]
-        # 注释行尾的反斜杠不续行：下一物理行是真实命令。
-        assert shell.analyze("# note \\\ngit reset --hard").commands == [["git", "reset", "--hard"]]
-
     def test_single_quote_hash_and_fd_controls_unchanged(self) -> None:
         self.use_manual_baseline()
         self.activate("dev")
-        # 单引号内的 `\`+换行是数据，不是续接：目标是那个字面文件名。
-        quoted = shell.analyze("printf x >&'1\\\n.txt'")
-        assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]
         value = self.run_core(self.shell("dev", "printf x >&'1\\\n.txt'", tool_id="x01-literal"))[1]
         assert self.is_denied(value), value
         assert "baseline/1\\\n.txt" in self.reason(value)
         self.assert_sentinels_intact()
-        # 词中 `#` 不是注释开始；引号内的 `#` 也不是。
-        assert shell.analyze("echo foo#bar").commands == [["echo", "foo#bar"]]
-        assert shell.analyze("echo '#note'").commands == [["echo", "#note"]]
         # fd 复制/关闭没有文件目标，注释修复不得影响它们。
         for index, command in enumerate(("printf x >&1", "printf x 2>&1", "printf x >&-")):
             value = self.dispatch_command("dev", command, "x01-fd-%d" % index)

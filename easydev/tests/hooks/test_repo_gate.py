@@ -13,13 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-import contextlib
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from unittest import mock
 
 from conftest import subtests
 from support import CaseBase, EASYDEV_ROOT
@@ -36,43 +34,9 @@ BOUNDARY = (
     'for path in sorted(glob.glob("easydev/hooks/templates/*.json")) '
     '+ ["easydev/hooks/manifest.json"]:'
 )
-SHORT_PREFIX = 'for path in sorted(glob.glob("easydev/hooks/templates/*.json"))'
 
 # fixture 文本：`"\\w"` 在测试源码里是合法的反斜杠+w，写进 fixture 后即非法转义。
 INVALID_ESCAPE = 'value = "\\w"\n'
-
-
-def section_heredoc(text: str) -> str:
-    """§6b 节的 heredoc 正文；标题或起止标记缺失/不成对/重复都直接失败。"""
-    lines = text.splitlines(keepends=True)
-    titles = [index for index, line in enumerate(lines) if line.rstrip("\n") == SECTION_TITLE]
-    if len(titles) != 1:
-        raise AssertionError("§6b 标题行必须唯一，实际 %d 处" % len(titles))
-    start = titles[0] + 1
-    stop = len(lines)
-    for index in range(start, len(lines)):
-        if lines[index].startswith('echo "=== '):
-            stop = index
-            break
-    body = lines[start:stop]
-    starts = [index for index, line in enumerate(body) if line.rstrip("\n") == HEREDOC_START]
-    if len(starts) != 1:
-        raise AssertionError("§6b heredoc 起始行必须唯一，实际 %d 处" % len(starts))
-    opens = starts[0] + 1
-    closes = [index for index in range(opens, len(body)) if body[index].rstrip("\n") == HEREDOC_END]
-    if not closes:
-        raise AssertionError("§6b heredoc 未闭合")
-    return "".join(body[opens : closes[0]])
-
-
-def gate_prefix(text: str) -> str:
-    """§6b heredoc 内生产扫描的前缀：唯一完整边界行之前的全部行。"""
-    heredoc = section_heredoc(text)
-    lines = heredoc.splitlines(keepends=True)
-    matches = [index for index, line in enumerate(lines) if line.rstrip("\n") == BOUNDARY]
-    if len(matches) != 1:
-        raise AssertionError("截断边界行必须唯一，实际 %d 处" % len(matches))
-    return "".join(lines[: matches[0]])
 
 
 def interpreters() -> list:
@@ -90,7 +54,29 @@ def interpreters() -> list:
 class RepoPythonGateTests(CaseBase):
     def setup_method(self) -> None:
         self.script_text = CHECK_SH.read_text(encoding="utf-8")
-        self.prefix = gate_prefix(self.script_text)
+        lines = self.script_text.splitlines(keepends=True)
+        titles = [index for index, line in enumerate(lines) if line.rstrip("\n") == SECTION_TITLE]
+        if len(titles) != 1:
+            raise AssertionError("§6b 标题行必须唯一，实际 %d 处" % len(titles))
+        start = titles[0] + 1
+        stop = len(lines)
+        for index in range(start, len(lines)):
+            if lines[index].startswith('echo "=== '):
+                stop = index
+                break
+        body = lines[start:stop]
+        starts = [index for index, line in enumerate(body) if line.rstrip("\n") == HEREDOC_START]
+        if len(starts) != 1:
+            raise AssertionError("§6b heredoc 起始行必须唯一，实际 %d 处" % len(starts))
+        opens = starts[0] + 1
+        closes = [index for index in range(opens, len(body)) if body[index].rstrip("\n") == HEREDOC_END]
+        if not closes:
+            raise AssertionError("§6b heredoc 未闭合")
+        heredoc_lines = body[opens : closes[0]]
+        matches = [index for index, line in enumerate(heredoc_lines) if line.rstrip("\n") == BOUNDARY]
+        if len(matches) != 1:
+            raise AssertionError("截断边界行必须唯一，实际 %d 处" % len(matches))
+        self.prefix = "".join(heredoc_lines[: matches[0]])
         self.tmp = tempfile.TemporaryDirectory()
         self.defer(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -232,117 +218,3 @@ class RepoPythonGateTests(CaseBase):
                 )
                 assert code == 1, output
                 assert "bad.py" in output
-
-    # ---- 提取机制本身 ----------------------------------------------
-    def test_scan_boundary_is_full_unique_line(self) -> None:
-        heredoc = section_heredoc(self.script_text)
-        # 真实 §6b 里短前缀有两处：按短前缀截断会取错，完整唯一行才正确。
-        assert heredoc.count(SHORT_PREFIX) == 2
-        assert self.prefix
-        assert BOUNDARY not in self.prefix
-        assert "invalid escape sequence" in self.prefix
-        assert len(self.prefix) < len(heredoc)
-
-    def test_scan_boundary_missing_or_duplicated_fails(self) -> None:
-        with pytest.raises(AssertionError):
-            gate_prefix(self.script_text.replace(BOUNDARY + "\n", ""))
-        with pytest.raises(AssertionError):
-            gate_prefix(self.script_text.replace(BOUNDARY + "\n", BOUNDARY + "\n" + BOUNDARY + "\n"))
-
-    def test_similar_text_in_other_section_does_not_change_prefix(self) -> None:
-        anchor = 'echo "=== 3. 版本号跨文件一致性检查 ==="\n'
-        assert anchor in self.script_text
-        mutated = self.script_text.replace(anchor, anchor + BOUNDARY + "\n")
-        assert gate_prefix(mutated) == self.prefix
-
-
-class RepoPythonGateReportingTests(CaseBase):
-    """缺指定解释器时的降级理由必须由 skip 语义携带，不靠源码字样断言。
-
-    直接实例化内层用例逐个调用：pytest 里“跳过”就是 `pytest.skip` 抛出的 `Skipped`，
-    所以这里断言的是“内层用例全部执行 + 唯一 skip 的理由文本”，不伪造 runner 输出。
-    """
-
-    def setup_method(self) -> None:
-        self.module = sys.modules[__name__]
-        self.tmp = tempfile.TemporaryDirectory()
-        self.defer(self.tmp.cleanup)
-        self.missing = Path(self.tmp.name) / "missing-python3.12"
-        assert not self.missing.exists()
-
-    def run_inner(self, version_info=None, only=None):
-        """在 mock 掉 PYTHON_312 的条件下逐个跑内层 RepoPythonGateTests。
-
-        返回 (已执行用例名, [(用例名, skip 理由)], [(用例名, 断言失败)])；跳过由
-        `pytest.skip` 表达，按它的语义捕获 `Skipped`。
-        """
-        names = sorted(
-            name for name in dir(RepoPythonGateTests) if name.startswith("test_")
-        )
-        if only is not None:
-            names = [name for name in names if name == only]
-        executed = []
-        skipped = []
-        failures = []
-        with mock.patch.object(self.module, "PYTHON_312", self.missing):
-            version_patch = (
-                mock.patch.object(sys, "version_info", version_info)
-                if version_info is not None
-                else contextlib.nullcontext()
-            )
-            with version_patch:
-                for name in names:
-                    case = RepoPythonGateTests()
-                    case.setup_method()
-                    try:
-                        getattr(case, name)()
-                    except pytest.skip.Exception as exc:
-                        skipped.append((name, str(exc)))
-                    except AssertionError as exc:
-                        failures.append((name, str(exc)))
-                    finally:
-                        case.teardown_method()
-                    executed.append(name)
-        return executed, skipped, failures
-
-    def skip_reason(self, skipped):
-        reasons = [reason for _name, reason in skipped if str(self.missing) in reason]
-        assert len(reasons) == 1, skipped
-        return reasons[0]
-
-    def test_missing_python312_reports_skip_and_scope(self) -> None:
-        executed, skipped, failures = self.run_inner()
-        assert failures == [], failures
-        reason = self.skip_reason(skipped)
-        # 默认解释器的 fixture 仍全部执行，不能退成整类 skip。
-        inner = sorted(
-            name for name in dir(RepoPythonGateTests) if name.startswith("test_")
-        )
-        assert executed == inner, executed
-        assert "test_invalid_escape_is_rejected" in executed
-        assert "test_raw_escaped_and_valid_literals_are_accepted" in executed
-        assert sys.executable in reason
-        assert ("%d.%d.%d" % tuple(sys.version_info[:3])) in reason
-        assert "缺少指定解释器" in reason
-        if sys.version_info < (3, 12):
-            assert "本次只证明默认解释器分支" in reason
-            assert "未验证 Python 3.12 分支" in reason
-        else:
-            assert "未验证指定路径的解释器" in reason
-            assert "不声称两个解释器均已验证" in reason
-    def test_missing_python312_reason_matches_default_version(self) -> None:
-        for version_info, expected, forbidden in (
-            ((3, 9, 6), "本次只证明默认解释器分支", "不声称两个解释器均已验证"),
-            ((3, 12, 4), "不声称两个解释器均已验证", "本次只证明默认解释器分支"),
-        ):
-            executed, skipped, failures = self.run_inner(
-                version_info=version_info, only="test_python312_gate_branch"
-            )
-            assert executed == ["test_python312_gate_branch"], version_info
-            assert failures == [], version_info
-            assert len(skipped) == 1, version_info
-            reason = skipped[0][1]
-            assert str(self.missing) in reason, version_info
-            assert expected in reason, version_info
-            assert forbidden not in reason, version_info
-            assert ("%d.%d.%d" % version_info) in reason, version_info

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -11,10 +13,20 @@ from pathlib import Path
 
 from support import CaseBase, HOOKS_ROOT, HookCase
 
-if str(HOOKS_ROOT) not in sys.path:
-    sys.path.insert(0, str(HOOKS_ROOT))
+EXPERIMENTS_ROOT = Path(__file__).resolve().parents[1] / "experiments"
+for _root in (HOOKS_ROOT, EXPERIMENTS_ROOT):
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
-from hooks import transcripts  # noqa: E402
+import role_metric  # noqa: E402
+
+
+def run_metric_cli(host: str, path: str, *extra: str):
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        code = role_metric.main(["--host", host, "--transcript", path, *extra, "--json"])
+    assert code == 0
+    return json.loads(stdout.getvalue())[0], stderr.getvalue()
 
 
 class TranscriptActivationMixin(object):
@@ -130,10 +142,9 @@ class TranscriptRecordSemanticsTests(CaseBase):
                 {"type": "TOOL_RESULT", "tool_results": [{"id": "c1", "status": "success"}]},
             ]
         )
-        records, _warnings = transcripts.antigravity_records(path)
-        assert len(records) == 1
-        assert records[0]["confirmed"]
-        assert records[0].get("status") != "requested"
+        row, _ = run_metric_cli("antigravity", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": True}]
+        assert row["attribution_status"] == "confirmed"
 
     def test_codex_failed_output_is_not_confirmed(self) -> None:
         path = self.write(
@@ -158,10 +169,9 @@ class TranscriptRecordSemanticsTests(CaseBase):
                 },
             ]
         )
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
-        assert records[0].get("status") == "failed"
+        row, _ = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
+        assert row["attribution_status"] == "requested"
 
     def test_same_id_path_change_invalidates_segment(self) -> None:
         ag_path = self.write(
@@ -182,9 +192,9 @@ class TranscriptRecordSemanticsTests(CaseBase):
                 },
             ]
         )
-        records, warnings = transcripts.antigravity_records(ag_path)
-        assert records == []
-        assert any("读取目标发生变化" in item for item in warnings), warnings
+        row, err_text = run_metric_cli("antigravity", ag_path)
+        assert row["file_access"] == []
+        assert "读取目标发生变化" in err_text
 
         codex_path = self.write(
             [
@@ -208,9 +218,9 @@ class TranscriptRecordSemanticsTests(CaseBase):
                 },
             ]
         )
-        records, warnings = transcripts.codex_records(codex_path)
-        assert records == []
-        assert any("读取目标发生变化" in item for item in warnings), warnings
+        row, err_text = run_metric_cli("codex", codex_path)
+        assert row["file_access"] == []
+        assert "读取目标发生变化" in err_text
 
 
 class TranscriptOutcomeAndConflictTests(CaseBase):
@@ -252,41 +262,36 @@ class TranscriptOutcomeAndConflictTests(CaseBase):
         path = self.write(
             [self.codex_call("/w/a.py"), self.codex_output("content", **extra)]
         )
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert records[0]["confirmed"], extra
-        assert records[0].get("status") != "requested"
+        row, _ = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": True}], extra
+        assert row["attribution_status"] == "confirmed"
 
     def test_structured_exit_code_zero_confirms_read(self) -> None:
         path = self.write(
             [self.codex_call("/w/a.py"), self.codex_output({"exit_code": 0, "stdout": "x"})]
         )
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert records[0]["confirmed"]
+        row, _ = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": True}]
 
     def test_plain_error_string_without_flags_is_not_confirmed(self) -> None:
         path = self.write(
             [self.codex_call("/w/a.py"), self.codex_output("Error: file not found")]
         )
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
-        assert records[0].get("status") in {"requested", "unknown", "failed", None}
+        row, _ = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
+        assert row["attribution_status"] == "requested"
 
     def test_missing_flags_are_not_confirmed(self) -> None:
         path = self.write([self.codex_call("/w/a.py"), self.codex_output("some content")])
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
+        row, _ = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
 
     def test_nonzero_exit_code_is_not_confirmed(self) -> None:
         path = self.write(
             [self.codex_call("/w/a.py"), self.codex_output({"exit_code": 2, "stderr": "no"})]
         )
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
+        row, _ = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
 
     def test_codex_same_id_a_b_a_stays_invalid(self) -> None:
         path = self.write(
@@ -296,9 +301,9 @@ class TranscriptOutcomeAndConflictTests(CaseBase):
                 self.codex_call("/w/a.py"),
             ]
         )
-        records, warnings = transcripts.codex_records(path)
-        assert records == []
-        assert any("全部观测不计入" in item for item in warnings), warnings
+        row, err_text = run_metric_cli("codex", path)
+        assert row["file_access"] == []
+        assert "全部观测不计入" in err_text
 
     def test_antigravity_same_id_a_b_a_stays_invalid(self) -> None:
         def call(target: str) -> dict:
@@ -309,17 +314,11 @@ class TranscriptOutcomeAndConflictTests(CaseBase):
             }
 
         path = self.write([call("/w/a.py"), call("/w/b.py"), call("/w/a.py")])
-        records, warnings = transcripts.antigravity_records(path)
-        assert records == []
-        assert any("全部观测不计入" in item for item in warnings), warnings
+        row, err_text = run_metric_cli("antigravity", path)
+        assert row["file_access"] == []
+        assert "全部观测不计入" in err_text
 
     def test_single_call_with_multiple_paths_is_kept(self) -> None:
-        path = self.write(
-            [
-                self.codex_call("", name="Bash"),
-                self.codex_output("both", **{"is_error": False}),
-            ]
-        )
         # Bash 的 command 里一次读取两个允许路径：这是合法多路径，不是重投冲突。
         path = self.write(
             [
@@ -335,11 +334,10 @@ class TranscriptOutcomeAndConflictTests(CaseBase):
                 self.codex_output("both", **{"is_error": False}),
             ]
         )
-        records, warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert sorted(records[0]["paths"]) == ["a.py", "b.py"]
-        assert records[0]["confirmed"]
-        assert not any("全部观测不计入" in item for item in warnings), warnings
+        row, err_text = run_metric_cli("codex", path)
+        assert sorted(entry["path"] for entry in row["file_access"]) == ["a.py", "b.py"]
+        assert all(entry["confirmed"] for entry in row["file_access"])
+        assert "全部观测不计入" not in err_text
 
     def test_redelivery_with_changed_result_updates_same_id(self) -> None:
         path = self.write(
@@ -350,40 +348,36 @@ class TranscriptOutcomeAndConflictTests(CaseBase):
                 self.codex_output("permission denied", **{"is_error": True}),
             ]
         )
-        records, warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
-        assert not any("全部观测不计入" in item for item in warnings), warnings
+        row, err_text = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
+        assert "全部观测不计入" not in err_text
 
 
-class AntigravityNativeTranscriptTests(CaseBase):
+class AntigravityNativeTranscriptTests(HookCase):
     """真实 Antigravity transcript 形状：无 id、参数带外层引号、1:N GENERIC 结果。"""
 
+    host = "antigravity"
     FIXTURE = Path(__file__).resolve().parent / "fixtures" / "antigravity_transcript.jsonl"
 
     def setup_method(self) -> None:
-        import tempfile
-
-        self.tmp = tempfile.TemporaryDirectory()
-        self.defer(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.repo = self.root / "repo"
-        self.skill = self.root / "skill" / "easydev"
-        (self.repo / "src").mkdir(parents=True)
-        (self.skill / "references").mkdir(parents=True)
-        (self.skill / "SKILL.md").write_text("---\nname: easydev\n---\n", encoding="utf-8")
-        (self.skill / "references" / "verification.md").write_text("v\n", encoding="utf-8")
+        super().setup_method()
         self.path = str(self.root / "transcript.jsonl")
         text = self.FIXTURE.read_text(encoding="utf-8")
         text = text.replace("@@SKILL@@", str(self.skill)).replace("@@REPO@@", str(self.repo))
         Path(self.path).write_text(text, encoding="utf-8")
 
     def test_references_and_confirmed_reads(self) -> None:
-        records, warnings = transcripts.antigravity_records(self.path)
-        assert warnings == []
-        assert transcripts.reference_paths(records) == ["execution.md", "missing.md", "review.md", "routing.md", "verification.md"]
-        confirmed = {path for record in records if record["confirmed"] for path in record["paths"]}
-        requested = {path for record in records if not record["confirmed"] for path in record["paths"]}
+        row, err_text = run_metric_cli("antigravity", self.path, "--cwd", str(self.repo))
+        assert err_text == ""
+        assert row["references"] == [
+            "execution.md",
+            "missing.md",
+            "review.md",
+            "routing.md",
+            "verification.md",
+        ]
+        confirmed = {entry["path"] for entry in row["file_access"] if entry["confirmed"]}
+        requested = {entry["path"] for entry in row["file_access"] if not entry["confirmed"]}
         # 读取成功（含截断提示）的 references 与 SKILL 读取都确认。
         assert str(self.repo / "references" / "routing.md") in confirmed
         assert str(self.skill / "SKILL.md") in confirmed
@@ -393,29 +387,14 @@ class AntigravityNativeTranscriptTests(CaseBase):
         assert str(self.repo / "references" / "missing.md") in requested
         # 结果行不足的调用没有成功证据。
         assert str(self.repo / "references" / "execution.md") in requested
-        # 无 id 的真实日志使用稳定合成 ID：6 个产生读取记录的调用对应 6 个互不相同的 ID
-        # （`git status --short` 没有读取目标，不产生读取记录）。
-        ids = {record["id"] for record in records}
-        assert len(ids) == 6, ids
-        assert all(str(call_id).startswith("ag:") for call_id in ids), ids
+        # 共有 6 个不重复的文件访问条目（`git status --short` 不产生读取条目）。
+        assert len(row["file_access"]) == 6
 
-    def test_synthetic_ids_are_stable_across_parses(self) -> None:
-        first = [(record["id"], tuple(record["paths"])) for record in transcripts.antigravity_records(self.path)[0]]
-        second = [(record["id"], tuple(record["paths"])) for record in transcripts.antigravity_records(self.path)[0]]
-        assert first == second
-
-    def test_confirmed_skill_read_offset_is_not_negative(self) -> None:
-        offset = transcripts.confirmed_skill_read_offset(
-            "antigravity", self.path, str(self.skill / "SKILL.md")
-        )
-        assert offset >= 0
-
-    def test_quoted_args_are_decoded(self) -> None:
-        assert transcripts._decode_quoted('"/w/a.py"') == "/w/a.py"
-        assert transcripts._decode_quoted("plain") == "plain"
-        assert transcripts._decode_quoted('"unterminated') == '"unterminated'
-        assert transcripts._decode_quoted('"not json"x"') == '"not json"x"'
-        assert transcripts._decode_quoted(7) == 7
+    def test_native_transcript_skill_read_activates_hook(self) -> None:
+        payload = self.input_payload("native-s1", "")
+        payload["transcriptPath"] = self.path
+        self.run_core(payload)
+        self.deny(self.shell("native-s1", "git reset --hard"))
 
 
 class AntigravityGenericEvidenceTests(CaseBase):
@@ -440,9 +419,9 @@ class AntigravityGenericEvidenceTests(CaseBase):
         text = self.FIXTURE.read_text(encoding="utf-8")
         text = text.replace("@@SKILL@@", str(self.skill)).replace("@@REPO@@", str(self.repo))
         Path(self.path).write_text(text, encoding="utf-8")
-        records, self.warnings = transcripts.antigravity_records(self.path)
-        self.confirmed = {path for record in records if record["confirmed"] for path in record["paths"]}
-        self.requested = {path for record in records if not record["confirmed"] for path in record["paths"]}
+        self.row, self.err_text = run_metric_cli("antigravity", self.path, "--cwd", str(self.repo))
+        self.confirmed = {entry["path"] for entry in self.row["file_access"] if entry["confirmed"]}
+        self.requested = {entry["path"] for entry in self.row["file_access"] if not entry["confirmed"]}
 
     def other(self, name: str) -> str:
         return str(self.repo / name)
@@ -456,7 +435,7 @@ class AntigravityGenericEvidenceTests(CaseBase):
         assert self.other("ok.txt") in self.confirmed
 
     def test_missing_empty_and_nonstring_content_is_requested(self) -> None:
-        assert self.warnings == []
+        assert self.err_text == ""
         assert self.other("no-content.md") in self.requested
         assert self.other("empty-content.md") in self.requested
         assert self.other("nonstring-content.md") in self.requested
@@ -517,7 +496,7 @@ class AntigravityGenericEvidenceTests(CaseBase):
     def test_truncation_notice_is_read_evidence(self) -> None:
         reference = str(self.skill / "references" / "large.md")
         assert reference in self.confirmed
-        assert transcripts.reference_paths(transcripts.antigravity_records(self.path)[0]) == ["large.md"]
+        assert self.row["references"] == ["large.md"]
 
     def test_truncated_command_preview_keeps_host_exit_code(self) -> None:
         # 真实截断形状：预告前言 + 退出码仍在元数据区，正文里的 code 1 不算。

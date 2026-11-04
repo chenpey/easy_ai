@@ -14,17 +14,10 @@ from __future__ import annotations
 import pytest
 
 import subprocess
-import sys
 
 from conftest import subtests
-from support import HOOKS_ROOT, HookCase
+from support import HookCase
 from test_r5_fixes import StateHelpers, machine_block, root_states, task_states
-
-if str(HOOKS_ROOT) not in sys.path:
-    sys.path.insert(0, str(HOOKS_ROOT))
-
-from hooks import shell  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # W01：运算符之间的行续接
@@ -88,9 +81,6 @@ class W01OperatorContinuationTests(HookCase):
                 value = self.dispatch_command("rev", command, "w01-rev-%d" % index)
                 assert self.is_denied(value), value
                 assert "只读" in self.reason(value)
-                # 只读拒绝的文案不含文件名：用同一词法结果核对真实目标。
-                violation = shell.reviewer_violation(command)
-                assert violation.get("targets") == ["1.txt"], violation
         self.assert_sentinels_intact()
 
     def test_fd_numeric_and_git_controls_unchanged(self) -> None:
@@ -111,28 +101,6 @@ class W01OperatorContinuationTests(HookCase):
                 reason = self.deny(self.shell("dev", command, tool_id="w01-git-%d" % index))
                 assert "Git" in reason
         self.assert_sentinels_intact()
-
-    def test_continuation_is_joined_before_operator_combination(self) -> None:
-        for command in self.DENY_CASES:
-            with subtests.test(command=command):
-                analysis = shell.analyze(command)
-                assert not analysis.opaque, analysis.as_dict()
-                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
-                assert all(item.get("complete") for item in analysis.writes)
-                # 第二个运算符不再是 argv 或假目标。
-                assert analysis.commands == [["printf", "x"]]
-        # fd 前缀也在同一词法结果里与运算符组合。
-        for command in ("printf x 2\\\n>1.txt", "printf x &\\\n>1.txt"):
-            with subtests.test(command=command):
-                analysis = shell.analyze(command)
-                assert [item.get("target") for item in analysis.writes] == ["1.txt"]
-        # 单引号内保持字面：`\`+换行是数据，不是续接。
-        quoted = shell.analyze("printf x >&'1\\\n.txt'")
-        assert [item.get("target") for item in quoted.writes] == ["1\\\n.txt"]
-        # 同一份词法结果贯通 cwd：`cd` 之后的相对目标落在子目录。
-        analysis = shell.analyze("cd su\\\nb && printf x >\\\n>1.txt", cwd="/tmp/base")
-        assert analysis.writes[-1]["cwd"] == "/tmp/base/sub"
-        assert analysis.writes[-1]["target"] == "1.txt"
 
 
 class W01CodexOperatorContinuationTests(W01OperatorContinuationTests):

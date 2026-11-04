@@ -127,8 +127,15 @@ class RoleMetricTests:
     def teardown_method(self) -> None:
         self.tmp.cleanup()
 
+    def run_cli_json(self, *args: str):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = role_metric.main([*args, "--json"])
+        assert code == 0
+        return json.loads(stdout.getvalue()), stderr.getvalue()
+
     def test_roles_are_separated_and_scoped_to_one_session(self) -> None:
-        rows = role_metric.collect(self.session, [], selector=SESSION_A)
+        rows, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         roles = [row["role"] for row in rows]
         assert roles == ["main", "reviewer"]
         main, reviewer = rows
@@ -138,27 +145,33 @@ class RoleMetricTests:
         assert reviewer["tokens"]["input"] == 100
 
     def test_handoff_prompt_is_not_counted_as_main_reading(self) -> None:
-        rows = role_metric.collect(self.session, [], selector=SESSION_A)
+        rows, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         # 交接待办 prompt 里提到 review.md，但不能算主代理读取。
         assert "review.md" not in rows[0]["references"]
 
     def test_other_session_artifacts_are_excluded(self) -> None:
-        rows = role_metric.collect(self.session, [], selector=SESSION_A)
+        rows, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         models = [row["model"] for row in rows]
         assert "provider/model-b:low" not in models
         assert len(rows) == 2
 
     def test_newest_session_is_selected_by_default(self) -> None:
-        rows = role_metric.collect(self.session, [], cwd=Path("/repo"))
+        rows, _ = self.run_cli_json("--session-dir", str(self.session), "--cwd", "/repo")
         assert len(rows) == 2
         assert rows[0]["source"].endswith(f"{SESSION_B}.jsonl")
 
     def test_path_filter_answers_who_read_the_caller(self) -> None:
-        rows = role_metric.collect(
-            self.session,
-            ["src/cart.py", "references/routing.md"],
-            selector=SESSION_A,
-            cwd=Path("/repo"),
+        rows, _ = self.run_cli_json(
+            "--session-dir",
+            str(self.session),
+            "--session",
+            SESSION_A,
+            "--cwd",
+            "/repo",
+            "--path",
+            "src/cart.py",
+            "--path",
+            "references/routing.md",
         )
         main, reviewer = rows
         assert reviewer.get("matched_paths") == {"src/cart.py": 1}
@@ -173,11 +186,15 @@ class RoleMetricTests:
             {"agent": "worker", "model": "provider/model-c:low", "usage": {"input": 3, "output": 1}},
             parent=SESSION_A,
         )
-        rows = role_metric.collect(
-            self.session,
-            [str(Path("/repo/easydev/references/execution.md"))],
-            selector=SESSION_A,
-            cwd=Path("/repo"),
+        rows, _ = self.run_cli_json(
+            "--session-dir",
+            str(self.session),
+            "--session",
+            SESSION_A,
+            "--cwd",
+            "/repo",
+            "--path",
+            str(Path("/repo/easydev/references/execution.md")),
         )
         worker = [row for row in rows if row["role"] == "worker"][0]
         assert worker.get("matched_paths") == {"/repo/easydev/references/execution.md": 1}
@@ -193,15 +210,11 @@ class RoleMetricTests:
             parent=SESSION_A,
             tool="antigravity",
         )
-        collected = role_metric.collect(self.session, [], selector=SESSION_A)
+        collected, err_text = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         opaque = [row for row in collected if not row["visible_reads"]]
         assert len(opaque) == 1
         assert opaque[0]["tools"] == {"antigravity": 1}
-
-        err = io.StringIO()
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            role_metric.main(["--session-dir", str(self.session), "--session", SESSION_A])
-        assert "读取可能发生在事件层看不见的地方" in err.getvalue()
+        assert "读取可能发生在事件层看不见的地方" in err_text
 
     def test_no_hint_when_reads_are_visible(self) -> None:
         err = io.StringIO()
@@ -216,17 +229,11 @@ class RoleMetricTests:
             encoding="utf-8",
         )
         (artifacts / "run-bad_reviewer_0_meta.json").write_text('["not", "an", "object"]', encoding="utf-8")
-        rows = role_metric.collect(self.session, [], selector=SESSION_A)
+        rows, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         assert (any(row["role"] == "unknown" for row in rows) is False)
 
     def test_json_output_is_machine_readable(self) -> None:
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            code = role_metric.main(
-                ["--session-dir", str(self.session), "--session", SESSION_A, "--json"]
-            )
-        assert code == 0
-        parsed = json.loads(buffer.getvalue())
+        parsed, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         assert [row["role"] for row in parsed] == ["main", "reviewer"]
         assert "tool_calls" in parsed[0]
 
@@ -274,10 +281,10 @@ class RoleMetricTests:
             {"type": "NOT_A_PLANNER_RESPONSE"},
         ]
         transcript.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
-        rows, warnings = role_metric.collect_transcripts(
-            "antigravity", transcript, [], [], {}, Path("/repo")
+        rows, err_text = self.run_cli_json(
+            "--host", "antigravity", "--transcript", str(transcript), "--cwd", "/repo"
         )
-        assert warnings == []
+        assert err_text == ""
         main = rows[0]
         assert main["references"] == ["execution.md", "review.md", "routing.md"]
         assert "verification.md" not in main["references"]
@@ -301,7 +308,9 @@ class RoleMetricTests:
             + "\n",
             encoding="utf-8",
         )
-        rows, _ = role_metric.collect_transcripts("antigravity", transcript, [], [], {}, Path("/repo"))
+        rows, _ = self.run_cli_json(
+            "--host", "antigravity", "--transcript", str(transcript), "--cwd", "/repo"
+        )
         assert rows[0]["attribution_status"] == "requested"
         assert rows[0]["references"] == ["routing.md"]
 
@@ -357,14 +366,16 @@ class RoleMetricTests:
             "not-an-object",
         ]
         transcript.write_text("\n".join(json.dumps(e) if not isinstance(e, str) else e for e in events) + "\n", encoding="utf-8")
-        rows, warnings = role_metric.collect_transcripts("codex", transcript, [], [], {}, Path("/repo"))
+        rows, err_text = self.run_cli_json(
+            "--host", "codex", "--transcript", str(transcript), "--cwd", "/repo"
+        )
         main = rows[0]
         assert main["references"] == ["routing.md"]
         assert "review.md" not in main["references"]
         assert "execution.md" not in main["references"]
         assert main["tools"].get("read_file") == 1
         assert main["attribution_status"] == "partial"
-        assert any("跳过" in warning for warning in warnings)
+        assert "跳过" in err_text
 
     def test_codex_exec_dedupes_same_item_id(self) -> None:
         transcript = Path(self.tmp.name) / "exec.jsonl"
@@ -397,7 +408,9 @@ class RoleMetricTests:
             },
         ]
         transcript.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
-        rows, _ = role_metric.collect_transcripts("codex", transcript, [], [], {}, Path("/repo"))
+        rows, _ = self.run_cli_json(
+            "--host", "codex", "--transcript", str(transcript), "--cwd", "/repo"
+        )
         main = rows[0]
         assert main["references"] == ["code-quality.md", "review.md"]
         assert main["tools"].get("exec_command") == 2
@@ -430,13 +443,17 @@ class RoleMetricTests:
             + "\n",
             encoding="utf-8",
         )
-        rows, _ = role_metric.collect_transcripts(
+        rows, _ = self.run_cli_json(
+            "--host",
             "antigravity",
-            parent,
-            [child],
-            [],
-            {child.name: {"role": "reviewer", "parent": parent.name}},
-            Path("/repo"),
+            "--transcript",
+            str(parent),
+            "--child-transcript",
+            str(child),
+            "--role-map",
+            json.dumps({child.name: {"role": "reviewer", "parent": parent.name}}),
+            "--cwd",
+            "/repo",
         )
         assert [row["role"] for row in rows] == ["main", "reviewer"]
         assert rows[1]["child"]

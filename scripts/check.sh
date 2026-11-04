@@ -656,7 +656,7 @@ PY
 
 echo "=== 9. 边界与预算一致性检查 ==="
 # 两条门禁：① 全局规则与技能内的修复次数上限必须同值（各处手写，防漂移）；
-# ② 可分发的 easydev 不得引用“全局规则”，CHANGELOG 的历史记录除外。
+# ② 全局规则 AGENTS.md §5/§6 与 easydev（code-quality.md / execution.md / SKILL.md）必须引用并同步。
 python3 - <<'PY'
 import re, subprocess, sys
 
@@ -701,18 +701,36 @@ elif len(set(limits.values())) > 1:
 else:
     print(f"OK: 修复次数上限一致 -> {next(iter(limits.values()))}（{len(limits)} 处）")
 
-# review.md 把 AGENTS.md 当作“审查数据”举例属正常用法，本门禁只拦“全局规则”这类跨层引用。
-proc = subprocess.run(
-    ["git", "grep", "-nI", "全局规则", "--", "easydev", ":!easydev/CHANGELOG.md"],
-    capture_output=True,
-    text=True,
-)
-if proc.returncode not in (0, 1):
-    errors.append(f"git grep 执行失败 (exit {proc.returncode}): {proc.stderr.strip()}")
-elif proc.returncode == 0:
-    errors.append("easydev 不得引用“全局规则”：\n" + proc.stdout.rstrip())
-else:
-    print("OK: easydev 未引用“全局规则”（CHANGELOG 历史记录除外）")
+# 全局规则与 easydev 同步检查：同仓分发自用，easydev 必须显式声明与全局规则 AGENTS.md §5/§6 同步，且关键规则一致。
+agents_text = read("AGENTS.md")
+cq_text = read("easydev/references/code-quality.md")
+exec_text = read("easydev/references/execution.md")
+skill_text = read("easydev/SKILL.md")
+
+if "与全局规则 `AGENTS.md` §5 保持同步" not in cq_text:
+    errors.append("easydev/references/code-quality.md 缺少对全局规则 AGENTS.md §5 的同步引用声明")
+if "与全局规则 `AGENTS.md` §6 保持同步" not in exec_text:
+    errors.append("easydev/references/execution.md 缺少对全局规则 AGENTS.md §6 的同步引用声明")
+
+sync_pairs = [
+    ("默认写直线式代码", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
+    ("仅当同一逻辑有 2 处以上真实复用时才提取", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
+    ("不加未被要求的类、接口、配置项、参数、wrapper", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
+    ("不写备份、回退、降级、兼容旧版本逻辑", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
+    ("不对不可能发生的情况做防御性处理", agents_text, cq_text, "AGENTS.md §5 <-> code-quality.md"),
+    ("只写用户视角的端到端测试", agents_text, exec_text, "AGENTS.md §6 <-> execution.md"),
+    ("不写单元测试，不用 mock 隔离内部实现", agents_text, exec_text, "AGENTS.md §6 <-> execution.md"),
+    ("只覆盖核心路径和关键失败场景", agents_text, exec_text, "AGENTS.md §6 <-> execution.md"),
+]
+for phrase, src, dst, label in sync_pairs:
+    if phrase not in src or phrase not in dst:
+        errors.append(f"全局规则与 easydev 同步短语缺失 [{label}]: {phrase!r}")
+
+if "端到端测试" not in skill_text or "不写单测" not in skill_text:
+    errors.append("easydev/SKILL.md quick 核心未同步端到端/不写单测约束")
+
+if not errors:
+    print(f"OK: 全局规则 AGENTS.md §5/§6 与 easydev 引用及 {len(sync_pairs)} 项核心口径同步")
 
 # Hook 契约：只锁可机器判断的事实，不用关键词模拟安全行为。
 # ① 模板不得含 SessionStart 注入/覆写字段，也不得替模型定档；

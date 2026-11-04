@@ -76,7 +76,7 @@ P0/P1 的排除、降级或转为待验证风险必须由 reviewer 核对证据�
   - **位置**：`services/token.ts#refreshToken`
   - **场景与影响**：并发 401 请求同时进入刷新分支，写回不同 Token，部分请求因旧凭证失效而失败。
   - **证据**：`refreshToken()` 无 Promise 单例缓存；`docs/auth.md` 已确认旧 Token 立即失效。
-  - **修复与验证**：共享 pending Promise；并发 3 次单测验证仅刷新一次。"
+  - **修复与验证**：共享 pending Promise；并发 3 次端到端请求验证仅刷新一次。"
 - ⚠️ 待验证风险（有线索、关键条件未确认）：
   "**[待验证风险] 迁移非空列与旧版本写入共存**
   - **线索**：`migrations/003_add_status.sql` 新增无 DEFAULT 的非空 `status`，仅回填存量；旧版 `INSERT` 未含该列。

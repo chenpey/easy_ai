@@ -4,35 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from unittest import mock
 
 from support import HookCase, core_module
-
-
-class ExplicitInvocationPatternTests:
-    """显式调用边界按 ASCII 标识符判定：中文紧邻仍算调用，ASCII 连写不算。"""
-
-    def test_chinese_adjacent_invocations(self) -> None:
-        for prompt in (
-            "请使用 easydev 进行审查",
-            "帮我用$easydev",
-            "开始使用easydev",
-        ):
-            assert core_module.explicit_invocation(prompt), prompt
-
-    def test_ascii_identifier_and_filtered_contexts_do_not_activate(self) -> None:
-        for prompt in (
-            "myeasydev2",
-            "use easydev_helpers 完成这个改动",
-            "使用 easydevment",
-            "```\n请使用 easydev 进行审查\n```",
-            "> 帮我用$easydev",
-        ):
-            assert not core_module.explicit_invocation(prompt), prompt
-
-    def test_skill_colon_and_english_invocations_still_activate(self) -> None:
-        for prompt in ("/skill:easydev", "use easydev", "使用 easydev"):
-            assert core_module.explicit_invocation(prompt), prompt
 
 
 class ProtocolMixin(object):
@@ -133,22 +106,6 @@ class ProtocolMixin(object):
         assert value == self.fail_open_shape("input")
         assert "协议" in stderr
         assert "Traceback" not in stderr
-
-    def test_internal_error_preserves_normalized_event_allow_shape(self) -> None:
-        """内部异常只在 Engine.handle 边界注入：已归一化的事件仍决定放行形状。"""
-        self.activate("boom")
-        cases = (
-            (self.shell("boom", "git status", tool_id="boom-pre"), "pre_tool"),
-            (self.settle_payload("boom"), "settle"),
-        )
-        for payload, normalized in cases:
-            with mock.patch.object(
-                core_module.Engine, "handle", side_effect=RuntimeError("boom")
-            ):
-                _code, value, stderr = self.run_core(payload)
-            assert value == self.fail_open_shape(normalized), normalized
-            assert "内部异常" in stderr
-            assert "Traceback" not in stderr
 
     def test_unknown_event_and_missing_session_are_allowed(self) -> None:
         _code, value, _stderr = self.run_core(

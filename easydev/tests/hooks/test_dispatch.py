@@ -6,7 +6,6 @@ import json
 import os
 
 from conftest import subtests
-from hooks import core as core_module
 from support import HookCase
 
 
@@ -247,29 +246,6 @@ class DispatchMixin(object):
         prompt = "你是独立 reviewer，只读审查。\n角色路径：%s\n**[P级] 简短标题**\n" % role_path
         self.allow(self.prompt_only_dispatch(prompt, "prompt-only-rev"))
 
-    def test_role_path_evidence_survives_fullwidth_characters_in_install_root(self) -> None:
-        """安装根含全角标点（`资料（备份）`）时路径仍是证据。
-
-        把全角标点当分隔符会把这种安装根切碎、让路径证据永远不可检出（任何
-        reviewer 分派都被拒且无法通过改写交接绕过），所以只能对候选“剥包裹”。
-        """
-        target = self.root / "资料（备份）" / "easydev" / "references" / "reviewer-role.md"
-        target.parent.mkdir(parents=True)
-        target.write_text("reviewer\n", encoding="utf-8")
-        assert core_module.role_path_evidence("角色路径：%s" % target, "reviewer", str(target))
-        assert core_module.role_path_evidence("角色路径：（%s）" % target, "reviewer", str(target))
-        assert core_module.role_path_evidence(
-            "角色细则见 `%s`（先读它，再开始）。" % target, "reviewer", str(target)
-        )
-        # 组合情形：安装根含全角括号，且路径后还跟着全角注释。
-        assert core_module.role_path_evidence(
-            "角色路径：%s（先读它，再开始）。" % target, "reviewer", str(target)
-        )
-        assert not core_module.role_path_evidence(
-            "角色路径：/tmp/other/easydev/references/reviewer-role.md", "reviewer", str(target)
-        )
-
-    def test_discussed_negated_or_partial_role_wording_is_not_a_declaration(self) -> None:
         """放宽识别不等于取消契约：讨论、否定与半截写法仍不算声明。"""
         self.activate()
         self.write_models(VALID)

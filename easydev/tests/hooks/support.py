@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 HOOKS_ROOT = Path(__file__).resolve().parents[2]
 EASYDEV_ROOT = HOOKS_ROOT.parent
@@ -655,12 +655,6 @@ class HookCase:
 
     def touch_dirty(self, relative: str = "src/app.py", content: str = "value = 2\n") -> None:
         (self.repo / relative).write_text(content, encoding="utf-8")
-
-
-def apply_context(base: Dict[str, Any], **overrides: Any) -> Dict[str, Any]:
-    result = dict(base)
-    result.update(overrides)
-    return result
 
 
 class CaseBase:

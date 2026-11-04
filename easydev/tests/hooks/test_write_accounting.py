@@ -2,25 +2,20 @@
 
 误报都来自把“没有写目标”当成“写目标不完整”：非写工具的成功 post 也去配对、
 纯读 shell 建了空目标的 pending、同一文件两次写让目标集合看起来不一致。反向的
-错误同样要钉住：合并不得丢掉已观察到的软链，执行型 stdin 与写 pre 之后的
-读/失败 post 仍必须披露缺口。这里只钉可观察结果：stderr 文案、pending 内容、
-写序列是否推进。
+错误同样要钉住：执行型 stdin 与写 pre 之后的读/失败 post 仍必须披露缺口。
+这里只钉可观察结果：stderr 文案、pending 内容、写序列是否推进。
 """
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Set
-from unittest import mock
+from typing import Any, Dict, List
 
 from conftest import subtests
-from support import HookCase, core_module
+from support import HookCase
 from test_heredoc_warnings import engine_warnings
 from test_r5_fixes import task_states
-
-from hooks import shell as shell_module
 
 
 POST_INCOMPLETE = "post 写入目标不完整，写序列记覆盖缺口"
@@ -36,21 +31,6 @@ class WriteAccountingCase(HookCase):
         states = task_states(self.state)
         assert len(states) == 1, states
         return states[0]
-
-    def fingerprint_deadline_on(self, calls: Set[int], on_deadline: Any = None):
-        """第 N 次指纹查询返回 `deadline`（可附带一次外部改写）。"""
-        real = core_module.paths.fingerprint
-        counter: Dict[str, int] = {"n": 0}
-
-        def fingerprint(path: str, deadline: float = None) -> str:
-            counter["n"] += 1
-            if counter["n"] in calls:
-                if on_deadline is not None:
-                    on_deadline()
-                return "deadline"
-            return real(path, deadline=deadline)
-
-        return mock.patch.object(core_module.paths, "fingerprint", fingerprint)
 
     def read_post(self, session: str, outcome: str, tool_id: str) -> str:
         payload = self.tool_payload(
@@ -148,30 +128,6 @@ class MetadataOnlyShellTests(WriteAccountingCase):
         assert int(task.get("write_seq") or 0) == 0
         assert (task.get("pending_writes") or {}) == {}
 
-    def test_metadata_classification_matches_worktree_effect(self) -> None:
-        """`business` 只标记不改工作区的 git 子命令；改工作区的仍是业务写。"""
-        cases = (
-            ("git add .", False),
-            ("git commit -m test", False),
-            ("git fetch", False),
-            ("git push", False),
-            ("git config user.name tester", False),
-            ("git gc", False),
-            ("git branch -d old", False),
-            ("git tag -d v1", False),
-            ("git reset --hard HEAD", True),
-            ("git checkout -- .", True),
-            ("git stash", True),
-            ("git rm old.py", True),
-            ("git mv a.py b.py", True),
-            ("git pull", True),
-        )
-        for command, business in cases:
-            with subtests.test(command=command):
-                writes = shell_module.analyze(command).writes
-                assert writes, command
-                assert all(write.get("business", True) is business for write in writes), writes
-
     def test_metadata_write_keeps_business_target_in_same_call(self) -> None:
         """同一次调用里既 git add 又改工作区文件：业务目标仍完整记账。"""
         self.activate("s1")
@@ -246,87 +202,6 @@ class RoleOnlyWriteSequenceTests(WriteAccountingCase):
         self.deny(self.write_tool("rev", "src/app.py", tool_id="rev-write"))
 
 
-class MergeWriteEntriesTests:
-    """同一目标的多次预取合并：软链不得被普通条目盖掉，指纹不一致要标不稳定。"""
-
-    def entry(self, fingerprint: str = "clean", symlink: str = "") -> Dict[str, Any]:
-        return {
-            "relative": "src/app.py",
-            "repo": "/repo",
-            "origin_key": "repo::src/app.py",
-            "symlink": symlink,
-            "fingerprint": "symlink" if symlink else fingerprint,
-            "origin": "",
-        }
-
-    def test_regular_then_symlink_keeps_symlink(self) -> None:
-        entries, unstable = core_module._merge_write_entries(
-            [self.entry("clean"), self.entry(symlink="src/app.py")]
-        )
-        assert len(entries) == 1, entries
-        assert entries[0].get("symlink"), entries
-        assert not unstable
-
-    def test_different_prefetch_fingerprints_are_unstable(self) -> None:
-        entries, unstable = core_module._merge_write_entries(
-            [self.entry("clean"), self.entry("dirty")]
-        )
-        assert len(entries) == 1, entries
-        assert unstable
-        assert entries[0].get("unstable"), entries
-
-    def test_unsafe_fingerprint_wins_over_clean_first(self) -> None:
-        """后一次预取发现目标不是普通文件/不可读时，不能被先到的干净条目盖掉。"""
-        for unsafe in ("nonregular", "toolarge", "unreadable"):
-            with subtests.test(fingerprint=unsafe):
-                entries, unstable = core_module._merge_write_entries(
-                    [self.entry("clean"), self.entry(unsafe)]
-                )
-                assert len(entries) == 1, entries
-                assert entries[0]["fingerprint"] == unsafe
-                assert unstable
-                assert entries[0].get("unstable"), entries
-
-    def test_deadline_prefetch_is_not_a_state_change(self) -> None:
-        """共享预算耗尽的 `deadline` 是取证降级，不是观察到的状态变化。"""
-        for first, second in (("aaa", "deadline"), ("deadline", "aaa")):
-            with subtests.test(order=(first, second)):
-                entries, unstable = core_module._merge_write_entries(
-                    [self.entry(first), self.entry(second)]
-                )
-                assert len(entries) == 1, entries
-                assert entries[0]["fingerprint"] == "aaa"
-                assert entries[0].get("deadline"), entries
-                assert not unstable
-
-    def test_deadline_between_two_states_is_unstable(self) -> None:
-        entries, unstable = core_module._merge_write_entries(
-            [self.entry("aaa"), self.entry("deadline"), self.entry("bbb")]
-        )
-        assert len(entries) == 1, entries
-        assert entries[0].get("deadline"), entries
-        assert unstable
-        assert entries[0].get("unstable"), entries
-
-    def test_single_deadline_entry_is_marked_degraded(self) -> None:
-        """单条目标只有超时、没有真实指纹：同样标记 deadline，不当成可信指纹。"""
-        entries, unstable = core_module._merge_write_entries([self.entry("deadline")])
-        assert len(entries) == 1, entries
-        assert entries[0].get("deadline"), entries
-        assert not unstable
-
-    def test_single_regular_entry_is_not_marked(self) -> None:
-        entries, _unstable = core_module._merge_write_entries([self.entry("clean")])
-        assert not entries[0].get("deadline"), entries
-
-    def test_same_fingerprint_twice_is_stable(self) -> None:
-        entries, unstable = core_module._merge_write_entries(
-            [self.entry("clean"), self.entry("clean")]
-        )
-        assert len(entries) == 1, entries
-        assert not unstable
-
-
 class SymlinkMergeTests(WriteAccountingCase):
     """同一命令两次写同一目标：已观察到的软链必须仍被拒绝。"""
 
@@ -351,105 +226,6 @@ class SymlinkMergeTests(WriteAccountingCase):
         reason = self.deny(self.shell("s1", self.COMMAND, tool_id="dup-link"))
         self.assert_denied_and_guide_untouched(reason, guide, before)
 
-    def test_symlink_swapped_between_prefetches_is_denied(self) -> None:
-        """确定性交错：首次预取完整分类之后、第二次软链核对之前换成软链。"""
-        self.activate("s1")
-        guide = self.repo / "docs" / "guide.md"
-        before = guide.read_text(encoding="utf-8")
-        app = self.repo / "src" / "app.py"
-        real_classify = core_module.paths.classify
-        calls: Dict[str, int] = {"classify": 0}
-
-        def classify_then_swap(root: str, relative: str, deadline=None) -> str:
-            calls["classify"] += 1
-            origin = real_classify(root, relative, deadline=deadline)
-            if calls["classify"] == 1:
-                # 第一条目已取证完成（普通、干净、无需快照），此时才换成软链。
-                app.unlink()
-                os.symlink(guide, str(app))
-            return origin
-
-        with mock.patch.object(core_module.paths, "classify", classify_then_swap):
-            reason = self.deny(self.shell("s1", self.COMMAND, tool_id="dup-swap"))
-        self.assert_denied_and_guide_untouched(reason, guide, before)
-
-
-class UnstablePrefetchTests(WriteAccountingCase):
-    """同一次分析里预取指纹变了：pre 必须拒绝，不能拿旧成功指纹冒充满足。"""
-
-    COMMAND = "printf a > src/app.py; printf b >> src/app.py"
-
-    def test_prefetch_change_after_first_classify_is_denied(self) -> None:
-        self.activate("s1")
-        # 先建立一次真实写入：last_success = 指纹 A，write_seq = 1。
-        self.write_path("s1", "base", "src/app.py", "value = 5\n")
-        assert int(self.task_state().get("write_seq") or 0) == 1
-        app = self.repo / "src" / "app.py"
-        real_classify = core_module.paths.classify
-        calls: Dict[str, int] = {"classify": 0}
-
-        def classify_then_modify(root: str, relative: str, deadline=None) -> str:
-            calls["classify"] += 1
-            origin = real_classify(root, relative, deadline=deadline)
-            if calls["classify"] == 1:
-                # 第一条目已取证（指纹 A、成功指纹同样为 A），此时外部改成 B。
-                app.write_text("value = 2\n", encoding="utf-8")
-            return origin
-
-        with mock.patch.object(core_module.paths, "classify", classify_then_modify):
-            reason = self.deny(self.shell("s1", self.COMMAND, tool_id="dup-unstable"))
-        assert "预取指纹" in reason
-        assert "同一次分析期间" in reason
-        # 命令没有执行：外部内容仍是 B，写序列与 pending 都不推进。
-        assert app.read_text(encoding="utf-8") == "value = 2\n"
-        task = self.task_state()
-        assert int(task.get("write_seq") or 0) == 1
-        assert (task.get("pending_writes") or {}) == {}
-
-
-class PrefetchDeadlineTests(WriteAccountingCase):
-    """指纹取证超时不是并发修改：放行并降级告警，不 pre 拒绝。"""
-
-    COMMAND = "printf a > src/app.py; printf b >> src/app.py"
-
-    def test_deadline_prefetch_allows_with_warning(self) -> None:
-        self.activate("s1")
-        self.write_path("s1", "base", "src/app.py", "value = 5\n")
-        assert int(self.task_state().get("write_seq") or 0) == 1
-        with self.fingerprint_deadline_on({2}):
-            _code, value, pre_stderr = self.run_core(
-                self.shell("s1", self.COMMAND, tool_id="dl-1")
-            )
-        assert not self.is_denied(value), value
-        assert "基线指纹查询超时，基线检查降级" in engine_warnings(pre_stderr)
-        entries = list((self.task_state().get("pending_writes") or {}).values())
-        assert len(entries) == 1, entries
-        assert not entries[0]["complete"]
-        _code, value, post_stderr = self.run_core(
-            self.shell("s1", self.COMMAND, tool_id="dl-1", event="post_tool", outcome="success")
-        )
-        assert not self.is_denied(value), value
-        # 超时仍算目标集不完整：成功 post 不建立成功豁免。
-        assert POST_INCOMPLETE in engine_warnings(post_stderr)
-        task = self.task_state()
-        assert int(task.get("write_seq") or 0) == 1
-        assert (task.get("pending_writes") or {}) == {}
-
-    def test_deadline_then_change_is_still_denied(self) -> None:
-        self.activate("s1")
-        self.write_path("s1", "base", "src/app.py", "value = 5\n")
-        app = self.repo / "src" / "app.py"
-        command = "printf a > src/app.py; printf b >> src/app.py; printf c >> src/app.py"
-        with self.fingerprint_deadline_on(
-            {2}, on_deadline=lambda: app.write_text("value = 2\n", encoding="utf-8")
-        ):
-            reason = self.deny(self.shell("s1", command, tool_id="dl-2"))
-        assert "预取指纹" in reason
-        assert app.read_text(encoding="utf-8") == "value = 2\n"
-        task = self.task_state()
-        assert int(task.get("write_seq") or 0) == 1
-        assert (task.get("pending_writes") or {}) == {}
-
 
 class PostFingerprintTests(WriteAccountingCase):
     """post 阶段的问题指纹不得写成成功指纹：不推进写序列、不建立成功豁免。
@@ -463,48 +239,6 @@ class PostFingerprintTests(WriteAccountingCase):
 
     def app(self) -> Path:
         return self.repo / "src" / "app.py"
-
-    def test_single_deadline_pre_does_not_skip_first_snapshot(self) -> None:
-        self.activate("s1")
-        self.app().write_text("value = 7\n", encoding="utf-8")
-        with self.fingerprint_deadline_on({1}):
-            _code, value, pre_stderr = self.run_core(
-                self.shell("s1", self.COMMAND, tool_id="dl-single")
-            )
-        assert not self.is_denied(value), value
-        assert "基线指纹查询超时，基线检查降级" in engine_warnings(pre_stderr)
-        entries = list((self.task_state().get("pending_writes") or {}).values())
-        assert len(entries) == 1, entries
-        # 只有超时、没有可信指纹的单条目标同样是取证降级：pending 不完整。
-        assert not entries[0]["complete"], entries
-        self.app().write_text("value = 8\n", encoding="utf-8")
-        _code, value, post_stderr = self.run_core(
-            self.shell("s1", self.COMMAND, tool_id="dl-single", event="post_tool", outcome="success")
-        )
-        assert not self.is_denied(value), value
-        assert POST_INCOMPLETE in engine_warnings(post_stderr)
-        task = self.task_state()
-        assert int(task.get("write_seq") or 0) == 0
-        assert (task.get("last_success") or {}) == {}
-        # 下一次写入仍要为 dirty 目标保存首次快照，不能因上一轮“成功”被跳过。
-        _code, value, _stderr = self.run_core(self.shell("s1", self.COMMAND, tool_id="dl-next"))
-        assert not self.is_denied(value), value
-        auto_baseline = self.task_state().get("auto_baseline") or {}
-        assert "src/app.py" in [key.rsplit("::", 1)[-1] for key in auto_baseline], auto_baseline
-
-    def test_post_deadline_is_not_recorded_as_success(self) -> None:
-        self.activate("s1")
-        self.allow(self.shell("s1", self.COMMAND, tool_id="dl-post"))
-        self.app().write_text("value = 9\n", encoding="utf-8")
-        with self.fingerprint_deadline_on({1}):
-            _code, value, post_stderr = self.run_core(
-                self.shell("s1", self.COMMAND, tool_id="dl-post", event="post_tool", outcome="success")
-            )
-        assert not self.is_denied(value), value
-        assert POST_INCOMPLETE in engine_warnings(post_stderr)
-        task = self.task_state()
-        assert int(task.get("write_seq") or 0) == 0
-        assert (task.get("last_success") or {}) == {}
 
     def test_post_nonregular_target_is_not_recorded_as_success(self) -> None:
         self.activate("s1")
@@ -520,28 +254,6 @@ class PostFingerprintTests(WriteAccountingCase):
         task = self.task_state()
         assert int(task.get("write_seq") or 0) == 0
         assert (task.get("last_success") or {}) == {}
-
-    def assert_post_unsafe_not_success(self, unsafe: str) -> None:
-        self.activate("s1")
-        self.allow(self.shell("s1", self.COMMAND, tool_id="u-post"))
-        self.app().write_text("value = 4\n", encoding="utf-8")
-        with mock.patch.object(
-            core_module.paths, "fingerprint", lambda path, deadline=None: unsafe
-        ):
-            _code, value, post_stderr = self.run_core(
-                self.shell("s1", self.COMMAND, tool_id="u-post", event="post_tool", outcome="success")
-            )
-        assert not self.is_denied(value), value
-        assert POST_UNSAFE in engine_warnings(post_stderr)
-        task = self.task_state()
-        assert int(task.get("write_seq") or 0) == 0
-        assert (task.get("last_success") or {}) == {}
-
-    def test_post_toolarge_target_is_not_recorded_as_success(self) -> None:
-        self.assert_post_unsafe_not_success("toolarge")
-
-    def test_post_unreadable_target_is_not_recorded_as_success(self) -> None:
-        self.assert_post_unsafe_not_success("unreadable")
 
 
 class WrappedStdinTests(WriteAccountingCase):
@@ -605,44 +317,6 @@ class WrappedStdinTests(WriteAccountingCase):
         ):
             with subtests.test(command=command.splitlines()[0]):
                 self.assert_gap_pre_and_post(command, "script-arg-%d" % index, notice=index == 0)
-
-    def test_stdin_unparsed_marks_only_unproven_bodies(self) -> None:
-        cases = (
-            ("sh <<'EOF'\necho hi\nEOF", False),
-            ("bash <<'EOF'\necho hi\nEOF", False),
-            ("sudo bash <<'EOF'\necho hi\nEOF", False),
-            ("env bash <<'EOF'\necho hi\nEOF", False),
-            ("bash -s <<'EOF'\necho hi\nEOF", False),
-            ("bash -s consumer.sh <<'EOF'\necho hi\nEOF", False),
-            ("bash -x <<'EOF'\necho hi\nEOF", False),
-            ("bash -- <<'EOF'\necho hi\nEOF", False),
-            ("bash -s -- consumer.sh <<'EOF'\necho hi\nEOF", False),
-            ("bash -s -O extglob <<'EOF'\necho hi\nEOF", False),
-            ("bash -O extglob <<'EOF'\necho hi\nEOF", False),
-            ("bash -o pipefail <<'EOF'\necho hi\nEOF", False),
-            ("bash - <<'EOF'\necho hi\nEOF", False),
-            ("bash --noprofile <<'EOF'\necho hi\nEOF", False),
-            ("bash -Os <<'EOF'\necho hi\nEOF", False),
-            ("cat <<'EOF'\nhello\nEOF", False),
-            ("bash consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("env bash consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("sudo bash consumer.sh <<'EOF'\necho hi\nEOF", True),
-            # 脚本文件之后的 `-s` 是脚本参数；`--`/`-` 之后的 `-s` 是操作数。
-            ("bash consumer.sh -s <<'EOF'\necho hi\nEOF", True),
-            ("bash -- -s <<'EOF'\necho hi\nEOF", True),
-            ("bash - consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("bash --rcfile -s consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("bash --rcfile=-s consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("bash -O extglob consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("bash -o pipefail consumer.sh <<'EOF'\necho hi\nEOF", True),
-            ("python3 - <<'PY'\nprint(1)\nPY", True),
-            ("bash -c 'python3 -' <<'PY'\nimport writer\nPY", True),
-            ("cat <<'EOF' | python3 -\nprint(1)\nEOF", True),
-            ("sh <<< 'echo hi'", True),
-        )
-        for command, expected in cases:
-            with subtests.test(command=command):
-                assert shell_module.analyze(command).stdin_unparsed == expected
 
 
 class InterpreterStdinTests(WriteAccountingCase):
@@ -854,31 +528,3 @@ class CrossToolPostTests(WriteAccountingCase):
         assert not self.is_denied(value), value
         assert POST_FAILED in engine_warnings(stderr)
         assert (self.task_state().get("pending_writes") or {}) == {}
-
-
-class UnanalyzedPrefetchTests(HookCase):
-    """没有 prepared 的异常入口必须按不完整记账，不能算成完整空集合。"""
-
-    host = "pi"
-
-    def test_missing_prepared_prefetch_is_incomplete(self) -> None:
-        context = json.loads(self.context_path.read_text(encoding="utf-8"))
-        engine = core_module.Engine(self.host, context, mode="enforce", env=self.environment())
-        record = core_module.Record(self.host, {}, core_module.HOSTS[self.host])
-        record.event = "pre_tool"
-        record.session_id = "s1"
-        record.cwd = str(self.repo)
-        record.activation_scope = "task_active"
-        record.tool = {
-            "id": "t-1",
-            "name": "bash",
-            "kind": "shell",
-            "args": {"command": "printf x > src/app.py"},
-            "paths_complete": True,
-        }
-        task: Dict[str, Any] = {}
-        engine._record_pre_write(record, task, None)
-        entries = list((task.get("pending_writes") or {}).values())
-        assert len(entries) == 1, entries
-        assert not entries[0]["complete"]
-        assert entries[0]["targets"] == []

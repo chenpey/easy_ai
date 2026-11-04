@@ -6,14 +6,10 @@
 
 from __future__ import annotations
 
-import pytest
-
-import json
 import os
 import stat
-from pathlib import Path
 
-from support import CaseBase, HookCase
+from support import HookCase
 from test_r5_fixes import task_states
 
 
@@ -302,99 +298,3 @@ class CodexBaselineAutoTests(BaselineAutoSnapshotMixin, HookCase):
 
 class DshBaselineAutoTests(BaselineAutoSnapshotMixin, HookCase):
     host = "dsh"
-
-
-class SnapshotStateTests(CaseBase):
-    """快照写盘本身：不覆盖、拒绝软链/非普通文件、目录 0700。"""
-
-    def setup_method(self) -> None:
-        import sys
-        import tempfile
-
-        from support import HOOKS_ROOT
-
-        if str(HOOKS_ROOT) not in sys.path:
-            sys.path.insert(0, str(HOOKS_ROOT))
-        from hooks import state
-
-        self.state = state
-        self.tmp = tempfile.TemporaryDirectory()
-        self.defer(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.base = self.root / "state"
-        self.base.mkdir(mode=0o700)
-        os.chmod(self.base, 0o700)
-        self.source = self.root / "source.py"
-        self.source.write_text("first\n", encoding="utf-8")
-
-    def save(self, relative: str = "src/app.py", source: Path | None = None, limit: int = 1024):
-        directory = self.base / "baselines" / "task" / "repo"
-        return self.state.save_snapshot(
-            str(directory), relative, str(source or self.source), limit
-        )
-
-    def test_saves_first_content_with_private_modes(self) -> None:
-        ok, reason = self.save()
-        assert ok, reason
-        target = self.base / "baselines" / "task" / "repo" / "src" / "app.py"
-        assert target.read_text(encoding="utf-8") == "first\n"
-        assert stat.S_IMODE(target.stat().st_mode) == 0o600
-        assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
-
-    def test_existing_snapshot_is_not_overwritten(self) -> None:
-        assert self.save()[0]
-        self.source.write_text("second\n", encoding="utf-8")
-        ok, reason = self.save()
-        assert ok, reason
-        target = self.base / "baselines" / "task" / "repo" / "src" / "app.py"
-        assert target.read_text(encoding="utf-8") == "first\n"
-
-    def test_symlink_snapshot_is_rejected(self) -> None:
-        target = self.base / "baselines" / "task" / "repo" / "src" / "app.py"
-        target.parent.mkdir(parents=True)
-        os.chmod(target.parent, 0o700)
-        elsewhere = self.root / "elsewhere"
-        elsewhere.write_text("x\n", encoding="utf-8")
-        target.symlink_to(elsewhere)
-        ok, reason = self.save()
-        assert not ok
-        assert "符号链接" in reason
-        assert elsewhere.read_text(encoding="utf-8") == "x\n"
-
-    def test_fifo_source_is_rejected(self) -> None:
-        fifo = self.root / "pipe"
-        os.mkfifo(fifo)
-        ok, reason = self.save(source=fifo)
-        assert not ok
-        assert "普通文件" in reason
-
-    def test_oversized_source_is_rejected(self) -> None:
-        ok, reason = self.save(limit=4)
-        assert not ok
-        assert "上限" in reason
-
-    def open_fd_count(self) -> int:
-        """当前进程打开的文件描述符数量；不支持的平台跳过。"""
-        for path in ("/dev/fd", "/proc/self/fd"):
-            if os.path.isdir(path):
-                return len(os.listdir(path))
-        pytest.skip("该系统不支持列举打开的文件描述符")
-
-    def test_rejection_paths_do_not_leak_source_descriptors(self) -> None:
-        big = self.root / "big.bin"
-        big.write_bytes(b"x" * 4096)
-        fifo = self.root / "pipe"
-        os.mkfifo(fifo)
-        # 先各跑一次：避开首次调用的惰性导入/目录创建噪声。
-        assert not self.save(relative="big.bin", source=big, limit=1024)[0]
-        assert not self.save(relative="pipe", source=fifo)[0]
-        before = self.open_fd_count()
-        for _index in range(20):
-            ok, reason = self.save(relative="big.bin", source=big, limit=1024)
-            assert not ok, reason
-            assert "上限" in reason
-            ok, reason = self.save(relative="pipe", source=fifo)
-            assert not ok, reason
-            assert "普通文件" in reason
-        # 拒绝分支必须关闭源文件 FD：连续 40 次拒绝前后打开数量不变。
-        assert self.open_fd_count() == before

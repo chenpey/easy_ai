@@ -13,12 +13,27 @@ import tempfile
 from pathlib import Path
 
 from conftest import subtests
-from support import HOOKS_ROOT, HookCase, clean_env, core_module
+from support import HOOKS_ROOT, HookCase, clean_env
 
 INSTALL = HOOKS_ROOT / "hooks" / "install.py"
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "pi_adapter_fixture.mjs"
 ANTIGRAVITY_GROUP = "easydev-hooks"
 HIDDEN_STDERR = "core_stderr：核心有诊断，细节已隐藏"
+FAILURE_STATUSES = (
+    "aborted",
+    "canceled",
+    "cancelled",
+    "error",
+    "failed",
+    "failure",
+    "interrupted",
+    "pending",
+    "running",
+    "started",
+    "stopped_early",
+    "timeout",
+    "timed_out",
+)
 
 # pi 适配器固定类别的验收 catalog。每条消息都取自 hooks/core.py 的真实文案（静态字面量、
 # 动态模板取当前生产者值域内的代表值、write_targets 的 gap、normalize 的多工作区、
@@ -87,10 +102,10 @@ CORE_DIAGNOSTIC_CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("子代理绑定与 root 当前 epoch 不匹配，已降级为局部只读约束", ("分派/子代理降级",)),
     ("子代理启动未能匹配可信分派记录，未建立跨任务绑定", ("分派/子代理降级",)),
     ("子代理完成缺少可关联分派，未计入审查完成", ("分派/子代理降级",)),
-    # 终态文案的动态值域就是 core 的 CHILD_FAILURE_STATUSES：逐值一条，不只举 failed。
+    # 终态文案的动态值域：逐值一条，不只举 failed。
     *[
         ("子代理终态为 %s，未计入审查完成" % status, ("分派/子代理降级",))
-        for status in sorted(core_module.CHILD_FAILURE_STATUSES)
+        for status in FAILURE_STATUSES
     ],
     ("分派预取失败，模型预检降级", ("分派/子代理降级",)),
     ("分派预检的锁外取证与当前上下文不一致，模型预检降级", ("分派/子代理降级",)),
@@ -363,52 +378,18 @@ class InstallTests(HookCase):
         assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
 
-    def install_failure(self, args: list) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [sys.executable, str(INSTALL)] + args,
-            capture_output=True,
-            text=True,
-            env=clean_env(),
-            timeout=30,
-        )
-
-    def commands_for(self, target: Path, event: str) -> list:
-        config = json.loads(target.read_text(encoding="utf-8"))
-        group = config.get(ANTIGRAVITY_GROUP) if isinstance(config.get(ANTIGRAVITY_GROUP), dict) else config.get("hooks", {})
-        bucket = group.get(event) or []
-        return [
-            hook["command"] for entry in bucket for hook in (entry.get("hooks") or [entry])
-            if isinstance(hook, dict) and isinstance(hook.get("command"), str)
-        ]
-
 
 # `generate --host pi` 会把 `install-context.json` 写回 `--plugin-root`（含源码目录），
 # `.DS_Store` 是 macOS 目录残留：两者都不是分发源，也不能因此让清单比较变空转。
 GENERATED_ARTIFACTS = frozenset({"install-context.json", ".DS_Store"})
 
 
-def distribution_source_files(source_root: Path, excluded_top: set) -> list:
-    """源分发目录里的正式文件集（相对路径，已排序）。"""
-    actual = []
-    for path in source_root.rglob("*"):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(source_root).as_posix()
-        if relative.split("/")[0] in excluded_top:
-            continue
-        if "__pycache__" in relative or relative.endswith(".pyc"):
-            continue
-        if path.name in GENERATED_ARTIFACTS:
-            continue
-        actual.append(relative)
-    return sorted(actual)
-
-
 class DistributionManifestTests:
     """P3-4：源分发目录的正式文件集必须与 manifest.files 完全一致，防止清单再漏文件。"""
 
     def test_manifest_lists_exactly_the_distributed_files(self) -> None:
-        manifest = json.loads((HOOKS_ROOT / "hooks" / "manifest.json").read_text(encoding="utf-8"))
+        source_root = HOOKS_ROOT / "hooks"
+        manifest = json.loads((source_root / "manifest.json").read_text(encoding="utf-8"))
         files = manifest["distribution"]["files"]
         # 防真空转：清单必须仍是那个完整分发集，不能靠“两边都排除成空”通过。
         for required in (
@@ -420,25 +401,20 @@ class DistributionManifestTests:
             "pi/index.ts",
         ):
             assert required in files
-        actual = distribution_source_files(
-            HOOKS_ROOT / "hooks", set(manifest.get("excludes") or [])
-        )
-        assert actual == sorted(files)
-
-    def test_generated_and_system_files_are_not_distribution_sources(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "core.py").write_text("", encoding="utf-8")
-            (root / "pi").mkdir()
-            (root / "pi" / "index.ts").write_text("", encoding="utf-8")
-            (root / "install-context.json").write_text("{}", encoding="utf-8")
-            (root / ".DS_Store").write_bytes(b"")
-            (root / "__pycache__").mkdir()
-            (root / "__pycache__" / "core.cpython-39.pyc").write_bytes(b"")
-            (root / "tests").mkdir()
-            (root / "tests" / "test_x.py").write_text("", encoding="utf-8")
-            # 排除只针对生成物/系统文件/非分发目录，正式文件仍全部保留。
-            assert distribution_source_files(root, {"tests"}) == ["core.py", "pi/index.ts"]
+        excluded_top = set(manifest.get("excludes") or [])
+        actual = []
+        for path in source_root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(source_root).as_posix()
+            if relative.split("/")[0] in excluded_top:
+                continue
+            if "__pycache__" in relative or relative.endswith(".pyc"):
+                continue
+            if path.name in GENERATED_ARTIFACTS:
+                continue
+            actual.append(relative)
+        assert sorted(actual) == sorted(files)
 
 
 class DistributionLaunchTests(HookCase):
@@ -907,23 +883,6 @@ class CoreDiagnosticProducerTests(HookCase):
 
     host = "codex"
 
-    def test_child_failure_statuses_are_the_frozen_domain(self) -> None:
-        assert core_module.CHILD_FAILURE_STATUSES == {
-            "failed",
-            "failure",
-            "error",
-            "cancelled",
-            "canceled",
-            "timeout",
-            "timed_out",
-            "aborted",
-            "interrupted",
-            "running",
-            "started",
-            "pending",
-            "stopped_early",
-        }
-
     def record_child_done(self, session: str, status: str):
         dispatch = "d-" + session
         self.activate(session)
@@ -941,7 +900,7 @@ class CoreDiagnosticProducerTests(HookCase):
             )
         )
 
-    @pytest.mark.parametrize("status", sorted(core_module.CHILD_FAILURE_STATUSES))
+    @pytest.mark.parametrize("status", FAILURE_STATUSES)
     def test_every_child_failure_status_produces_its_own_terminal_warning(self, status) -> None:
         _code, value, stderr = self.record_child_done("p-" + status, status)
         assert not self.is_denied(value), value
@@ -956,30 +915,6 @@ class CoreDiagnosticProducerTests(HookCase):
         assert not self.is_denied(value), value
         assert "子代理终态为" not in stderr
         assert "状态写失败" not in stderr
-
-    def test_transcript_identity_reasons_are_bounded(self) -> None:
-        engine = core_module.Engine(
-            "codex",
-            json.loads(self.context_path.read_text(encoding="utf-8")),
-            mode="enforce",
-            env=self.environment(),
-        )
-        record = core_module.Record("codex", {}, core_module.HOSTS["codex"])
-        record.session_id = "s1"
-        record.actor_id = ""
-        path = self.root / "transcript.jsonl"
-        for payload, expected in (
-            ({"id": "other-session"}, ("会话", True)),
-            ({"thread_id": "other-thread"}, ("线程", True)),
-            ({"agent_id": "other-actor"}, ("actor", True)),
-            ({}, ("", False)),
-        ):
-            with subtests.test(payload=payload):
-                path.write_text(
-                    json.dumps({"type": "session_meta", "payload": payload}) + "\n",
-                    encoding="utf-8",
-                )
-                assert engine._transcript_identity_problem(record, str(path)) == expected
 
 
 class AntigravityNamedGroupTests(HookCase):

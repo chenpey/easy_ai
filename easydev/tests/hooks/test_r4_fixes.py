@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
+import contextlib
 import fcntl
+import io
 import json
 import os
 import stat
@@ -20,10 +22,20 @@ from pathlib import Path
 from conftest import subtests
 from support import HOOKS_ROOT, HookCase
 
-if str(HOOKS_ROOT) not in sys.path:
-    sys.path.insert(0, str(HOOKS_ROOT))
+EXPERIMENTS_ROOT = HOOKS_ROOT / "tests" / "experiments"
+for _root in (HOOKS_ROOT, EXPERIMENTS_ROOT):
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
-from hooks import transcripts  # noqa: E402
+import role_metric  # noqa: E402
+
+
+def run_metric_cli(host: str, path: str, *extra: str) -> dict:
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        code = role_metric.main(["--host", host, "--transcript", path, *extra, "--json"])
+    assert code == 0
+    return json.loads(stdout.getvalue())[0]
 
 
 def task_states(state_dir: Path):
@@ -683,11 +695,6 @@ class S11DispatchConflictTests(HookCase):
 class S12ExecOutcomeTests(HookCase):
     host = "codex"
 
-    def set_models(self):
-        path = self.root / "models.json"
-        path.write_text(json.dumps(valid_models()), encoding="utf-8")
-        return path
-
     @pytest.mark.parametrize("exit_code, confirmed", [(2, False), (1, False), (0, True)])
     def test_codex_command_execution_exit_code_wins(self, exit_code, confirmed) -> None:
         path = self.root / ("exec-%s.jsonl" % exit_code)
@@ -706,9 +713,8 @@ class S12ExecOutcomeTests(HookCase):
         path.write_text(
             "\n".join(json.dumps(entry) for entry in entries) + "\n", encoding="utf-8"
         )
-        records, _warnings = transcripts.codex_records(str(path))
-        assert len(records) == 1
-        assert bool(records[0]["confirmed"]) == confirmed, exit_code
+        row = run_metric_cli("codex", str(path))
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": confirmed}], exit_code
 
     def test_codex_command_execution_without_success_flag_is_not_confirmed(self) -> None:
         path = self.root / "exec-nofield.jsonl"
@@ -722,9 +728,8 @@ class S12ExecOutcomeTests(HookCase):
             + "\n",
             encoding="utf-8",
         )
-        records, _warnings = transcripts.codex_records(str(path))
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
+        row = run_metric_cli("codex", str(path))
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
 
     def test_antigravity_success_status_cannot_override_is_error(self) -> None:
         path = self.root / "ag-conflict.jsonl"
@@ -742,9 +747,8 @@ class S12ExecOutcomeTests(HookCase):
         path.write_text(
             "\n".join(json.dumps(entry) for entry in entries) + "\n", encoding="utf-8"
         )
-        records, _warnings = transcripts.antigravity_records(str(path))
-        assert len(records) == 1
-        assert not records[0]["confirmed"]
+        row = run_metric_cli("antigravity", str(path))
+        assert row["file_access"] == [{"path": "/w/a.py", "confirmed": False}]
 
     def test_failed_exec_does_not_activate_via_skill_read(self) -> None:
         transcript = self.root / "exec-skill.jsonl"
@@ -904,10 +908,8 @@ class S14TranscriptCwdTests(HookCase):
 
     def test_codex_shell_read_uses_parser_cwd(self) -> None:
         path = self.codex_cd_transcript()
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert records[0]["paths"] == ["/w/sub/a.py"]
-        assert records[0]["confirmed"]
+        row = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/sub/a.py", "confirmed": True}]
 
     def test_antigravity_shell_read_uses_parser_cwd(self) -> None:
         path = self.write_transcript(
@@ -927,9 +929,8 @@ class S14TranscriptCwdTests(HookCase):
                 {"type": "TOOL_RESULT", "tool_results": [{"id": "c1", "status": "success"}]},
             ]
         )
-        records, _warnings = transcripts.antigravity_records(path)
-        assert len(records) == 1
-        assert records[0]["paths"] == ["/w/sub/a.py"]
+        row = run_metric_cli("antigravity", path)
+        assert row["file_access"] == [{"path": "/w/sub/a.py", "confirmed": True}]
 
     def test_wrapper_chdir_is_resolved_for_each_read(self) -> None:
         path = self.write_transcript(
@@ -955,9 +956,8 @@ class S14TranscriptCwdTests(HookCase):
                 },
             ]
         )
-        records, _warnings = transcripts.codex_records(path)
-        assert len(records) == 1
-        assert records[0]["paths"] == ["/w/sub/a.py"]
+        row = run_metric_cli("codex", path)
+        assert row["file_access"] == [{"path": "/w/sub/a.py", "confirmed": True}]
 
     def test_antigravity_uses_each_calls_own_cwd(self) -> None:
         path = self.write_transcript(
@@ -995,27 +995,16 @@ class S14TranscriptCwdTests(HookCase):
                 },
             ]
         )
-        records, _warnings = transcripts.antigravity_records(path)
-        assert len(records) == 2
-        assert [record["paths"] for record in records] == [["/w/other/a.py"], ["/w/a.py"]]
+        row = run_metric_cli("antigravity", path)
+        assert [item["path"] for item in row["file_access"]] == ["/w/other/a.py", "/w/a.py"]
 
     def test_role_metric_respects_transcript_cwd_unless_explicit(self) -> None:
-        experiments = HOOKS_ROOT / "tests" / "experiments"
-        if str(experiments) not in sys.path:
-            sys.path.insert(0, str(experiments))
-        import role_metric  # noqa: E402
-
         path = self.codex_cd_transcript("cwd-metric")
-        rows, _warnings = role_metric.collect_transcripts(
-            "codex", Path(path), [], [], {}, None
-        )
-        paths = [item["path"] for item in rows[0]["file_access"]]
-        assert paths == ["/w/sub/a.py"]
+        row = run_metric_cli("codex", path)
+        assert [item["path"] for item in row["file_access"]] == ["/w/sub/a.py"]
         # 显式 --cwd 只作为相对路径基准，不能覆盖 parser 给出的绝对目标。
-        rows, _warnings = role_metric.collect_transcripts(
-            "codex", Path(path), [], [], {}, Path("/elsewhere")
-        )
-        assert [item["path"] for item in rows[0]["file_access"]] == ["/w/sub/a.py"]
+        row = run_metric_cli("codex", path, "--cwd", "/elsewhere")
+        assert [item["path"] for item in row["file_access"]] == ["/w/sub/a.py"]
 
 
 # ---------------------------------------------------------------------------

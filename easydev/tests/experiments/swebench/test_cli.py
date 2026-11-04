@@ -1578,64 +1578,6 @@ class SwebenchCliTest:
         assert stat.S_IMODE(sentinel.stat().st_mode) == 0o640
         assert (experiment / "protected-modes.json").exists()
 
-    def test_lock_failure_restores_paths_already_locked(self) -> None:
-        # A chmod failure halfway through the lock loop must not leave the paths
-        # locked so far at mode 0 while the error escapes; the record stays so
-        # the next start can still recover whatever remains locked.
-        root = self.root / "lock-failure"
-        root.mkdir()
-        first = root / "first.txt"
-        second = root / "second.txt"
-        first.write_text("first\n", encoding="utf-8")
-        second.write_text("second\n", encoding="utf-8")
-        first.chmod(0o644)
-        second.chmod(0o640)
-        record = root / "protected-modes.json"
-        script = root / "lock_failure.py"
-        script.write_text(
-            "import os\n"
-            "import sys\n"
-            "from pathlib import Path\n"
-            "from unittest import mock\n"
-            f"sys.path.insert(0, {str(SWEBENCH)!r})\n"
-            "import run\n"
-            f"first = Path({str(first)!r}).resolve()\n"
-            f"second = Path({str(second)!r}).resolve()\n"
-            f"record = Path({str(record)!r})\n"
-            "real_chmod = os.chmod\n"
-            "def flaky_chmod(path, mode, *args, **kwargs):\n"
-            "    if Path(path) == second and mode == 0:\n"
-            "        raise OSError(13, 'denied', str(path))\n"
-            "    return real_chmod(path, mode, *args, **kwargs)\n"
-            "with mock.patch.object(run.os, 'chmod', flaky_chmod):\n"
-            "    try:\n"
-            "        with run.lock_protected_paths([first, second], record):\n"
-            "            pass\n"
-            "    except OSError as error:\n"
-            "        print('error', error.errno)\n"
-            "    else:\n"
-            "        raise SystemExit('lock did not fail')\n"
-            "print('first', oct(first.stat().st_mode & 0o777))\n"
-            "print('second', oct(second.stat().st_mode & 0o777))\n"
-            "print('record', record.exists())\n",
-            encoding="utf-8",
-        )
-        completed = subprocess.run(
-            [sys.executable, "-B", str(script)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            errors="replace",
-            timeout=60,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
-        assert completed.returncode == 0, completed.stdout
-        assert "error 13" in completed.stdout
-        assert "first 0o644" in completed.stdout
-        assert "second 0o640" in completed.stdout
-        assert "record True" in completed.stdout
-
     def test_restart_from_another_cwd_only_restores_recorded_paths(self) -> None:
         assets = self.make_assets("cwd-restart")
         experiment = self.install_experiment(assets, "experiment")

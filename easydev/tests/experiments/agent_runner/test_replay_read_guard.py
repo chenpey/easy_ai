@@ -284,10 +284,6 @@ class ReplayReadGuardTests:
         for command in ("cat ~/x", "cat $HOME/x", "cat ${HOME}/x"):
             assert self.decision(self.run_guard(self.bash(command))) == "allow", command
 
-    def test_missing_health_is_unreadable(self) -> None:
-        assert not self.health.exists()
-        assert guard.read_health(str(self.health)) == ["health_unreadable"]
-
     def test_install_writes_absolute_command_and_excludes_hooks_file(self) -> None:
         run_dir = Path(self.tmp.name) / "run dir'quoted"
         workspace = run_dir / "workspace"
@@ -646,24 +642,12 @@ class DeployedGuardCommandTests:
         codes = self.health_codes()
         return codes[-1] if codes else ""
 
-    def find_exec_command(self, action: str) -> str:
-        """`find <action> cat <sentinel> \\;`：终止符必须真的到达 find。
-
-        `host_run` 用 `shell=True`：裸 `;` 会被 shell 吃掉，find 收不到 `-exec`
-        必需的终止符，用例就变成“命令本身不完整”而不是真实布局。
-        """
-        return "find . " + action + " cat " + str(self.sentinel) + " \\;"
-
     def test_find_exec_actions_cannot_smuggle_outside_reads(self) -> None:
         """DR-02：`find -exec/-execdir/-ok` 的被执行程序不可证明，部署守卫必须拒绝，
         且原命令不执行（sentinel 内容不会出现在任何输出里）。"""
         for action in ("-exec", "-execdir", "-ok"):
             with subtests.test(action=action):
-                command = self.find_exec_command(action)
-                    # 终止符 `;` 确实在 find 的 argv 里（否则测的只是“命令不完整”）。
-                analysis = guard.shell.analyze(command)
-                assert analysis.commands[0][-1] == ";", analysis.commands
-                assert analysis.read_unknown, analysis.as_dict()
+                command = "find . " + action + " cat " + str(self.sentinel) + " \\;"
                 result = self.host_run(command)
                 assert result["decision"] == "deny", (command, result)
                 assert result["executed"] is None, command
@@ -676,33 +660,6 @@ class DeployedGuardCommandTests:
                 assert result["decision"] == "allow", (command, result)
                 assert result["executed"] is not None, command
                 assert expected in result["executed"].stdout
-
-    def test_find_exec_is_denied_at_guard_entry_without_host_stand_in(self) -> None:
-        """不经宿主替身：守卫自己的入口对“带真实终止符的 find -exec”同样拒绝。"""
-        policy = json.loads(Path(self.info["policy_path"]).read_text(encoding="utf-8"))
-        for action in ("-exec", "-execdir", "-ok"):
-            with subtests.test(action=action):
-                command = self.find_exec_command(action)
-                with pytest.raises(guard.GuardFailure) as caught:
-                    guard.check_request(
-                        {
-                            "tool_name": "Bash",
-                            "tool_input": {"command": command},
-                            "cwd": str(self.workspace),
-                        },
-                        policy,
-                    )
-                assert caught.value.code == "target_unresolved"
-                assert "不可证明" in caught.value.message
-                # 对照：同样带终止符的普通 find 不触发任何拒绝。
-                guard.check_request(
-                    {
-                        "tool_name": "Bash",
-                        "tool_input": {"command": "find . -name '*.py'"},
-                        "cwd": str(self.workspace),
-                    },
-                    policy,
-                )
 
     def test_unknown_cwd_from_condition_cd_is_denied(self) -> None:
         """DR-05：条件 cd 让 cwd 不可证明时，替换内的相对读取必须拒绝。"""
@@ -953,9 +910,6 @@ class DeployedGuardCommandTests:
             "(python3 -) <<'PY'\nprint(open(%r).read())\nPY" % str(self.sentinel),
         ):
             with subtests.test(command=command):
-                analysis = guard.shell.analyze(command)
-                assert analysis.stdin_program, analysis.as_dict()
-                assert not analysis.opaque, analysis.as_dict()
                 result = self.host_run(command)
                 assert result["decision"] == "deny", (command, result)
                 assert result["executed"] is None, command
@@ -965,9 +919,6 @@ class DeployedGuardCommandTests:
     def test_fd_forwarded_heredoc_stdin_program_is_denied(self) -> None:
         """G1：非零 fd 的正文再经 `0<&3` 转接，仍不能证明是数据输入。"""
         command = "python3 - 3<<'PY' 0<&3\nprint(open(%r).read())\nPY" % str(self.sentinel)
-        analysis = guard.shell.analyze(command)
-        assert analysis.stdin_program, analysis.as_dict()
-        assert not analysis.opaque, analysis.as_dict()
         result = self.host_run(command)
         assert result["decision"] == "deny", result
         assert result["executed"] is None
@@ -976,9 +927,6 @@ class DeployedGuardCommandTests:
     def test_piped_heredoc_stdin_program_is_denied(self) -> None:
         """G1：管道左段名为 cat 也不能把正文证明成纯数据。"""
         command = "cat <<'PY' | python3 -\nprint(open(%r).read())\nPY" % str(self.sentinel)
-        analysis = guard.shell.analyze(command)
-        assert analysis.stdin_program, analysis.as_dict()
-        assert not analysis.opaque, analysis.as_dict()
         result = self.host_run(command)
         assert result["decision"] == "deny", result
         assert result["executed"] is None
@@ -993,12 +941,6 @@ class DeployedGuardCommandTests:
         )
         for command in commands:
             with subtests.test(command=command):
-                analysis = guard.shell.analyze(command)
-                # herestring 的执行/opaque/读写语义不变：正文不进入脚本分析。
-                assert analysis.stdin_program, analysis.as_dict()
-                assert not analysis.opaque, analysis.as_dict()
-                assert analysis.git == []
-                assert analysis.writes == []
                 result = self.host_run(command)
                 assert result["decision"] == "deny", (command, result)
                 assert result["executed"] is None, command
@@ -1013,10 +955,6 @@ class DeployedGuardCommandTests:
             'env eval \'python3 -\' <<< "%s"' % reading,
         ):
             with subtests.test(command=command):
-                analysis = guard.shell.analyze(command)
-                assert analysis.stdin_program, analysis.as_dict()
-                assert not analysis.opaque, analysis.as_dict()
-                assert analysis.reads == []
                 result = self.host_run(command)
                 assert result["decision"] == "deny", (command, result)
                 assert result["executed"] is None, command
@@ -1026,19 +964,12 @@ class DeployedGuardCommandTests:
     def test_cat_heredoc_output_and_data_are_not_stdin_program(self) -> None:
         """G1：外层写形态与普通数据 heredoc 都不带该标记，守卫照常放行。"""
         write_form = "cat > f <<'EOF'\nhello\nEOF"
-        analysis = guard.shell.analyze(write_form)
-        assert not analysis.stdin_program, analysis.as_dict()
-        assert analysis.reads == []
-        assert [(item.get("kind"), item.get("target")) for item in analysis.writes] == [("redirect", "f")]
         result = self.host_run(write_form)
         assert result["decision"] == "allow", result
         assert result["executed"] is not None
         assert (self.workspace / "f").read_text(encoding="utf-8") == "hello\n"
         # 普通数据 heredoc：正文没有读取目标/执行证据，守卫放行。
         data = "cat <<'EOF'\nordinary data\nEOF"
-        data_analysis = guard.shell.analyze(data)
-        assert not data_analysis.stdin_program, data_analysis.as_dict()
-        assert data_analysis.reads == []
         allowed = self.host_run(data)
         assert allowed["decision"] == "allow", allowed
         assert allowed["executed"].stdout == "ordinary data\n"

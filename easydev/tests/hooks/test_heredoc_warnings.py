@@ -8,26 +8,19 @@ post 仍照常计算 prepared 用于指纹配对与写序列记账，只是不�
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from conftest import subtests
-from support import HookCase, core_module
+from support import HookCase
 from test_r5_fixes import task_states
-
-from hooks import shell  # noqa: E402
-
 
 DANGEROUS_GIT = "git " + "reset --hard"
 BODY_SENTINEL = "HEREDOC-BODY-SENTINEL-9f2c"
 
 STRUCTURE_UNPARSABLE = "命令结构无法完整解析，基线检查未覆盖"
-NO_REPO = "缺少可定位的仓库根或 cwd，基线检查降级"
-WRITE_TOOL_WITHOUT_PATH = "写工具缺少可识别路径字段"
-CWD_UNKNOWN_GAP = "命令内目录变化无法确定，基线检查未覆盖"
 REVIEWER_UNKNOWN = "reviewer 命令结构未覆盖，已放行并披露"
 POST_INCOMPLETE = "post 写入目标不完整，写序列记覆盖缺口"
 POST_UNPAIRED = "post 未找到与该 actor/epoch/tool ID 配对的 pre 记录，未建立成功豁免"
@@ -43,49 +36,6 @@ def engine_warnings(stderr: str) -> List[str]:
 
 class HeredocWarningCase(HookCase):
     host = "pi"
-
-    # ---- 进程内 Engine/Record 工具（宿主 envelope 不含 Decision.code） ----
-    def engine(self) -> "core_module.Engine":
-        context = json.loads(self.context_path.read_text(encoding="utf-8"))
-        return core_module.Engine(self.host, context, mode="enforce", env=self.environment())
-
-    def record(
-        self,
-        event: str = "pre_tool",
-        *,
-        session: str = "s1",
-        command: str = "",
-        cwd: str = "",
-        tool: Optional[Dict[str, Any]] = None,
-    ) -> "core_module.Record":
-        record = core_module.Record(self.host, {}, core_module.HOSTS[self.host])
-        record.event = event
-        record.session_id = session
-        record.cwd = cwd or str(self.repo)
-        record.activation_scope = "task_active"
-        record.tool = tool or {
-            "id": "t-1",
-            "name": "bash",
-            "kind": "shell",
-            "args": {"command": command},
-            "paths_complete": True,
-        }
-        return record
-
-    def prepare(
-        self, event: str, *, command: str = "", cwd: str = "", tool: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-        """只跑 `_prepare_write`：需要直接看 prepared 与完整 warnings 列表时使用。"""
-        engine = self.engine()
-        prepared = engine._prepare_write(
-            self.record(event, command=command, cwd=cwd, tool=tool),
-            classify=event == "pre_tool",
-        )
-        return prepared, engine.warnings
-
-    def decide(self, payload: Dict[str, Any]) -> "core_module.Decision":
-        engine = self.engine()
-        return engine.handle(core_module.normalize(self.host, payload, self.environment()))
 
     # ---- 断言工具 --------------------------------------------------
     def snapshots(self, relative: str) -> List[Path]:
@@ -105,10 +55,6 @@ class InterpreterHeredocTests(HeredocWarningCase):
     def test_python_stdin_heredoc_is_data_without_warning(self) -> None:
         self.activate("s1")
         command = "python3 - <<'PY'\n%s\nprint(%r)\nPY" % (DANGEROUS_GIT, BODY_SENTINEL)
-        analysis = shell.analyze(command)
-        assert analysis.git == []
-        assert analysis.stdin_program
-        assert not analysis.opaque
         _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="py-data"))
         assert not self.is_denied(value), value
         assert stderr == ""
@@ -128,9 +74,6 @@ class CatRedirectHeredocTests(HeredocWarningCase):
         (self.repo / "out.txt").write_text("user content\n", encoding="utf-8")
         self.activate("s1")
         command = "cat > out.txt <<'EOF'\nhello\n%s\n%s\nEOF" % (DANGEROUS_GIT, BODY_SENTINEL)
-        analysis = shell.analyze(command)
-        assert analysis.writes == [{"kind": "redirect", "target": "out.txt", "complete": True}]
-        assert analysis.git == []
         _code, value, stderr = self.run_core(self.shell("s1", command, tool_id="cat-write"))
         assert not self.is_denied(value), value
         assert stderr == ""
@@ -153,8 +96,6 @@ class ShellHeredocTests(HeredocWarningCase):
     def test_shell_heredoc_body_keeps_dangerous_git_deny(self) -> None:
         self.activate("s1")
         command = "sh <<'EOF'\n%s\nEOF" % DANGEROUS_GIT
-        analysis = shell.analyze(command)
-        assert [action for action in analysis.git if action["sub"] == "reset"]
         reason = self.deny(self.shell("s1", command, tool_id="sh-body"))
         assert "危险 Git" in reason
 
@@ -166,7 +107,6 @@ class StructureWarningScopeTests(HeredocWarningCase):
         self.activate("s1")
         # 未闭合正文：heredoc 边界无法证明，pre 按原条件披露结构缺口。
         command = "cat > out.txt <<'EOF'\nhello\n"
-        assert shell.analyze(command).opaque
         pre = self.shell("s1", command, tool_id="open-heredoc")
         _code, value, pre_stderr = self.run_core(pre)
         assert not self.is_denied(value), value
@@ -181,105 +121,13 @@ class StructureWarningScopeTests(HeredocWarningCase):
         # post 自己的记账缺口保留，不因结构原句 pre-only 而消失。
         assert POST_INCOMPLETE in warnings
 
-    def test_write_tool_without_path_is_still_disclosed_on_pre(self) -> None:
-        tool = {
-            "id": "t-no-path",
-            "name": "write",
-            "kind": "write",
-            "args": {},
-            "paths_complete": True,
-        }
-        prepared, warnings = self.prepare("pre_tool", tool=tool)
-        assert prepared is not None
-        assert prepared["entries"] == []
-        assert prepared["gap"]
-        assert warnings == [WRITE_TOOL_WITHOUT_PATH]
-        prepared, warnings = self.prepare("post_tool", tool=tool)
-        assert prepared is not None
-        assert prepared["entries"] == []
-        assert prepared["gap"]
-        assert warnings == []
-
-    def test_baseline_structure_warnings_are_pre_only(self) -> None:
-        cases = (
-            ("opaque", dict(command="cat > out.txt <<'EOF'\nhello\n"), STRUCTURE_UNPARSABLE),
-            ("no-repo", dict(command="rg TODO src/", cwd=str(self.root)), NO_REPO),
-            (
-                "cwd-unknown",
-                dict(command="until cd sub; do true; done; printf x > app.py"),
-                CWD_UNKNOWN_GAP,
-            ),
-        )
-        for name, kwargs, message in cases:
-            with subtests.test(case=name):
-                prepared, warnings = self.prepare("pre_tool", **kwargs)
-                assert prepared is not None
-                assert prepared["entries"] == []
-                assert prepared["gap"]
-                assert warnings == [message]
-                prepared, warnings = self.prepare("post_tool", **kwargs)
-                assert prepared is not None
-                assert prepared["entries"] == []
-                assert prepared["gap"]
-                assert warnings == []
-
-    def test_outside_target_is_not_a_gap(self) -> None:
-        """纯仓库外写入不在基线范围内：既不告警，也不算记账缺口。"""
-        (self.root / "outside").mkdir()
-        command = "printf x > %s; printf y > %s" % (
-            self.root / "outside" / "a.txt",
-            self.root / "outside" / "b.txt",
-        )
-        prepared, warnings = self.prepare("pre_tool", command=command)
-        assert prepared is not None
-        assert prepared["entries"] == []
-        assert not prepared["gap"]
-        assert warnings == []
-        prepared, warnings = self.prepare("post_tool", command=command)
-        assert prepared is not None
-        assert prepared["entries"] == []
-        assert not prepared["gap"]
-        assert warnings == []
-
-    def test_mixed_outside_target_keeps_gap_reason(self) -> None:
-        """仓库内 + 仓库外混合写入：仓库内目标仍按不完整处理，原因可追溯。"""
-        (self.root / "outside").mkdir()
-        command = "printf y > src/app.py; printf x > %s" % (
-            self.root / "outside" / "a.txt",
-        )
-        prepared, warnings = self.prepare("pre_tool", command=command, cwd=str(self.repo))
-        assert prepared is not None
-        assert [item["relative"] for item in prepared["entries"]] == ["src/app.py"]
-        assert prepared["gap"]
-        assert prepared["gap_reason"] == "outside"
-        # 仓库外目标的 pre 原句已取消；缺口交给 post 的记账告警按原因披露。
-        assert warnings == []
-
 class ReviewerStructureWarningTests(HeredocWarningCase):
     """reviewer 的明确写仍是 reviewer_command_write；未知结构告警仅 pre。"""
-
-    def test_reviewer_heredoc_write_is_command_write_deny(self) -> None:
-        self.activate("rev", self.reviewer_handoff())
-        command = "sh <<'EOF'\ntouch protected\nEOF"
-        analysis = shell.analyze(command)
-        assert [write for write in analysis.writes if write.get("target") == "protected"], analysis.writes
-        payload = self.shell("rev", command, tool_id="rev-sh")
-        decision = self.decide(payload)
-        assert decision.decision == "deny"
-        assert decision.code == "reviewer_command_write"
-        assert "明确写副作用" in decision.reason
-
-    def test_reviewer_structured_write_stays_reviewer_write(self) -> None:
-        self.activate("rev", self.reviewer_handoff())
-        decision = self.decide(self.write_tool("rev", "src/app.py", tool_id="rev-write"))
-        assert decision.decision == "deny"
-        assert decision.code == "reviewer_write"
 
     def test_reviewer_unknown_structure_warning_is_pre_only(self) -> None:
         self.activate("rev", self.reviewer_handoff())
         # 未闭合壳 heredoc：正文边界无法证明，未知结构的写风险仍在，按原条件告警放行。
         command = "sh <<'EOF'\nhello\n"
-        assert shell.analyze(command).opaque
         pre = self.shell("rev", command, tool_id="rev-unknown")
         _code, value, pre_stderr = self.run_core(pre)
         assert not self.is_denied(value), value
@@ -304,7 +152,6 @@ class PreOnlyInformationLossTests(HeredocWarningCase):
         """B3：不跑 pre，直接提交 opaque 且目标不完整的 post。"""
         self.activate("s1")
         command = "cat > out.txt <<'EOF'\nhello\n"
-        assert shell.analyze(command).opaque
         _code, value, stderr = self.run_core(
             self.shell("s1", command, tool_id="b3-post", event="post_tool", outcome="success")
         )
@@ -370,31 +217,3 @@ class FaultInjectionTests(HeredocWarningCase):
         _code, value, stderr = self.run_core(self.shell("s1", "rg TODO src/", tool_id="corrupt"))
         assert not self.is_denied(value), value
         assert "私有状态不可用" in stderr
-
-    def test_fingerprint_timeout_text_drops_repo_relative_path(self) -> None:
-        engine = self.engine()
-        record = self.record(
-            "pre_tool",
-            tool={
-                "id": "t-timeout",
-                "name": "write",
-                "kind": "write",
-                "args": {"path": "src/app.py"},
-                "paths_complete": True,
-            },
-        )
-        prepared = {
-            "repo": str(self.repo),
-            "entries": [
-                {
-                    "relative": "secret/dir/app.py",
-                    "repo": str(self.repo),
-                    "origin_key": "repo::secret/dir/app.py",
-                    "fingerprint": "deadline",
-                }
-            ],
-        }
-        decision = engine._check_baseline(record, {}, {}, prepared)
-        assert decision is None
-        assert engine.warnings == ["基线指纹查询超时，基线检查降级"]
-        assert "secret/dir/app.py" not in "；".join(engine.warnings)

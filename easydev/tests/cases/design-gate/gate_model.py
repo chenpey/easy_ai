@@ -282,7 +282,6 @@ class Budget:
         self.open_findings = 0  # 未关闭的确认缺陷（含范围内 P2、验收缺口）
         # 未启用本环节时没有施工闸，直接按 full 其余流程施工。
         self.gate_open = not design_enabled
-        self.scope_expanded = False
         # 用户是否明确要求候选第二轮并接受「设计审查将无升版重审余量」
         self.candidate_second_opt_in = candidate_second_opt_in
         self.log = []
@@ -370,19 +369,7 @@ class Budget:
         self.gate_open = True
         self.log.append("gate open")
 
-    # 兼容：早期写法直接设 self.gate_open 时仍走同一断言。
-    def pass_gate(self) -> None:
-        self.open_gate()
-
     # --- 施工阶段 ---------------------------------------------------------
-    def expand_scope(self) -> None:
-        """施工中范围扩大后命中门控：停写，按升级进入重走设计闸。"""
-        if not self.gate_open:
-            raise RuleError("只有施工阶段的扩范围才走升级进入")
-        self.scope_expanded = True
-        self.gate_open = False
-        self.design_frozen = False
-
     def incremental_review(self) -> None:
         if not self.gate_open:
             raise RuleError("阶段增量审查须在施工闸之后")
