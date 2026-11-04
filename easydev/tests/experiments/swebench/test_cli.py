@@ -1828,16 +1828,13 @@ class SwebenchCliTest:
             statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
         )
         assert completed.returncode != 0, completed.stdout
-        # run.py enables filter="data" exactly when tarfile.data_filter
-        # exists (3.12+); the stdlib filter rejects the retarget before
-        # run.py's own member checks, while older Pythons reject the file
-        # member that would be written through the escaped link.
-        expected_reject = (
-            "outside the destination"
-            if hasattr(tarfile, "data_filter")
-            else "unsafe tar"
+        # Python 3.12.0~3.12.15's stdlib data_filter rejected the retarget with
+        # "outside the destination"; 3.12.16+ (CVE-2026-114583 fix) and older
+        # Pythons rely on run.py's own checks which reject it with "unsafe tar".
+        assert (
+            "outside the destination" in completed.stdout
+            or "unsafe tar" in completed.stdout
         )
-        assert expected_reject in completed.stdout
         assert not (self.run_path(experiment) / "evil").exists()
         assert external.read_text(encoding="utf-8") == "keep\n"
 

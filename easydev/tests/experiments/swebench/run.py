@@ -251,6 +251,14 @@ def _link_escape_reason(destination: Path, member: tarfile.TarInfo) -> Optional[
         return "empty or invalid link target"
     if os.path.isabs(linkname):
         return "link escapes destination"
+    parts = [p for p in linkname.replace("\\", "/").split("/") if p and p != "."]
+    seen_normal = False
+    for p in parts:
+        if p == "..":
+            if seen_normal:
+                return "link escapes destination"
+        else:
+            seen_normal = True
     target = destination / member.name
     # A symlink target is relative to the directory holding the link; a hardlink
     # target is relative to the archive root (tar semantics).
