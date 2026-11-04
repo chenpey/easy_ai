@@ -17,6 +17,7 @@
 | --- | --- | --- |
 | `public-contract-callers` | 公共契约变更、对象级所有权校验和调用方适配 | `bash tests/cases/public-contract-callers/run.sh` |
 | `version-gate` | `SKILL.md` 版本提取：合法、重复键（含双引号转义键）、错位、描述文本内的 `version:` 与非法引号；降级分支拒绝键转义 | `bash tests/cases/version-gate/run.sh` |
+| `models-config` | `scripts/models.py` 的配置 schema 与来源选择：非法键/角色/model/effort、`upgrades` 上限与相邻同值、无效文件不回退、`role_overrides` 空对象均拒绝；项目 > 用户 > 内置默认且文件不合并 | `bash tests/cases/models-config/run.sh` |
 | `design-gate` | normal 初审、至多一次局部 P2 修复与定向复审、转 full 继承已用轮次，以及独立设计环节的门控、账本、施工闸和可达性 | `bash tests/cases/design-gate/run.sh` |
 | `audit-overflow` | 23 条发现时正文 20 条、附录完整保留、溢出 P1 摘要与分片覆盖披露 | `bash tests/cases/audit-overflow/run.sh` |
 

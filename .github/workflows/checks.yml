@@ -28,6 +28,11 @@ jobs:
             command: bash easydev/tests/cases/version-gate/run.sh
             install_pyyaml: true
             timeout_minutes: 5
+          - name: 模型配置 schema 与来源选择
+            working_directory: .
+            command: bash easydev/tests/cases/models-config/run.sh
+            install_pyyaml: false
+            timeout_minutes: 5
           - name: 流程状态机与设计门禁
             working_directory: .
             command: bash easydev/tests/cases/design-gate/run.sh

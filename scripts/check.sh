@@ -276,6 +276,7 @@ files = [
     "easythink/SKILL.md",
     "easythink/CHANGELOG.md",
     "easythink/references/methods.md",
+    "easythink/references/safety.md",
     "easythink/references/examples.md",
     "easythink/tests/behavior.md"
 ] + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True))
@@ -334,7 +335,7 @@ print("OK: 所有 README bash 代码块语法均合法")
 '
 
 echo "=== 6. 模型配置内联示例校验（共享 validator） ==="
-# schema 与运行期共用 easydev/hooks/models.py：这里只负责从 README 提取示例，
+# schema 与 scripts/models.py 共用同一 validator：这里只负责从 README 提取示例，
 # 再断言示例演示的跨供应商升级形状；不再复制一份字段规则。
 python3 - <<'PY'
 import json, re, sys

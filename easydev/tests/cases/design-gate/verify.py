@@ -701,6 +701,30 @@ DOC_CONTRACT = [
         "做最小完整改动",
         ["工程实践"],
     ),
+    (
+        "environment 的来源优先级含文件不合并与不回退",
+        "easydev/references/environment.md",
+        "### 来源优先级",
+        ["对话字段覆盖", "文件不合并", "不静默回退"],
+    ),
+    (
+        "environment 的能力降级给出三档与审查包",
+        "easydev/references/environment.md",
+        "### 能力降级与审查包",
+        ["不同实例且上下文独立", "不同实例但继承上下文", "自查（非独立）", "审查包"],
+    ),
+    (
+        "environment 的敏感原内容保护给出权限与软链判定",
+        "easydev/references/environment.md",
+        "**敏感原内容保护**",
+        ["0700", "0600", "符号链接"],
+    ),
+    (
+        "environment 的工作区收尾须用户授权且不强推",
+        "easydev/references/environment.md",
+        "**收尾与集成**",
+        ["用户明确授权", "不代为决定", "git worktree remove"],
+    ),
 ]
 
 

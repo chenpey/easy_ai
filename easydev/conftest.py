@@ -1,4 +1,4 @@
-"""pytest 全局钩子：`subtests` 子用例聚合与 `setup_method` 失败后的清理兜底。
+"""pytest 全局钩子：`subtests` 子用例聚合。
 
 **子用例聚合**：数据驱动的用例常用「前置准备 + 循环 + 后置断言」结构。普通循环里
 第一个参数断言失败就会跳出函数，红跑时既看不出是哪个参数，也看不到同函数其余参数
@@ -18,11 +18,6 @@ for command in cases:
 已经发生的参数失败不会被后面的 skip 或循环外异常吞掉（循环外异常会与已记录的失败
 一并报告）。`KeyboardInterrupt`/`SystemExit` 保持原样中止。不在 pytest 用例调用
 阶段使用时退化为立即失败。
-
-**清理兜底**：pytest 的 xunit 钩子只在 `setup_method` 正常返回后才调用
-`teardown_method`，而 `self.defer(...)` 的清理登记在实例上；这里在 teardown 阶段
-补跑未执行的清理，避免夹具建到一半失败时把临时目录/模板仓库副本留在 /tmp。正常
-情况下 `teardown_method` 已清空登记表，本钩子是空操作。
 """
 
 from __future__ import annotations
@@ -122,15 +117,3 @@ def pytest_runtest_call(item):
     if subtests.skips:
         raise pytest.skip.Exception(subtests.skip_reason())
     return result
-
-
-def pytest_runtest_teardown(item, nextitem) -> None:
-    instance = getattr(item, "instance", None)
-    cleanups = getattr(instance, "_cleanups", None)
-    if not cleanups:
-        return
-    for cleanup in reversed(cleanups):
-        # 失败现场已经有一次异常在传播：清理失败不得掩盖原始失败。
-        with contextlib.suppress(Exception):
-            cleanup()
-    instance._cleanups = []
