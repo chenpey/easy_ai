@@ -25,10 +25,10 @@ SHELL_MODULE_NAME = "shell.py"
 
 
 def _find_hooks_root(start: str) -> Optional[str]:
-    """向上查找包含 `hooks/shell.py` 的源码树根；与安装目录名无关。"""
+    """向上查找包含 `shell.py` 的目录。"""
     current = start
     for _ in range(6):
-        if os.path.isfile(os.path.join(current, "hooks", SHELL_MODULE_NAME)):
+        if os.path.isfile(os.path.join(current, SHELL_MODULE_NAME)):
             return current
         parent = os.path.dirname(current)
         if parent == current:
@@ -38,7 +38,7 @@ def _find_hooks_root(start: str) -> Optional[str]:
 
 
 def _load_shell() -> Tuple[Any, str]:
-    """优先加载随守卫一起部署的副本；源码树内回退到 hooks 包。"""
+    """优先加载随守卫一起部署的副本；回退到当前实验目录的 shell.py。"""
     if os.path.isfile(os.path.join(GUARD_DIR, SHELL_MODULE_NAME)):
         if GUARD_DIR not in sys.path:
             sys.path.insert(0, GUARD_DIR)
@@ -54,11 +54,11 @@ def _load_shell() -> Tuple[Any, str]:
     if root not in sys.path:
         sys.path.insert(0, root)
     try:
-        from hooks import shell as packaged  # type: ignore
+        import shell as packaged  # type: ignore
 
         return packaged, ""
     except (Exception, SystemExit) as error:
-        return None, "hooks 包无法导入（%s）" % error.__class__.__name__
+        return None, "shell 模块无法导入（%s）" % error.__class__.__name__
 
 
 shell, IMPORT_ERROR = _load_shell()

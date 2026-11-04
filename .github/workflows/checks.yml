@@ -62,12 +62,6 @@ jobs:
             command: python3 -m pytest tests/experiments/swebench
             install_pyyaml: false
             timeout_minutes: 10
-          - name: 可选 Hook Plugin 离线回归
-            install_pytest: true
-            working_directory: easydev
-            command: python3 -m pytest tests/hooks
-            install_pyyaml: false
-            timeout_minutes: 10
     steps:
       - name: 检出
         uses: actions/checkout@v4

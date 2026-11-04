@@ -157,8 +157,7 @@ groups = {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
         "README.md": ("easydev/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
         "SKILL.md": ("easydev/SKILL.md", None),
-        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
-        "hooks/manifest.json": ("easydev/hooks/manifest.json", r"^\s*\"release\":\s*\"([0-9]+\.[0-9]+\.[0-9]+)\"")
+        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明")
     }
 }
 
@@ -341,8 +340,8 @@ echo "=== 6. 模型配置内联示例校验（共享 validator） ==="
 python3 - <<'PY'
 import json, re, sys
 
-sys.path.insert(0, "easydev")
-from hooks import models
+sys.path.insert(0, "scripts")
+import models
 
 
 def fail(message):
@@ -401,13 +400,10 @@ for index, stage in enumerate(upgrades, 1):
 print("OK: easydev/README.md 内联示例符合共享模型 schema 与跨供应商升级示例")
 PY
 
-echo "=== 6b. Plugin 脚本、模板与分发契约静态检查 ==="
-# 只锁可机器判断的事实：语法、JSON 可解析、分发文件清单、pi 适配器契约与
-# 专用回放守卫的关键常量。字符串门禁不等于类型检查，也不证明宿主已加载。
+echo "=== 6b. Python 脚本与回放守卫静态检查 ==="
 python3 - <<'PY'
 import ast
 import glob
-import json
 import os
 import sys
 import warnings
@@ -425,10 +421,6 @@ def position(exc):
 
 for path in python_files:
     source = open(path, encoding="utf-8").read()
-    # 非法转义在 3.9–3.11 报 DeprecationWarning、3.12 起报 SyntaxWarning：两个类别都按
-    # 错误处理，且 ast.parse 与 compile 放进同一个 warnings 上下文，门禁才对同一份源码
-    # 在不同解释器上给出同样结论（不按 sys.version_info 分支）。其他 SyntaxWarning 保持
-    # 既有严格程度；只有非法转义这一个 DeprecationWarning 被升级。
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", SyntaxWarning)
@@ -442,126 +434,6 @@ for path in python_files:
     except SyntaxError as exc:
         errors.append(f"{path} 语法错误{position(exc)}: {exc}")
 
-for path in sorted(glob.glob("easydev/hooks/templates/*.json")) + ["easydev/hooks/manifest.json"]:
-    try:
-        with open(path, encoding="utf-8") as handle:
-            json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
-        errors.append(f"{path} 不是合法 JSON: {exc}")
-
-try:
-    with open("easydev/hooks/manifest.json", encoding="utf-8") as handle:
-        manifest = json.load(handle)
-    for key in ("name", "release", "protocol", "distribution"):
-        if key not in manifest:
-            errors.append(f"manifest.json 缺 {key}")
-    files = manifest.get("distribution", {}).get("files", [])
-    if not isinstance(files, list) or not files:
-        errors.append("manifest.json distribution.files 为空")
-    forbidden = [item for item in files if item.startswith("tests") or item in {"SKILL.md"} or item.startswith("references")]
-    if forbidden:
-        errors.append(f"Plugin 分发不得包含 Skill/tests: {forbidden}")
-    for required in ("core.py", "install.py", "pi/index.ts", "templates/codex.json"):
-        if required not in files:
-            errors.append(f"manifest.json 分发清单缺 {required}")
-except (OSError, json.JSONDecodeError) as exc:
-    errors.append(f"manifest.json 不可读: {exc}")
-
-required_events = ("SessionStart", "PreToolUse", "PostToolUse", "Stop")
-# Antigravity 官方两种事件数组结构：工具事件 Grouped（matcher + hooks[]），
-# 其余事件 Flat（直接是 handler 对象）；把非工具事件包一层就读不到 command。
-ANTIGRAVITY_TOOL_EVENTS = ("PreToolUse", "PostToolUse")
-
-
-def hook_buckets(path, template):
-    """Codex/DSH 用顶层 hooks；Antigravity 用唯一命名组 easydev-hooks。"""
-    hooks = template.get("hooks")
-    if isinstance(hooks, dict):
-        return hooks
-    named = template.get("easydev-hooks")
-    if isinstance(named, dict):
-        others = [key for key in template if key != "easydev-hooks"]
-        if others:
-            errors.append(f"{path} 命名 Hook 组之外还有顶层键: {others}")
-        return named
-    errors.append(f"{path} 缺 hooks 映射或 easydev-hooks 命名组")
-    return None
-
-
-for path in sorted(glob.glob("easydev/hooks/templates/*.json")):
-    try:
-        with open(path, encoding="utf-8") as handle:
-            template = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        continue
-    hooks = hook_buckets(path, template)
-    if hooks is None:
-        continue
-    events = list(required_events)
-    if path.endswith("antigravity.json"):
-        # 激活事件（PreInvocation）是 EasyDev 能否生效的前提，必须注册且为 Flat。
-        events.append("PreInvocation")
-    for event in events:
-        if event not in hooks:
-            errors.append(f"{path} 缺事件 {event}")
-            continue
-        flat = path.endswith("antigravity.json") and event not in ANTIGRAVITY_TOOL_EVENTS
-        for entry in hooks[event]:
-            if not isinstance(entry, dict):
-                errors.append(f"{path} 的 {event} 槽位条目必须是对象")
-                continue
-            if flat:
-                if isinstance(entry.get("hooks"), list):
-                    errors.append(
-                        f"{path} 的 {event} 是非工具事件，必须是 Flat handler 对象，不能再包 hooks 数组"
-                    )
-                elif entry.get("type") != "command" or not isinstance(entry.get("command"), str):
-                    errors.append(f"{path} 的 {event} 槽位必须是 {type: command, command: …} handler")
-            elif not isinstance(entry.get("hooks"), list):
-                errors.append(f"{path} 的 {event} 槽位条目必须是含 hooks 数组的匹配器对象")
-            elif "matcher" not in entry and path.endswith("antigravity.json"):
-                errors.append(f"{path} 的 {event} 槽位必须带 matcher")
-    text = json.dumps(template)
-    for token in ("additionalContext", "overwrite", "systemPrompt", "instructionsText"):
-        if token in text:
-            errors.append(f"{path} 含注入/覆写字段 {token}")
-
-pi_entry = "easydev/hooks/index.ts"
-pi_adapter = "easydev/hooks/pi/index.ts"
-for path in (pi_entry, pi_adapter):
-    if not os.path.isfile(path):
-        errors.append(f"缺少 pi 适配文件 {path}")
-if os.path.isfile(pi_entry):
-    entry_text = open(pi_entry, encoding="utf-8").read()
-    if 'export { default } from "./pi/index.ts"' not in entry_text:
-        errors.append("hooks/index.ts 必须只做 ./pi/index.ts 的薄入口")
-if os.path.isfile(pi_adapter):
-    adapter = open(pi_adapter, encoding="utf-8").read()
-    for needle in ('pi.on("input"', 'pi.on("tool_call"', 'pi.on("tool_result"', 'pi.on("agent_before_settle"'):
-        if needle not in adapter:
-            errors.append(f"pi 适配器缺 {needle}")
-    for needle in ("EXEC_TIMEOUT_MS = 2000", "MAX_BUFFER = 256 * 1024", "block: true", "catch"):
-        if needle not in adapter:
-            errors.append(f"pi 适配器缺契约: {needle}")
-    if "exec(" in adapter:
-        errors.append("pi 适配器不得使用 shell exec")
-
-core_source = open("easydev/hooks/core.py", encoding="utf-8").read()
-for name in ("normalize_antigravity", "normalize_codex", "normalize_dsh", "normalize_pi"):
-    if f"def {name}" not in core_source:
-        errors.append(f"core.py 缺宿主归一化 {name}")
-if '"force_ask"' not in core_source and "'force_ask'" not in core_source:
-    errors.append("core.py 缺 force_ask 适配语义")
-if 'add_argument("--event"' not in core_source:
-    errors.append("core.py 缺 --event（Antigravity stdin 不带事件名）")
-
-install_source = open("easydev/hooks/install.py", encoding="utf-8").read()
-for needle in ('subparsers.add_parser("generate")', 'subparsers.add_parser("apply")', 'subparsers.add_parser("uninstall")', 'subparsers.add_parser("prune")', '--output-root', 'default="enforce"', '"install_tests": False', '"install_skill": False', '--event %s', 'HOOK_EVENT_NAMES'):
-    if needle not in install_source:
-        errors.append(f"install.py 缺契约: {needle}")
-if "SKILL.md" in install_source or "tests/" in install_source:
-    errors.append("install.py 不得安装 Skill 或 tests")
-
 guard_source = open("easydev/tests/experiments/agent_runner/replay_read_guard.py", encoding="utf-8").read()
 for needle in ("DEFAULT_MAX_ENTRIES = 20000", "DEFAULT_DEADLINE_MS = 2000", "permissionDecision"):
     if needle not in guard_source:
@@ -571,7 +443,7 @@ if errors:
     for error in errors:
         print(f"Error: {error}", file=sys.stderr)
     sys.exit(1)
-print("OK: 全部 Python 文件语法与编译期告警、Plugin 模板/manifest JSON、分发清单与适配契约通过")
+print("OK: 全部 Python 文件语法与编译期告警、回放守卫契约通过")
 PY
 
 echo "=== 7. 规则同步脚本语法检查 ==="
@@ -731,31 +603,6 @@ if "端到端测试" not in skill_text or "不写单测" not in skill_text:
 
 if not errors:
     print(f"OK: 全局规则 AGENTS.md §5/§6 与 easydev 引用及 {len(sync_pairs)} 项核心口径同步")
-
-# Hook 契约：只锁可机器判断的事实，不用关键词模拟安全行为。
-# ① 模板不得含 SessionStart 注入/覆写字段，也不得替模型定档；
-# ② 可选 Plugin 不进入 Skill 安装集（manifest 与安装器都不含 SKILL/tests）；
-# ③ 核心不得出现自动档位选择开关。
-import glob as _glob
-import json as _json
-
-template_text = ""
-for _path in _glob.glob("easydev/hooks/templates/*.json"):
-    template_text += open(_path, encoding="utf-8").read()
-for _token in ("additionalContext", "overwrite", "systemPrompt", "instructionsText"):
-    if _token in template_text:
-        errors.append(f"Hook 模板出现 SessionStart 注入/覆写字段：{_token}")
-_manifest = _json.load(open("easydev/hooks/manifest.json", encoding="utf-8"))
-_manifest_files = _manifest.get("distribution", {}).get("files", [])
-if any(item.startswith(("tests", "references")) or item == "SKILL.md" for item in _manifest_files):
-    errors.append("Plugin 分发清单不得包含 Skill 或 tests")
-_install_source = open("easydev/hooks/install.py", encoding="utf-8").read()
-if "SKILL.md" in _install_source or "tests/" in _install_source:
-    errors.append("安装器不得安装 Skill 或 tests")
-_core_source = open("easydev/hooks/core.py", encoding="utf-8").read()
-for _token in ("auto_select", "auto_tier", "set_path"):
-    if _token in _core_source:
-        errors.append(f"Hook 核心出现自动定档开关：{_token}")
 
 if errors:
     for err in errors:

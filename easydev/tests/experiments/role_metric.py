@@ -28,11 +28,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-EASYDEV_ROOT = Path(__file__).resolve().parents[2]
-if str(EASYDEV_ROOT) not in sys.path:
-    sys.path.insert(0, str(EASYDEV_ROOT))
+EXPERIMENTS_ROOT = Path(__file__).resolve().parent
+if str(EXPERIMENTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(EXPERIMENTS_ROOT))
 
-from hooks import transcripts  # noqa: E402
+import transcripts  # noqa: E402
 
 REFERENCE_RE = re.compile(r"references/([A-Za-z0-9_.-]+\.md)")
 # 参数里出现路径键才算一次可见读取；payload 文本匹配比解析 JSON 宽容。

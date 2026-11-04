@@ -47,8 +47,6 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 模型、密钥、网络、沙箱与子代理能力由宿主提供。安装成功不代表宿主已经加载；能力要求与故障处理见 [环境适配](references/setup.md)。
 
-可选 Hook Plugin 独立于上述安装集，用于把可观测的 Git、脏目标首次快照、reviewer 只读、模型配置与交接、审后写提醒下沉为确定性检查；未激活会话在入口 O(1) 放行，未安装时 Skill 行为完全照旧。安装、能力差异与未验证项见 [Hooks Plugin](hooks/README.md)。
-
 ## 模型配置
 
 默认所有角色继承宿主，无须配置（等价于三者都写 `inherit`、`upgrades` 为空）。开发角色重视项目实现和工具执行，审查角色重视独立发现边界与失败路径，设计角色重视契约及权衡；按宿主实际支持的能力与 ID 选取，规则本身不固化供应商版本。
