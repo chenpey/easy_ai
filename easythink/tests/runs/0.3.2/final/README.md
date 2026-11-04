@@ -53,4 +53,4 @@
 - 本次仅覆盖 B/C/E 数据变体/H/I/J/L/M/BH-02A/NT-13 十项，不覆盖 BH-01 其他变体（A/D/F/G/K）、BH-02B、其余 NT/TR/BH 主用例；不构成全量回归或发布依据。
 - 10/10 为 final 快照同批显式读取后的结果；宿主自动触发（description 路由）未验证，显式读取快照后的回答不证明自动触发。
 - 私有 held-out 未执行（0/0）；PowerShell 安装块未运行（本机为 macOS/Linux）。
-- delegate 另附的 acceptance-report/自评块不计入用户回复，也未作为判定依据。完整覆盖状态与全量定义见[行为规约](../../../behavior.md#最近执行覆盖矩阵)。
+- delegate 另附的 acceptance-report/自评块不计入用户回复，也未作为判定依据。完整覆盖状态与全量定义见[回归记录](../../README.md#最近执行覆盖矩阵)。

@@ -151,7 +151,8 @@ groups = {
         "easythink README": ("easythink/README.md", r"^版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
         "SKILL.md": ("easythink/SKILL.md", None),
         "CHANGELOG.md": ("easythink/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
-        "tests/behavior.md": ("easythink/tests/behavior.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
+        # 回归记录从 behavior.md 拆到 tests/runs/README.md，版本仍取最新一行的日期行。
+        "tests/runs/README.md": ("easythink/tests/runs/README.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
     },
     "easydev": {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
@@ -279,7 +280,7 @@ files = [
     "easythink/references/safety.md",
     "easythink/references/examples.md",
     "easythink/tests/behavior.md"
-] + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True))
+] + sorted(glob.glob("easythink/tests/runs/**/*.md", recursive=True)) + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True))
 
 file_slugs = {f: extract_slugs(f) for f in files}
 link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -630,5 +631,10 @@ if [ "$TOTAL" -lt "$MAX_TOTAL" ]; then
   echo "提示: 总量低于棘轮 $((MAX_TOTAL - TOTAL)) 字节，可把 MAX_TOTAL 向下重设为 ${TOTAL}（并同步 CHANGELOG）"
 fi
 echo "OK: 规则文档总量未超棘轮 ($TOTAL ≤ $MAX_TOTAL)"
+
+echo "=== 11. EasyThink 行为规约一致性 ==="
+# 只校验可机械判定的部分：编号连续、覆盖矩阵对齐、全量范围一致、标签有定义、
+# README 判据与 SKILL 同源、回归记录版本与 SKILL 版本一致。
+python3 scripts/check_think_rubric.py
 
 echo "=== 全部自动化门禁检查通过 ==="
