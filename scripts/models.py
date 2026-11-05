@@ -11,7 +11,9 @@ import os
 import stat
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-EFFORTS = ("inherit", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+# 档位对齐宿主 thinking 集合（off 是非推理模型的唯一档位）；跨宿主映射在分派前核对，
+# 无宿主依据的 none/ultra 已移除，避免 schema 接受后无法映射。
+EFFORTS = ("inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max")
 MAX_CONFIG_BYTES = 512 * 1024
 REQUIRED_ROLES = ("developer", "reviewer")
 OPTIONAL_ROLES = ("designer",)

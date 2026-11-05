@@ -801,6 +801,33 @@ DOC_CONTRACT = [
         "**收尾与集成**",
         ["用户明确授权", "不代为决定", "git worktree remove"],
     ),
+    (
+        "施工闸按必关项放行，P3 不阻断",
+        "easydev/references/design.md",
+        "## 收敛与施工闸",
+        ["必关项", "P3 不构成停止条件"],
+        {"forbidden": ["范围内确认缺陷全部关闭"]},
+    ),
+    (
+        "重审前置只由必关项或契约变更触发",
+        "easydev/references/design.md",
+        "## 收敛与施工闸",
+        ["确认必关项（P0/P1、范围内 P2、验收缺口）", "仅保留不影响验收的 P3 不触发重审"],
+        {"forbidden": ["设计审查确认缺陷、设计契约不可行"]},
+    ),
+    (
+        "入口分流含用户要求独立审查信号",
+        "easydev/SKILL.md",
+        "## 入口与任务分流",
+        ["用户是否要求独立审查", "无第二视角信号"],
+    ),
+    (
+        "effort 档位与宿主 thinking 集合对齐",
+        "easydev/references/environment.md",
+        "### 字段规范",
+        ["off / minimal", "xhigh / max", "非推理模型只有"],
+        {"forbidden": ["ultra"]},
+    ),
 ]
 
 
@@ -930,7 +957,7 @@ def run_doc_contract_mechanism() -> None:
 
     print("=== 文档契约机制自检：变异必须被抓到 ===")
 
-    metric_sentence = "quick 计量仅在用户要求时提供。"
+    metric_sentence = "quick 计量仅在用户要求时提供（尝试次数与验证耗时）。"
 
     def move_metric(text: str) -> str:
         if metric_sentence not in text or "## 全程约束" not in text:

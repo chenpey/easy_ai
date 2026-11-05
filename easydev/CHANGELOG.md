@@ -2,6 +2,24 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.0 更新说明（2026-11-05）
+
+按审计结论修复宿主契约漂移、分档与施工闸口径、测试底线与交接可执行性。`models.json` schema 收紧：移除无宿主依据的 `none`/`ultra`，新增 `off`；修复 3 次、`d/3`、`r/5` 上限不放宽。
+
+- **宿主契约对齐**：`reasoning_effort` 枚举与宿主 thinking 集合对齐（`off/minimal/low/medium/high/xhigh/max`），明确须为目标宿主实际支持的档位、非推理模型只有 `off`；`scripts/models.py` 同步为唯一 schema，校验器拒绝 `ultra`。
+- **测试底线不放松**：仓库约定只可调整测试入口、命令与目录组织；测试层级（只写用户视角端到端、不写单测）与不用 mock 隔离内部不可让渡，冲突时暂停请示。补齐 AGENTS.md §6 的「先读仓库测试说明」与「不新写 `unittest.TestCase`」。
+- **分档与能力降级**：入口自问补第四条「用户是否要求独立审查」；quick 行补「无第二视角信号」；能力降级只约束需要独立设计、独立审查或指定模型委派的路径，普通 quick 不再因无子代理暂停。
+- **施工闸与完成判定**：施工闸、full 闭环与设计停止条件统一为「必关项（P0/P1、范围内 P2、验收缺口）」，不影响验收的 P3 记录后放行。
+- **复审与交接**：只有设计或实现实例审自己参与产出的版本算自查，独立审查实例可复审；主代理作唯一写入者不因此降级为自查；交接补宿主 agent 名映射，不把 `developer`/`designer` 当宿主 agent 名。
+- **预算与工作区**：尝试预算统一为「同一问题最多 3 次」；工作树创建给出可执行路径（主代理 `git worktree add`、委派用宿主工作树选项）与 `origin/<default>` 基准；任务目录不假设宿主必有 artifact/scratch 目录。
+- **候选评审与审计**：补齐 quick/normal 实现路径的方案对比预算（至多 2 轮，不占 `d`/`r`，转 full 记 `d/3`）；audit 路径要求核对宿主能力、枚举、路径与全局规则声明漂移；audit-only 的「深」以静态完整链路追踪代替动态验证并列出未覆盖范围。
+- **测试同步**：design-gate 文档契约 34 → 38 条（施工闸必关项、重审前置范围、入口第四信号、effort 档位）；models-config 增加 `off` 合法与 `ultra` 拒绝；`tests/behavior.md` 的 B01/B07/B13/B25/B51/B66 补对照。
+- **体积与上限**：`SKILL.md` 4200 → 4198 字节（入口上限 4200 不变）；规则正文合计 65301 字节。为落地上述审计修复，`MAX_TOTAL` 调整为 65301，后续 `SKILL.md` + `references/*.md` 合计不得超过 65301 字节。
+
+验证记录：`bash scripts/check.sh` 11 节全部通过（含链接/锚点、版本一致、MAX_TOTAL 棘轮、AGENTS.md §5/§6 同步）；design-gate 105/105、audit-overflow 16/16、models-config 26 项检查与来源选择全部通过、version-gate 通过、public-contract-callers 固定补丁红绿与 11 类伪修复拒绝通过；`python3 -m pytest` 192 passed（236s，pytest 8.4.2）。证据日志：/tmp/final_check.log、final_gate.log、final_models.log、final_ver.log、final_audit.log、final_pcc.log、final_pytest.log。
+
+未验证：`scripts/smoke-install.sh` 在本机被沙箱拒绝（`mktemp` 在 `$TMPDIR` 返回 Operation not permitted），本地未执行，由 CI 安装冒烟作业覆盖；未运行真实模型折叠/并行评测。
+
 ## 2.3.0 更新说明（2026-11-05）
 
 系统收敛规则边界，消除流程冲突，健全外发安全、执行回退与设计角色契约。`models.json` schema 与配置不变；尝试 3 次、`d/3`、`r/5` 上限不放宽。

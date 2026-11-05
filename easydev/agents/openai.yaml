@@ -1,3 +1,4 @@
+# 面向识别 interface 字段的 CLI（如 Codex）的展示元数据；pi 以 /skill:easydev 加载，忽略本文件。
 interface:
   display_name: "easydev · 编码全流程"
   short_description: "按风险组织设计、实现、排障与验证，内置审查规程和有限独立审查闭环"

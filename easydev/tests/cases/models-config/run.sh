@@ -130,6 +130,10 @@ check("缺必需角色被拒绝", lambda: reject_config({"developer": BASE["deve
 check("model 缺供应商被拒绝", lambda: reject_config(with_role("developer", model="gpt-6"), "完整 ID"))
 check("reasoning_effort 越界被拒绝",
       lambda: reject_config(with_role("reviewer", reasoning_effort="turbo"), "不在允许集合内"))
+check("非推理模型的 off 档合法",
+      lambda: accept_config(with_role("developer", reasoning_effort="off")))
+check("无宿主依据的 ultra 档被拒绝",
+      lambda: reject_config(with_role("reviewer", reasoning_effort="ultra"), "不在允许集合内"))
 check("designer 缺字段被拒绝",
       lambda: reject_config({**BASE, "designer": {"model": "inherit"}}, "缺少必需字段"))
 check("upgrades 超两项被拒绝", lambda: reject_config({
