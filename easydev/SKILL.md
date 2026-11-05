@@ -3,12 +3,12 @@ name: easydev
 description: >-
   编码、修复、重构、设计、计划、排障与审查；按风险选择 quick / normal / full。适用于 coding 或显式调用；纯解释及非编码请求不启动开发流程。
 metadata:
-  version: "2.0.1"
+  version: "2.1.0"
 ---
 
 # easydev
 
-子代理按交接履职，读 [开发角色](references/roles.md#开发角色) 或 [审查角色](references/roles.md#审查角色)；不分流、分派、重置预算或宣布完成。
+主代理默认唯一写入者，仅配置独立 developer 或进入升级阶段才委派开发者；子代理按交接履职，读 [开发角色](references/roles.md#开发角色) 或 [审查角色](references/roles.md#审查角色)；不分流、分派、重置预算或宣布完成。
 
 ## 入口与任务分流
 

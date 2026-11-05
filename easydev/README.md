@@ -1,8 +1,8 @@
 # EasyDev
 
-当前版本：`2.0.1`
+当前版本：`2.1.0`
 
-EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4 KiB，普通 quick 不加载完整编排；详细规则按需读取。
+EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4200 字节，普通 quick 不加载完整编排；详细规则按需读取。
 
 ## 使用
 
@@ -49,7 +49,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认所有角色继承宿主，无须额外配置（等价于各角色均设为 `inherit`、`upgrades` 为空）。
+默认所有角色继承宿主，无须额外配置（等价于各角色均设为 `inherit`、`upgrades` 为空）。`developer` 为 `inherit` 时由主代理写入；仅显式配置具体模型/深度或进入 `upgrades` 阶段才委派开发者，升级默认在原工作区串行交接。
 
 如果自行配置，**需要使用当前 Harness（宿主/运行环境，如 Antigravity、Codex 等）能识别的完整模型 ID 与供应商前缀**；原样照抄到没有对应 Provider 的宿主上，会在第一次分派时按 [模型配置](references/environment.md#模型配置) 暂停报受阻，不会静默回退到 `inherit`。规则本身不固化特定供应商版本。
 
