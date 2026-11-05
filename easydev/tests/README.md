@@ -12,7 +12,7 @@ bash tests/cases/version-gate/run.sh
 bash tests/cases/design-gate/run.sh
 bash tests/cases/audit-overflow/run.sh
 bash tests/cases/models-config/run.sh
-python3 -m pytest tests/experiments/test_role_metric.py -v
+python3 -m pytest tests/experiments/test_role_metric.py tests/experiments/test_design_gate.py -v
 python3 -m pytest tests/experiments/agent_runner -v
 python3 -m pytest tests/experiments/swebench -v
 ```
@@ -29,8 +29,9 @@ python3 -m pytest tests/experiments/swebench -v
 - **行为 runner CLI** (`tests/experiments/agent_runner/test_cli.py`)：`list` / `prepare` / `run` 的退出码与产物；B01 路由/状态标记/访问/ignored 文件/Git 配置负例、运行时随机完成标记（每次验收由环境变量传入，退出码 0 且 stdout 精确匹配才通过；伪造 `print("ok")` 后提前退出、只打印标记、直接 `raise SystemExit(0)`、多余 stdout 与 `PYTHONOPTIMIZE=1` 下文案未改均失败，正常改动及单引号/无空格变体通过）、运行时 Skill 篡改、普通/回退暂存与 assume-unchanged、缺 `turn.completed`、畸形事件、非零退出码、超时后进程组清理、捕获不执行 hook/filter；相对路径与认证链接、B02 高风险 full、quick/候选档位、未完成 reviewer、所有权校验及拒绝先读后鉴权、`sitecustomize` 不执行；B16 合格发现块与围栏/位置/排序/数量/读取负例；b67 与 b67-review 覆盖代码质量判据的实施与审查口径——写盘失败必须传到调用方、生成文件不手改、修复回退后回归测试必须失败，以及代价型 P3 必报、纯风格不报；public-contract-callers 的独立验收、保留文件与 benchmark 元数据负例。
 - **SWE-bench runner CLI** (`tests/experiments/swebench/test_cli.py`)：`setup` / `run` / `summarize` / `calibrate`；结果读取器对身份、事件计数、协议版本与 F2P/P2P 矛盾的拒绝；补丁应用失败（agent patch 与 test patch）的终态存储、`patch_apply_failures` 计数与重跑不调用模型；manifest 选择与报告计数、每任务 eligible/excluded P2P 披露（含 `|` 的 nodeid 在表格单元格内转义）；模板解包逃逸与合法链接/延迟目录属性；保护模式的收紧权限、损坏/软链记录、软链在 chmod 前被拒绝、父子顺序、失败结束与换 cwd 恢复；补丁采集不执行 Agent hook/filter；P2P 回归与每 arm 报告。
 - **事件归因 CLI** (`tests/experiments/swebench/test_analyze_cli.py`)：声明路径（含 normal 与升降级；中文「采用/分流/路径」与英文 `normal path`、`moved to the full route`，裸 `full path` 不误判、英文否定不误判）、真正 reviewer 交接与开发者提及/否定/禁读的区分、reviewer 完成与报告、P0–P3（发现须自成一行并以严重度起头，交接里复述模板不算发现）、文件/模块访问、usage/缓存率/耗时、零发现声明、畸形行容错、`receiver_thread_ids: null` 按缺失处理、`--output` 与 stdout 一致。
-- **流程状态机与独立设计环节的确定性复验** (`tests/cases/design-gate/run.sh`)：normal 一次不同实例审查、无审查/作者自查不可完成、首轮无缺陷不得发起复审、第三次审查被拒；首轮仅局部 P2 时一次局部修复加定向复审可交付（审查 2 次），复审仍未关闭转 full 且记 `r=2/5`，非局部 P2 首轮后转 full 且继承 `r=1/5`；门控五项判定 13 组 fixture（含「只交给独立审查者不构成多阶段」与「高风险但未改变行为/决策/数据流不启用」两个可达成性回归）；`d/3` 与 `r/5` 记账与上限；候选第二轮须用户 opt-in；升版重写不计轮；受阻轮不算缺陷已关闭；剩余 `r` 不足两轮禁止单开设计重审；阶段增量审查最多 3 轮；施工期 `d` 用尽停止；多方案任务六种组合的可达性枚举；文档契约 25 条（含局部 P2 判定条件、定向复审的直接调用方范围、「现成检查」口径、高风险边界实际影响判定、计量字段键序与角色分段、模型的来源优先级与能力降级三档），按小节作用域求值并支持禁用措辞（标题锚点按其层级截断，`###` 断言不会越到相邻 `###` 小节）；另有 5 组判负检查加 1 组文件作用域正例（共 6 组机制自检），保证“句子搬到邻节”“旧新措辞并存”会被判负，而允许跨节搬动的整份文件作用域不被误判。
+- **流程状态机与独立设计环节的确定性复验** (`tests/cases/design-gate/run.sh`)：normal 一次不同实例审查、无审查/作者自查不可完成、首轮无缺陷不得发起复审、第三次审查被拒；首轮仅局部 P2 时一次局部修复加定向复审可交付（审查 2 次），复审仍未关闭转 full 且记 `r=2/5`，非局部 P2 首轮后转 full 且继承 `r=1/5`；门控五项判定 13 组 fixture（含「只交给独立审查者不构成多阶段」与「高风险但未改变行为/决策/数据流不启用」两个可达成性回归）；`d/3` 与 `r/5` 记账与上限；候选第二轮须用户 opt-in；升版重写不计轮；受阻轮不算缺陷已关闭；剩余 `r` 不足两轮禁止单开设计重审；阶段增量审查最多 3 轮；施工期 `d` 用尽停止；多方案任务六种组合的可达性枚举；文档契约 34 条（含局部 P2 判定条件、定向复审的直接调用方范围、「现成检查」口径、高风险边界实际影响判定、计量字段键序与角色分段、模型的来源优先级与能力降级三档），按小节作用域求值并支持禁用措辞（标题锚点按其层级截断，`###` 断言不会越到相邻 `###` 小节）；另有 5 组判负检查加 1 组文件作用域正例（共 6 组机制自检），保证“句子搬到邻节”“旧新措辞并存”会被判负，而允许跨节搬动的整份文件作用域不被误判。
 - **回放读取守卫** (`tests/experiments/agent_runner/test_replay_read_guard.py`)：两个 canonical 允许根内放行；HOME 外 operator-config、sibling 前缀、软链、`..`、显式 `/etc`/`/usr` 读取拒绝；`rg --follow`/`find -L`/`ls -L` 固定拒绝；无链普通递归与含外链树的区别；入口预算/内部截止/畸形输入/缺 policy/结构化无路径均为 deny + 健康失败；生成 hooks.json 的绝对命令与 `.git/info/exclude`。
+- **流程边界与文档 CLI 回归** (`tests/experiments/test_design_gate.py`)：通过流程模型公开 API 检查当前委派条件、验收阶段门控、升版关闸、最终完整审查、依赖失效和历史预算；通过真实 `design-gate/run.sh` 检查隔离文档副本的规则退化被拒。只证明确定性约束，不模拟宿主调度或宣称真实模型通过。
 - **按角色计量** (`tests/experiments/test_role_metric.py`)：主代理与子代理分别归因；`--path` 过滤回答「哪个角色读了某个文件」；子代理只用无路径参数的外部委派工具时，stderr 给一行提示而不是默认「没读」；`--json` 可机器读取。
 - **normal 微闭环观测**（`tests/experiments/agent_runner/test_cli.py` 的 `b61` 用例）：按 `tests/behavior.md` 的 B61 三支判分——首轮无必关项或仅局部 P2 时终态 normal、独立审查 1–2 次、必须带回报告；首轮报 P0/P1、非局部 P2 或验收缺口时允许转 full，但必须有初始档位声明、起跳于 normal、升级前已有一份完成的审查报告、引用一条归因解析出的结构化缺陷，且 `r≤5`/`d≤3`；`details.normal_micro_loop` 区分「交付」与「按规升级」。另固定第三次审查、无声明、无报告即升级、无证据升级、超预算升级、quick 起跳、normal 内闭环 P0/P1、错误行为各自被拒，`不升级到 full` 与「不称 full 闭环」这类否定复述不被误判；复审是否读到调用方只记 detail。任务文本钉死 `float` 数值域与折扣方向（`discount` 为减免比例），两处都是实测逼出来的：不钉时升级链没有收口点，或两次回放各选一种读法导致样本报废。
 - **档位对照臂** (`tests/experiments/swebench/test_arms.py`)：三个 `easydev-*` 档位臂的 prompt 各自钉住档位且互不相同、auto 臂 prompt 不变、默认臂集合不变、未知臂在读取实验资产前被拒。
@@ -97,6 +98,7 @@ tests/
     ├── process_control.py
     ├── role_metric.py
     ├── test_role_metric.py
+    ├── test_design_gate.py
     ├── b67-replay/
     │   └── 2026-10-27/
     │       └── README.md

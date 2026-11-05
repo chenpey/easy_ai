@@ -1,8 +1,8 @@
 # EasyDev
 
-当前版本：`2.1.0`
+当前版本：`2.2.0`
 
-EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4200 字节，普通 quick 不加载完整编排；详细规则按需读取。
+EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4200 字节，普通 quick 不加载完整编排；详细规则按需读取。主代理默认唯一写入者；full 按配置与模型阶段委派，normal 保持单写。
 
 ## 使用
 
@@ -49,7 +49,7 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 
 ## 模型配置
 
-默认所有角色继承宿主，无须额外配置（等价于各角色均设为 `inherit`、`upgrades` 为空）。`developer` 为 `inherit` 时由主代理写入；仅显式配置具体模型/深度或进入 `upgrades` 阶段才委派开发者，升级默认在原工作区串行交接。
+默认所有角色继承宿主，无须额外配置（等价于各角色均设为 `inherit`、`upgrades` 为空）。full 在模型阶段 0 且 `developer` 的模型与深度均为 `inherit` 时可由主代理写入；显式模型/深度或 `upgrades` 阶段须委派，另可因上下文膨胀或已满足并行条件委派。交付阶段不等于模型阶段；升级暂停并行并串行交接。
 
 如果自行配置，**需要使用当前 Harness（宿主/运行环境，如 Antigravity、Codex 等）能识别的完整模型 ID 与供应商前缀**；原样照抄到没有对应 Provider 的宿主上，会在第一次分派时按 [模型配置](references/environment.md#模型配置) 暂停报受阻，不会静默回退到 `inherit`。规则本身不固化特定供应商版本。
 
@@ -109,6 +109,7 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [environmen
 - 缺独立能力时完成授权范围内自查，给可交接审查包并明确缺口；不能称独立审查通过或 full 闭环完成。不同实例继承上下文时披露隔离限制，见 [能力降级与审查包](references/environment.md#能力降级与审查包)。
 - audit 按模块或信任边界分片，记录覆盖与跨片接口；正文最多 20 条，全部发现保留附录/审查产物，关键缺陷不会因截断丢失。
 - 待审脚本执行与凭证隔离遵守 [审查规程](references/review.md#不可信代码执行)。保留用户改动；提交、推送、发布和对外动作遵循明确授权。
+- normal 单写、允许只读并行；full 可做审查流水线。并行写入须有对应宿主与任务类型的评测通过记录，未放行默认串行，隔离评测须明确授权；宽度默认不超过 3，规则见 [并行执行](references/workflow.md#并行执行)。
 
 ## 详细规则与维护
 
@@ -120,6 +121,6 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [environmen
 - [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选评审
 - [审查规程](references/review.md)：审查原则、强度分档与全仓审计规程
 - [环境与安全](references/environment.md)：模型配置、宿主能力降级、基线安全与工作区隔离
-- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[版本历史](CHANGELOG.md)
+- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[折叠评测](tests/experiments/fold-eval.md)（调整或废除子代理角色前的评测门槛）、[版本历史](CHANGELOG.md)
 
 `tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。

@@ -30,7 +30,7 @@ class RuleError(Exception):
 
 DESIGNER_PAUSED = "paused"  # 模型不可用 → 停在施工闸前，不回落
 DESIGNER_FALLBACK = "fallback"  # 无能力/禁止委派 → 主代理兜底，不记 d/r
-DESIGNER_MAIN_AGENT = "main_agent"  # inherit → 主代理设计，施工必须委派开发者
+DESIGNER_MAIN_AGENT = "main_agent"  # inherit → 主代理设计，不额外强制委派施工
 DESIGNER_DELEGATED = "delegated"  # 可用独立实例
 
 
@@ -70,16 +70,15 @@ def resolve_designer(
         }
     # 3) 有委派能力。
     if model == "inherit":
-        # 主代理亲自设计 → 施工必须委派开发者（不论 developer 配置）。
         return {
             "mode": DESIGNER_MAIN_AGENT,
             "counts_dr": True,
             "gate": "closed",
-            "must_delegate_developer": True,
+            "must_delegate_developer": bool(developer_non_inherit or in_upgrade_stage),
             "context_isolation": "isolated" if context_isolated else "limited",
-            "reason": "designer=inherit，主代理撰写 design.md，施工须委派独立开发者",
+            "reason": "主代理设计；施工是否必须委派由 developer 配置与模型升级阶段决定",
         }
-    # 独立设计实例：只解除「主代理兼任设计者」这一项，配置与升级仍须委派开发者。
+    # 设计者身份不改变施工的强制委派条件；可选委派由宿主编排决定。
     return {
         "mode": DESIGNER_DELEGATED,
         "counts_dr": True,
@@ -184,8 +183,12 @@ class NormalReviewFlow:
         findings: list[dict] | None = None,
     ) -> None:
         """记录一次已完成的定向审查：初审或局部 P2 修复后的复审。"""
+        if self.path != "normal":
+            raise RuleError("已转 full，不得继续 normal 审查")
         if self.review_count >= NORMAL_REVIEW_MAX_CAP:
             raise RuleError("normal 独立审查已达上限（至多 2 次），不得形成修复循环")
+        if self.prior_full_reviews + self.review_count >= R_CAP:
+            raise Stop("未完成", "历史审查与 normal 审查已用尽 r/5 预算")
         if self.review_count == 1 and not self.local_repair_done:
             raise RuleError("无缺陷或未做局部修复不得进行复审")
         if not instance_id.strip():
@@ -202,13 +205,12 @@ class NormalReviewFlow:
             if self._is_immediate_full(finding) or self._is_local_p2(finding)
         ]
         self.review_count += 1
+        self.r = self.prior_full_reviews + self.review_count
         self.reviewer_instance_id = instance_id
         self.report = report
         self.must_close_findings = must_close_findings
         if any(self._is_immediate_full(finding) for finding in must_close_findings):
             self.path = "full"
-            # 已完成的独立审查都计入进入 full 后的施工审核轮次。
-            self.r = self.prior_full_reviews + self.review_count
             return
         if must_close_findings and self.review_count == NORMAL_REVIEW_CAP:
             # 首轮仅局部 P2：留在 normal，等待一次局部修复与复审。
@@ -216,14 +218,19 @@ class NormalReviewFlow:
         if must_close_findings:
             # 复审仍未关闭：normal 不再发起第三次审查，转 full 并记 r=2。
             self.path = "full"
-            self.r = self.prior_full_reviews + self.review_count
 
     def record_repair(self, repair_diff: str = "") -> None:
         """记录 normal 内唯一一次局部修复尝试。"""
+        if self.path != "normal":
+            raise RuleError("已转 full，不得继续 normal 修复")
         if self.review_count != 1 or not self.must_close_findings:
             raise RuleError("仅在首轮审查存在局部 P2 时允许记录修复尝试")
         if self.local_repair_done:
             raise RuleError("normal 内至多允许一次局部修复尝试")
+        if self.repair_attempts >= 3:
+            raise Stop("未完成", "同一问题三次修复尝试已用尽")
+        if self.r >= R_CAP:
+            raise Stop("未完成", "无剩余复审轮次，不提交候选修复")
         self.local_repair_done = True
         self.repair_attempts += 1
 
@@ -256,7 +263,7 @@ def decide_gate(task: dict) -> dict:
         hits.append("跨边界")
     if task.get("public_contract") or task.get("persistent_data"):
         hits.append("公共契约或持久数据")
-    if task.get("multi_impl_instances") or task.get("independent_acceptance_stages", 0) >= 2:
+    if task.get("independent_acceptance_stages", 0) >= 2:
         hits.append("多阶段施工")
     if (task.get("candidate_options", 0) >= 2 and task.get("candidates_both_conditions")) or task.get(
         "user_requests_comparison"
@@ -287,6 +294,8 @@ class Budget:
         self.blocked = False
         self.rework_count = 0  # 升版次数；版本号 = 1 + rework_count
         self.open_findings = 0  # 未关闭的确认缺陷（含范围内 P2、验收缺口）
+        self.full_reviewed = False
+        self.review_current = False
         # 未启用本环节时没有施工闸，直接按 full 其余流程施工。
         self.gate_open = not self.design_enabled and not pure_design
         # 用户是否明确要求候选第二轮并接受「设计审查将无升版重审余量」
@@ -345,9 +354,8 @@ class Budget:
         self._spend_d("设计审查")
         self.design_reviewed = True
         self.open_findings += findings
-        if blocked:
-            # 受阻既不是通过也不是缺陷：不得据此认为「确认缺陷全部关闭」
-            self.blocked = True
+        # 新一轮结果替代旧的受阻状态，但不清除未关闭发现。
+        self.blocked = blocked
 
     def rework(self) -> None:
         """升版（v(N+1)）：实现者发现契约不可行，或施工审核发现根因在设计。
@@ -355,18 +363,27 @@ class Budget:
         重写本身不消耗 `d`；计入 `d` 的是重写之后的那一次设计审查。否则一次
         升版会吃掉两轮，与「设计审查 3 轮」的口径不符。
         """
-        if self.gate_open and self._r_left() < R_RESERVE:
+        self._require_design_phase("升版重审")
+        self.gate_open = False
+        self.full_reviewed = False
+        self.design_reviewed = False
+        self.design_frozen = False
+        self.record_change()
+        if self._r_left() < R_RESERVE:
             raise Stop(
                 "未完成",
                 f"剩余 r={self._r_left()} 不足两轮，不得单开设计重审——设计契约缺陷导致未完成",
             )
-        self.design_reviewed = False
-        self.design_frozen = False
         self.rework_count += 1
         self.log.append(f"design v{self.rework_count + 1} (rework, no round spent)")
 
     def resolve_findings(self, count: int | None = None) -> None:
+        self.record_change()
         self.open_findings = 0 if count is None else max(0, self.open_findings - count)
+
+    def record_change(self) -> None:
+        """实现、调用方或验证依赖变化：旧审查不再证明当前版本。"""
+        self.review_current = False
 
     def freeze(self) -> None:
         self._require_design_phase("冻结设计版本")
@@ -399,7 +416,9 @@ class Budget:
         if not self.gate_open:
             raise RuleError("完整初审须在施工闸之后")
         self._spend_r("完整初审")
+        self.full_reviewed = True
         self.open_findings += findings
+        self.review_current = self.open_findings == 0
         if findings and self._r_left() < 1:
             raise Stop("未完成", "完整初审报出缺陷但已无复审轮次")
 
@@ -408,12 +427,19 @@ class Budget:
             raise RuleError("纯 design 路径无独立设计施工审查环节，不得发起施工复审")
         if not self.gate_open:
             raise RuleError("复审须在施工闸之后")
+        if not self.full_reviewed:
+            raise RuleError("未经完整初审不得以复审替代")
         self._spend_r("复审")
         self.resolve_findings()
+        self.review_current = True
 
     def finish(self) -> str:
         if not self.gate_open:
             raise RuleError("未过施工闸不得宣称完成")
         if self.open_findings:
             raise Stop("未完成", f"仍有 {self.open_findings} 项未关闭")
+        if not self.full_reviewed:
+            raise RuleError("最终版本尚无完整施工审查")
+        if not self.review_current:
+            raise RuleError("最终修改尚未经审查")
         return "闭环完成"

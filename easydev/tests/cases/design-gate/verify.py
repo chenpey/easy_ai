@@ -84,9 +84,9 @@ GATE_CASES = [
     ("跨一个额外包", {"packages": 2}, (True, ["跨边界"])),
     ("越过接口层边界", {"packages": 1, "layers_crossed": 1}, (True, ["跨边界"])),
     (
-        "两个实施实例接力",
+        "仅两个实施实例接力，不增加独立验收阶段",
         {"multi_impl_instances": True},
-        (True, ["多阶段施工"]),
+        (False, []),
     ),
     (
         "两个独立验收阶段",
@@ -493,9 +493,9 @@ def run_normal_cases() -> None:
 
 HOST_CASES = [
     (
-        "inherit + 有委派：主代理设计，施工必须委派开发者",
+        "inherit + 有委派：主代理设计，阶段 0 可自行施工",
         dict(model="inherit"),
-        dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=True),
+        dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=False),
     ),
     (
         "inherit + 无委派：走无能力兜底，不记 d/r",
@@ -530,7 +530,7 @@ HOST_CASES = [
     (
         "宿主继承上下文：实例分离仍可审查，披露隔离限制",
         dict(context_isolated=False),
-        dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=True,
+        dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=False,
              context_isolation="limited"),
     ),
     (
@@ -573,6 +573,66 @@ def run_host_cases() -> None:
 # --- 文档契约：把审计里靠人眼找的字段缺失变成回归 --------------------------
 
 DOC_CONTRACT = [
+    (
+        "主代理设计不额外强制委派施工",
+        "easydev/references/design.md",
+        "## 实例隔离",
+        ["主代理可继续施工", "full 编排"],
+        {"forbidden": ["施工必须委派", "施工须委派独立开发者"]},
+    ),
+    (
+        "多阶段按验收而非实施实例或模型升级判定",
+        "easydev/references/design.md",
+        "## 启用门控",
+        ["独立验收", "实施实例接力", "不单独触发", "模型升级阶段"],
+        {"forbidden": ["≥2 个实施实例接力"]},
+    ),
+    (
+        "normal 单写并受历史预算约束",
+        "easydev/references/workflow.md",
+        "## normal 流程",
+        ["实施保持单写入者", "只读并行", "历史预算", "无复审机会的修复"],
+    ),
+    (
+        "full 委派条件区分模型阶段与交付阶段",
+        "easydev/references/workflow.md",
+        "## full 编排",
+        ["模型阶段 0", "模型与深度均为 `inherit`", "交付验收阶段不等于模型升级阶段"],
+    ),
+    (
+        "并行写入放行、验证依赖与集成预算",
+        "easydev/references/workflow.md",
+        "## 并行执行",
+        ["并行写入仅限 full", "未放行默认串行", "不依赖其他片尚未完成的结果",
+         "验证依赖变化使相关证据失效", "停止可选流水线", "不得施工其下游",
+         "所有相关写入者停写", "初次集成失败先取证", "同根因跨片共用问题预算"],
+        {"forbidden": ["并行写入**（normal 与 full）", "默认在同一工作区写互不相交的路径"]},
+    ),
+    (
+        "分片回报不替代任务完整检查",
+        "easydev/references/roles.md",
+        "## 开发角色",
+        ["分片回报", "完整检查由主代理统一协调停写后执行", "不操作共享 Git 索引"],
+    ),
+    (
+        "工作树保留任务基线且不擅自提交",
+        "easydev/references/environment.md",
+        "## 工作区隔离与分支收尾",
+        ["分片任务基线", "未提交改动（含未跟踪）", "不为传递补丁擅自提交", "共享缓存、端口与数据"],
+    ),
+    (
+        "设计重审关闸且最终版本仍须完整施工审查",
+        "easydev/references/design.md",
+        "## 收敛与施工闸",
+        ["关闭施工闸", "原施工审查不能证明新版本", "最终版本仍须完整施工审查"],
+    ),
+    (
+        "B60 对照四遵守当前委派条件",
+        "easydev/tests/behavior.md",
+        "| B60 独立设计环节",
+        ["对照四", "阶段 0", "模型与深度均为 `inherit`", "主代理可继续施工"],
+        {"forbidden": ["对照四施工委派独立开发者实例"]},
+    ),
     (
         "账本模板含门控判定、冻结时间、设计者与两本账",
         "easydev/references/workflow.md",
@@ -873,7 +933,7 @@ def run_doc_contract_mechanism() -> None:
         )
 
     def move_normal_contract(text: str) -> str:
-        line = "2. 实施与验证沿用 quick 核心；实现改动（非纯文案与注释）按 [代码质量判据](engineering.md#代码质量判据)。"
+        line = "2. 实施保持单写入者，允许只读并行；验证沿用 quick 核心；实现改动（非纯文案与注释）按 [代码质量判据](engineering.md#代码质量判据)。"
         if line not in text:
             raise RuleError("workflow.md 里没有 normal 第 2 条")
         text = text.replace(line + "\n", "", 1)

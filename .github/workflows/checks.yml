@@ -48,10 +48,10 @@ jobs:
             command: bash tests/cases/public-contract-callers/run.sh
             install_pyyaml: false
             timeout_minutes: 5
-          - name: 按角色计量回归
+          - name: 按角色计量与流程边界回归
             install_pytest: true
             working_directory: easydev
-            command: python3 -m pytest tests/experiments/test_role_metric.py
+            command: python3 -m pytest tests/experiments/test_role_metric.py tests/experiments/test_design_gate.py
             install_pyyaml: false
             timeout_minutes: 5
           - name: 行为 runner 与进程清理回归
