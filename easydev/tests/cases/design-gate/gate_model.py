@@ -53,20 +53,21 @@ def resolve_designer(
             "gate": "closed",
             "reason": "designer 配置的具体模型不可用：暂停设计分派并报受阻，不回落主代理",
         }
-    # 2) 无委派能力 / 用户禁止委派：主代理兜底。
+    # 2) 用户明确授权自查（含用户禁止委派）：主代理兜底；无授权的无委派能力则暂停。
     if user_forbids_delegation:
         return {
             "mode": DESIGNER_FALLBACK,
             "counts_dr": False,
             "gate": "open_self_checked",
-            "reason": "用户明确禁止委派（environment.md 硬约束优先），按无能力兜底",
+            "must_delegate_developer": False,
+            "reason": "用户明确授权主代理自查（或明确禁止委派），按无能力兜底",
         }
     if not delegation_available:
         return {
-            "mode": DESIGNER_FALLBACK,
+            "mode": DESIGNER_PAUSED,
             "counts_dr": False,
-            "gate": "open_self_checked",
-            "reason": "宿主不具备子代理委派能力，按无能力兜底",
+            "gate": "closed",
+            "reason": "宿主不具备子代理委派能力：暂停设计分派并报受阻，由用户决定改配置、停止或授权自查",
         }
     # 3) 有委派能力。
     if model == "inherit":

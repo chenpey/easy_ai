@@ -151,6 +151,17 @@ REVIEWER_IDENTITY_MARKERS = (
     "reviewer handoff",
     "审查交接",
 )
+DESIGNER_IDENTITY_MARKERS = (
+    "你是设计实例",
+    "你是设计角色",
+    "角色：designer",
+    "角色: designer",
+    "角色：设计",
+    "角色: 设计",
+    "role: designer",
+    "设计交接",
+    "designer handoff",
+)
 EXPLICIT_DEVELOPER_MARKERS = DEVELOPER_IDENTITY_MARKERS + DEVELOPER_REFERENCE_PATHS
 EXPLICIT_REVIEWER_MARKERS = REVIEWER_IDENTITY_MARKERS + (
     LEGACY_REVIEWER_ROLE_PATH,
@@ -941,7 +952,9 @@ def is_reviewer_prompt(prompt: str) -> bool:
     def clause_start(offset: int) -> int:
         return max(text.rfind(separator, 0, offset) for separator in clause_breaks) + 1
 
-    if any(marker in text for marker in DEVELOPER_IDENTITY_MARKERS):
+    if any(marker in text for marker in DEVELOPER_IDENTITY_MARKERS) or any(
+        marker in text for marker in DESIGNER_IDENTITY_MARKERS
+    ):
         return False
 
     def has_unnegated_developer_reference() -> bool:
@@ -960,7 +973,7 @@ def is_reviewer_prompt(prompt: str) -> bool:
         anchor in text for anchor in REVIEWER_ROLE_ANCHORS
     )
     if not has_explicit_reviewer and any(
-        marker in text for marker in ("开发角色", "developer role")
+        marker in text for marker in ("开发角色", "developer role", "设计角色", "designer role")
     ):
         return False
 

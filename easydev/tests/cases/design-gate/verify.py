@@ -498,9 +498,9 @@ HOST_CASES = [
         dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=False),
     ),
     (
-        "inherit + 无委派：走无能力兜底，不记 d/r",
+        "inherit + 无委派：暂停报受阻，不记 d/r",
         dict(model="inherit", delegation_available=False),
-        dict(mode=DESIGNER_FALLBACK, counts_dr=False, gate="open_self_checked"),
+        dict(mode=DESIGNER_PAUSED, counts_dr=False, gate="closed"),
     ),
     (
         "具体模型可用 + developer 为 inherit：主代理可自行实施",
@@ -526,6 +526,21 @@ HOST_CASES = [
         "用户明确禁止委派：即使宿主能委派也走兜底",
         dict(model="gpt-6.1-sol", user_forbids_delegation=True),
         dict(mode=DESIGNER_FALLBACK, counts_dr=False),
+    ),
+    (
+        "用户明确禁止委派 + developer 非 inherit：主代理接管施工而不强制委派",
+        dict(model="gpt-6.1-sol", user_forbids_delegation=True, developer_non_inherit=True),
+        dict(mode=DESIGNER_FALLBACK, counts_dr=False, must_delegate_developer=False),
+    ),
+    (
+        "具体模型 + 宿主无委派能力：暂停报受阻，不静默回落",
+        dict(model="gpt-6.1-sol", delegation_available=False),
+        dict(mode=DESIGNER_PAUSED, counts_dr=False, gate="closed"),
+    ),
+    (
+        "用户明确禁止委派 + 宿主无委派能力：用户授权优先，主代理兜底",
+        dict(model="gpt-6.1-sol", user_forbids_delegation=True, delegation_available=False, developer_non_inherit=True),
+        dict(mode=DESIGNER_FALLBACK, counts_dr=False, must_delegate_developer=False),
     ),
     (
         "宿主继承上下文：实例分离仍可审查，披露隔离限制",
