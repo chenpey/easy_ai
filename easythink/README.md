@@ -97,25 +97,25 @@ EasyThink 遵循“问题清楚、判断有据、下一步可验证”的原则�
 
 ## 思考方法与框架全景
 
-下图展示了 EasyThink 0.5.0 的全局思考框架：
+EasyThink 框架全景概览：
 
 ![EasyThink 思考框架全景：安全总闸、启动分寸、六大核心支点、三大追问视角与行为底线](assets/easythink-mindmap.svg)
 
-各分支按需取用，不机械套用。当面临惯例束缚、重大抉择或连锁反应时，按条件无缝并入追问视角，引导输出兼具深度与可操作性的行动边界。
+各分支按需启用，面临重大抉择或隐性约束时无缝并入追问视角。
 
 ## 规约与参考文档导航
 
-运行规则以 [SKILL.md](SKILL.md) 为唯一准绳，文档体系模块化分工如下：
+运行规则以 [SKILL.md](SKILL.md) 为唯一准绳：
 
-| 文件 | 用途与定位 |
+| 文件 | 定位与内容 |
 | --- | --- |
-| [SKILL.md](SKILL.md) | 核心规则入口：安全总闸、分层启动、按诉求选方法、核心做法、追问视角与多轮规范 |
-| [references/methods.md](references/methods.md) | 思考方法落地细则：判断检验、原因分析、决策比较、三大追问视角、量化与尺度、人际分歧 |
-| [references/safety.md](references/safety.md) | 安全响应与角色边界：当事人紧急医疗/自伤处置、第三方受暴/求助、加害者处置规程 |
-| [references/examples.md](references/examples.md) | 应用示例参考：覆盖不启动、倾诉、灰区权衡、高后果预演、人际推演、检索核实等多场景基准 |
-| [tests/behavior.md](tests/behavior.md) | 行为用例与回归规约：定义 TR-01～08、NT-01～13、BH-01～15 行为断言基线 |
+| [SKILL.md](SKILL.md) | 核心入口：安全总闸、分层启动、诉求分流、核心支点、追问视角与多轮规范 |
+| [references/methods.md](references/methods.md) | 方法落地细则：判断检验、原因分析、决策比较、追问视角、量化尺度与人际分歧 |
+| [references/safety.md](references/safety.md) | 安全与角色边界：当事人紧急急救/自伤处置、第三方受暴/求助、加害者规程 |
+| [references/examples.md](references/examples.md) | 示例基准：覆盖不启动、倾诉、灰区权衡、高后果预演、人际推演与检索核查 |
+| [tests/behavior.md](tests/behavior.md) | 行为用例与回归规约：定义 TR-01～08、NT-01～13、BH-01～15 断言基线 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本演进历史与改动说明 |
 
 ## 方法来源与致谢
 
-EasyThink 的起点来自知乎作者“啥都不明白”的[回答](https://www.zhihu.com/question/9115866072/answer/2096187142615590644)，提炼其关于事实梳理、概念定义和程度澄清的思路。在此基础上，本技能增补了论证结构分解、证据分级、感受与价值保留、安全优先、不可逆高风险表态、多候选解释、风险偏好与承受力区分、检索默认核查及行动反馈闭环。追问视角借鉴第一性原理、逆向思维（失败预演）与第二阶思维的通用做法，改写为按条件使用的提问。
+EasyThink 起点源自知乎作者“啥都不明白”的[回答](https://www.zhihu.com/question/9115866072/answer/2096187142615590644)，提炼其关于事实梳理、概念定义与程度澄清的思路。在此基础上拓展了论证分解、证据分级、安全总闸、风险偏好与承受力区分、检索默认核查及行动闭环。追问视角融合了第一性原理、逆向预演与二阶思维实践。

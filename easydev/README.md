@@ -2,7 +2,7 @@
 
 当前版本：`2.4.4`
 
-EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 5000 字节，普通 quick 不加载完整编排；详细规则按需读取。主代理默认唯一写入者；full 按配置与模型阶段委派，normal 保持单写。
+EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（≤5000 字节），普通 quick 不加载完整编排，详细规则按需读取；主代理默认单写，full 依据配置与模型阶段委派。
 
 ## 使用
 
@@ -14,21 +14,21 @@ EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过
 使用 easydev review，审查当前改动，先不要修改代码。
 ```
 
-默认 auto，调查后选择流程。Codex 可用 `$easydev`；这些路径是提示词约定，不是安装的运行时开关。
+默认 auto 并在调查后分流。Codex 支持 `$easydev`；各路径为提示词约定，非运行时命令行参数。
 
 | 路径 | 用途 |
 | --- | --- |
 | quick | 局部明确、低风险：实现、验证、自查 |
 | normal | 影响有界且具第二视角信号：实现、验证、独立定向审查（允许至多一次局部 P2 修复与复审），无 full 账本 |
-| full | 高风险、重大契约/数据影响或具体关键影响仍不明，或用户要求闭环：按门控设计，独立审查、有限修复与复审 |
+| full | 高风险、重大契约/数据影响或关键影响未明：门控设计、独立审查、有限修复与复审 |
 | design / plan | 设计权衡或实施计划，按请求范围交付 |
-| debug | 先定位；授权修复后按实际风险选档 |
-| review / audit | 单次只读审查或分片审计 |
-| spike | 最小可行性实验，产物标 throwaway |
+| debug | 先定位根因；授权修复后按实际风险选档 |
+| review / audit | 单次只读审查或大仓分片审计 |
+| spike | 最小可行性实验，产物标记 throwaway |
 
-normal 审完整任务 diff、直接调用方和相关测试；首轮仅局部 P2 时允许一次局部修复与定向复审，其余必关发现转 full，继承已用审查和修复预算。风险被证据排除时允许降低流程，用户指定档位及未关闭必关项不能被自动降级。完整判断、边界示例及状态转换以 [流程规则](references/workflow.md#分流判定) 为准。
+normal 审查任务 diff、直接调用方与相关测试；首轮仅局部 P2 时允许一次修复与定向复审，其余必关项转 full 并继承预算。排除风险后允许降档，但不可自动降级用户显式指定的档位。详见 [流程规则](references/workflow.md#分流判定)。
 
-normal 是实现路径，不是聊天轻重档：回复长短遵循用户要求，推理深度由 reasoning_effort 指定。
+normal 是实现路径而非聊天长短档：输出长度遵用户要求，深度由 `reasoning_effort` 控制。
 
 ## 安装
 
@@ -45,15 +45,13 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 检查技能和引用文件完整性、链接有效性，报告路径、版本和生效步骤；未验证宿主实际加载时明确说明。优先使用已有工具，避免安装不必要的依赖。
 ```
 
-模型、密钥、网络、沙箱与子代理能力由宿主提供。安装成功不代表宿主已经加载；能力要求与故障处理见 [环境与能力适配](references/environment.md#宿主适配与能力降级)。
+模型、沙箱与子代理能力由宿主提供。适配要求与降级见 [环境与能力适配](references/environment.md#宿主适配与能力降级)。
 
 ## 模型配置
 
-默认所有角色继承宿主，无须额外配置（等价于各角色均设为 `inherit`、`upgrades` 为空）。full 在模型阶段 0 且 `developer` 的模型与深度均为 `inherit` 时可由主代理写入；用户明确授权主代理自查（含明确禁止委派）时亦由主代理接管写入并交付审查包；宿主无委派能力时先暂停报受阻、由用户决定后再继续；显式模型/深度或 `upgrades` 阶段（除用户授权自查外）须委派，另可因上下文膨胀或已满足并行条件委派。交付阶段不等于模型阶段；升级暂停并行并串行交接。
+默认继承宿主（`inherit`，`upgrades` 为空）。主代理在阶段 0 且 developer 为 `inherit` 时可自行写入；显式指定独立模型/深度或进入升级阶段时须委派；宿主无委派能力时暂停并报受阻，经用户明确授权后方可自查。升级阶段暂停并行并串行交接。
 
-如果自行配置，**需要使用当前 Harness（宿主/运行环境，如 Antigravity、Codex 等）能识别的完整模型 ID 与供应商前缀**；原样照抄到没有对应 Provider 的宿主上，会在第一次分派时按 [模型配置](references/environment.md#模型配置) 暂停报受阻，不会静默回退到 `inherit`。规则本身不固化特定供应商版本。
-
-下面的内联示例演示了一组典型的跨供应商升级分配方案（开发与审查分属不同供应商，`upgrades` 在升级阶段切换更强模型与更高推理档位）：
+自行配置须使用宿主支持的完整模型 ID 与供应商前缀；未识别的前缀会在首次分派时暂停报受阻，见 [模型配置](references/environment.md#模型配置)。跨供应商升级配置示例如下：
 
 ```json
 {
@@ -84,43 +82,41 @@ https://github.com/chenpey/easy_ai/tree/main/easydev
 }
 ```
 
-### 选型考虑与说明示例
+### 选型参考
 
-各角色的模型选取考虑（数字基于实测与公开基准，仅供选型参考）：
+- **开发**：示例采用 `deepseek-v4.1-flash`，长任务与常规实现吞吐稳定、高性价比。
+- **审查**：示例采用 `gpt-6.1-sol`（`high` 档），代码缺陷分析与漏洞捕获能力强。
+- **升级阶段开发**：切换至 `gemini-4-argon`，补足修复攻坚能力。
+- **升级阶段审查**：提升至 `max` 推理档，在重试阶段使用更严复审。
+- **推理深度**：只填写当前宿主支持的档位（如 Antigravity 支持 low/medium/high，Codex 支持到 max）。
 
-- **开发角色**：示例采用 `deepseek-v4.1-flash`。在日常实现与长任务中单价低、缓存读取成本低、执行稳定。日常路径占用量最大，核心诉求是高性价比与长任务成功率。
-- **审查角色**：示例采用 `gpt-6.1-sol`（配置 `high` 档）。缺陷发现与边界分析能力强，是独立审查中能稳定捕捉漏洞的关键选择；审查占子代理核心支出，避免因省成本导致漏审。
-- **升级阶段开发（`upgrades`）**：示例切换为 `antigravity/gemini-4-argon`。在基准与代码任务中具备更高的解决上限，用于在初次修复失败后补足实现能力。
-- **升级阶段审查（`upgrades`）**：示例将 `gpt-6.1-sol` 提升至 `max` 推理档位。用更高的推理代价换取更严苛的复审深度，且仅在修复失败重试时触发。
-- **推理深度**：只填写当前 Harness 实际支持的档位（例如 Antigravity 支持 low/medium/high，Codex 支持到 max；超出支持档位会映射或提示受阻）。
-
-例如在 macOS/Linux 查看个人配置（存在时）：
+macOS/Linux 查看本地配置（若存在）：
 
 ```bash
 cat ~/.config/easydev/models.json
 ```
 
-Windows 路径、字段、模型阶段和实际生效核对统一见 [environment.md](references/environment.md#模型配置)。示例不会自动加载，安装更新不修改个人配置。
+Windows 路径、字段及生效核对见 [environment.md](references/environment.md#模型配置)。
 
 ## 验证与交付
 
-- 复用充分检查，只为明确覆盖缺口新增行为测试；按项目脚本运行，独立无冲突项并行，依赖项顺序执行。详细规则见 [工程实践](references/engineering.md)。
-- quick 报自查；normal 报独立定向审查（含必要的一次局部 P2 复审）；full 按 [流程编排](references/workflow.md#full-编排) 判定闭环。达到预算上限不等于完成，修复尝试以 [尝试预算](references/workflow.md#尝试预算) 为准。
-- 缺独立能力时先暂停报受阻，用户明确授权后在授权范围内自查并给可交接审查包、明确缺口；不能称独立审查通过或 full 闭环完成。不同实例继承上下文时披露隔离限制，见 [能力降级与审查包](references/environment.md#能力降级与审查包)。
-- audit 按模块或信任边界分片，记录覆盖与跨片接口；正文最多 20 条，全部发现及证据保存在任务目录 `findings.md`，未归档前保留并在交接提供路径；关键缺陷不会因截断丢失，见 [审查规程](references/review.md#6-报告规则)。
-- 待审脚本执行与凭证隔离遵守 [审查规程](references/review.md#不可信代码执行)。保留用户改动；提交、推送、发布和对外动作遵循明确授权。
-- 并行按内容自判 1–5 片，用户指定优先，1 片即串行；normal 单写、允许只读并行，full 可按独立性与隔离门槛并写和做审查流水线，不以对照评测作为前置。高风险边界默认串行，串行包装不得称并行；分片验证不替代最终完整检查，规则见 [并行执行](references/workflow.md#并行执行)。并行只压缩彼此独立的片，不压缩审查轮次与设计收敛，未实测不得宣称提速。
+- **测试与验证**：优先复用既有检查，只针对覆盖缺口补写端到端测试；按项目脚本运行，独立项可并行，详见 [工程实践](references/engineering.md)。
+- **交付闭环**：quick 交付自查报告；normal 交付独立定向审查报告；full 依门控流程确认闭环，见 [流程编排](references/workflow.md#full-编排)。修复次数受限于 [尝试预算](references/workflow.md#尝试预算)。
+- **能力受阻**：缺失独立委派能力时先暂停报错；经授权自查须附交接审查包并标明缺口，不得宣称独立审查通过，详见 [能力降级与审查包](references/environment.md#能力降级与审查包)。
+- **分片审计**：audit 按信任边界分片，正文最多 20 条，完整清单落盘任务目录 `findings.md`，规范见 [审查规程](references/review.md#6-报告规则)。
+- **安全与权限**：代码执行与凭证隔离遵 [审查规程](references/review.md#不可信代码执行)；保留用户改动，外部动作须明确授权。
+- **并行调度**：自判 1–5 片（用户指定优先）；normal 保持单写，full 满足隔离门槛可并写，分片不替代全量检查，见 [并行执行](references/workflow.md#并行执行)。
 
 ## 详细规则与维护
 
-运行规则以 [SKILL.md](SKILL.md) 和按需引用模块为准，README 不维护第二份细则。
+规则以 [SKILL.md](SKILL.md) 及 references 为准：
 
 - [角色定义](references/roles.md)：开发与审查角色交接入口
 - [流程编排](references/workflow.md)：分流、normal 与 full 编排、两本账与尝试预算
-- [工程实践](references/engineering.md)：实现、代码质量判据、测试、排障、重构与验证
-- [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选评审
+- [工程实践](references/engineering.md)：实现规范、代码质量判据、测试、排障与验证
+- [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选
 - [审查规程](references/review.md)：审查原则、强度分档与全仓审计规程
 - [环境与安全](references/environment.md)：模型配置、宿主能力降级、基线安全与工作区隔离
-- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[折叠评测](tests/experiments/fold-eval.md)（调整或废除子代理角色前的评测门槛）、[并行收益观测（可选）](tests/experiments/fold-eval.md#并行收益观测可选)、[版本历史](CHANGELOG.md)
+- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[折叠评测](tests/experiments/fold-eval.md)（角色调整门槛）、[并行收益观测（可选）](tests/experiments/fold-eval.md#并行收益观测可选)、[版本历史](CHANGELOG.md)
 
-`tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。
+`tests/` 不随运行时安装。修改规则须同步更新引用、行为规约与自动化检查。

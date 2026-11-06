@@ -1,24 +1,24 @@
 # 测试用例目录
 
-本目录保存可执行的自包含用例。每个子目录使用描述行为的语义化 slug，并集中放置被测初始状态、参考材料、独立验收和复验入口。
+本目录保存可执行的自包含确定性用例。每个子目录使用描述行为的语义化 slug，包含被测初始状态、参考材料与独立验收入口。
 
 ## 约定
 
-- 目录名描述验收行为，不使用易失的顺序编号作为路径。
-- `initial/` 是 Agent 可见的初始仓库。
-- `solution.patch`、独立验收器和其他隐藏断言属于评测私有材料，正式评测时必须放在 Agent 无法读取的位置。
-- `solution.patch` 是夹具级参考补丁，可以同时更新夹具自带的检查脚本与契约文档以完成复验；它不是 Agent 的合规样例，Agent 的修改边界以用例 prompt 与隐藏验收为准。
-- `verify.py` 负责固定补丁的确定性复验，可进入 CI；`run.sh` 只是薄封装；真实 Agent 行为由 `tests/experiments/agent_runner/` 执行。
-- 用例 README 说明运行方式、材料边界、覆盖范围和未验证条件。
+- **目录命名**：描述验收行为，不使用易失的数字顺序编号。
+- **材料隔离**：`initial/` 为执行者可见的初始仓库；`solution.patch`、独立验收脚本等属于评测私有材料，评测时须与执行者隔离。
+- **执行封装**：`verify.py` 负责确定性复验并可直接进入 CI；`run.sh` 为标准执行入口；真实模型回放由 `tests/experiments/agent_runner/` 负责。
 
-## 当前用例
+## 用例列表
 
-| 用例 | 验证目标 | 入口 |
+| 用例 | 验证目标 | 执行入口 |
 | --- | --- | --- |
-| `public-contract-callers` | 公共契约变更、对象级所有权校验和调用方适配 | `bash tests/cases/public-contract-callers/run.sh` |
-| `version-gate` | `SKILL.md` 版本提取：合法、重复键（含双引号转义键）、错位、描述文本内的 `version:` 与非法引号；降级分支拒绝键转义 | `bash tests/cases/version-gate/run.sh` |
-| `models-config` | `scripts/models.py` 的配置 schema 与来源选择：非法键/角色/model/effort、`upgrades` 上限与相邻同值、无效文件不回退、`role_overrides` 空对象均拒绝；项目 > 用户 > 内置默认且文件不合并 | `bash tests/cases/models-config/run.sh` |
-| `design-gate` | normal 初审、至多一次局部 P2 修复与定向复审、转 full 继承已用轮次，以及独立设计环节的门控、账本、施工闸和可达性 | `bash tests/cases/design-gate/run.sh` |
-| `audit-overflow` | 23 条发现时正文 20 条、附录完整保留、溢出 P1 摘要与分片覆盖披露 | `bash tests/cases/audit-overflow/run.sh` |
+| `public-contract-callers` | 公共契约变更、对象所有权校验与调用方适配 | `bash tests/cases/public-contract-callers/run.sh` |
+| `version-gate` | `SKILL.md` 版本提取合法性与非法格式防御（PyYAML 与标准库双分支） | `bash tests/cases/version-gate/run.sh` |
+| `models-config` | `scripts/models.py` schema 校验与来源优先级（项目 > 用户 > 默认） | `bash tests/cases/models-config/run.sh` |
+| `design-gate` | normal 审查复审、转 full 继承、启用门控、两本账与施工闸状态机 | `bash tests/cases/design-gate/run.sh` |
+| `audit-overflow` | 23 项发现时正文上限 20 条、附录全量保留与溢出 P1 披露 | `bash tests/cases/audit-overflow/run.sh` |
 
-其余行为场景由 [tests/behavior.md](../behavior.md) 定义；其中 B01、B02、B16、B61（观测部分）、B67（实施侧与审查侧）与 `public-contract-callers` 已有离线可执行载体，由 `tests/experiments/agent_runner/` 的替身驱动；B60 与 B61（确定性部分）由 `design-gate` 覆盖，B65（确定性部分）由 `audit-overflow` 覆盖，行为部分仍需回放。只有需要固定仓库材料、参考补丁或独立验收的场景才在此建立目录。
+其余行为场景由 [tests/behavior.md](../behavior.md) 定义：
+- B01、B02、B16、B61（观测部分）、B67 由 `tests/experiments/agent_runner/` 驱动。
+- B60 与 B61（确定性部分）由 `design-gate` 覆盖。
+- B65（确定性部分）由 `audit-overflow` 覆盖。

@@ -1,82 +1,67 @@
 # SWE-bench Lite 小样本实验
 
-本目录保存 EasyDev 的小样本对照实验运行器。它使用 SWE-bench Lite 的任务元数据、base commit、测试补丁、FAIL_TO_PASS 与 PASS_TO_PASS，但不在本仓库内分发上游源码或测试补丁。
+本目录包含基于 SWE-bench Lite 任务集的小样本对照实验运行器与事件归因分析工具。
 
-所有路径参数均按调用目录归一化，支持 `~`；裸 `--codex-bin` 按 PATH 查找。
-
-## 判定
+## 判定标准
 
 ```text
-resolved = 全部 FAIL_TO_PASS 通过
-           且环境基线可通过的 PASS_TO_PASS 无回归
+resolved = 全部 FAIL_TO_PASS 修复成功
+           且环境基线可通过的 PASS_TO_PASS 无新增回归
 ```
 
-`PASS_TO_PASS` 先在本机环境跑基线；环境本身无法通过的测试不进入回归分母。这评分从 JUnit XML 读取结果（重复条目取失败优先），拒绝缺失/损坏结果和异常退出；stdout 只辅助关联测试名称。采集排除 `conftest.py`、pytest 及构建配置，避免修改验收驱动。此运行器不是官方 SWE-bench Docker harness 的完整替代，报告必须披露排除数量与原因；`report.md` 的「PASS_TO_PASS 排除」小节按已校验的 `task-baselines` 列出每任务 eligible/excluded 数量与状态原因；nodeid 与状态写入表格前会转义 `|` 并折叠换行，因此含 `|` 的参数化 nodeid 不会截断表格。
+- **基线过滤**：`PASS_TO_PASS` 预先在本机运行基线，剔除环境自身无法通过的用例；测试结果直接从 JUnit XML 解析。
+- **补丁失败终态**：代码补丁或测试补丁应用失败为非重试终态，在结果中标记 `patch_applied=false` 并记录于汇总报告中。
 
-补丁应用失败（agent patch 或 test patch）是终态而不是可重试错误：结果记录 `patch_applied=false`、`f2p_status` 全为 `MISSING`、`test_statuses` 为空、`p2p_regressions` 为空，读取器只对这一形状放宽测试契约与 P2P 证据，其它形状仍严格拒绝。该终态让下次 `run` 视为已完成（不重复调用模型），并在 `summary.json` 与报告的 `patch apply failures` 列中计数。
+## 运行前提
 
-## 前提
+运行器不负责下载数据集或构建依赖，需预先准备：
+1. `princeton-nlp/SWE-bench_Lite` 任务元数据 JSON。
+2. 各任务源码压缩包 `<instance_id>.tar` 与 Python 虚拟环境 `<instance_id>`。
+3. 可用的 Codex CLI 及 `~/.codex/auth.json`。
 
-运行器不负责下载数据集、克隆仓库或安装依赖。需要预先准备：
+解包阶段内建路径逃逸安全检查（拒绝绝对路径、`..` 越界或外部硬链接）。
 
-1. 官方 `princeton-nlp/SWE-bench_Lite` 元数据 JSON。
-2. 每个任务的源码 tar 快照 `<instance_id>.tar`。
-3. 每个任务的 Python 虚拟环境目录 `<instance_id>`。
-4. 可执行的 Codex CLI 与该 CLI 可用的 `~/.codex/auth.json`。
-
-模板可以包含指向包内相对路径的软链与硬链，提取时会保留。绝对路径链接、词法上或解析后逃出解包目标目录的链接（含 `..` 逃逸、经由已有包内软链的逃逸、硬链指向归档外路径）会让提取中止；归档成员按顺序逐个校验后立即提取，先前成员建立的链接已落盘，后续成员无法绕过。只读目录（`0555`/`0500`）在全部成员写入后才应用权限，因此不会挡住目录内的文件。在 Python 3.12+ 上提取还会走 `tarfile` 的 `filter="data"`，部分逃逸归档（例如把已指向解包根的软链重定向到 `..`）由 stdlib 先拒绝并给出 `outside the destination`。
-
-## 命令
+## 核心命令
 
 ```bash
-# 校准：只验证测试补丁可应用、gold patch 使 F2P 通过且 baseline P2P 无回归
+# 1. 校准：验证测试补丁与 gold patch 基线
 python3 tests/experiments/swebench/run.py calibrate \
   --dataset /path/to/swebench-lite.json \
   --templates /path/to/templates \
   --venvs /path/to/venvs \
   --out /path/to/experiment
 
-# 只复制/链接实验资产，不跑 pytest
+# 2. 准备：链接/解包实验资产
 python3 tests/experiments/swebench/run.py setup \
   --dataset /path/to/swebench-lite.json \
   --templates /path/to/templates \
   --venvs /path/to/venvs \
   --experiment /path/to/experiment
 
-# 运行小样本实验；已完成的 run 会跳过
+# 3. 运行：执行小样本对照实验（已完成的任务自动跳过）
 python3 tests/experiments/swebench/run.py run \
   --experiment /path/to/experiment --repeats 3 --concurrency 2
 
-# 汇总
+# 4. 汇总：生成报告与评分结果
 python3 tests/experiments/swebench/run.py summarize \
   --experiment /path/to/experiment
-```
 
-对照臂：`baseline` / `checklist` / `easydev`（auto）为默认三臂；`easydev-quick` / `easydev-normal` / `easydev-full` 强制指定档位，prompt 明写不要改回 auto，用于 `routing-replay` 的三档对照。未知臂在读取实验资产前即被拒绝。
-
-`run` 默认保护 `dataset.json`、`task-baselines/`、`gold/`，可用 `--protect-paths` 追加；保护期间这些路径 mode 为 0，运行结束恢复。被中断的运行会在下次启动时按 `protected-modes.json` 先恢复 mode；指向实验目录或其祖先的保护会被拒绝，避免把记录本身锁死。
-
-## 事件归因
-
-已有运行目录可单独分析，不调用 Agent：
-
-```bash
+# 5. 事件归因：独立分析已有运行目录的路由与审查记录
 python3 tests/experiments/swebench/analyze_events.py \
   --experiment /path/to/experiment
 ```
 
-分析器分别记录模型声明的初始/最终路径、实际 `spawn_agent` reviewer、已完成 reviewer 与报告、P0–P3、reference 文件访问、usage、缓存率与耗时，并单列“声明 quick 但启动 reviewer”等路由偏差。只有状态为 `completed` 且带回报告的 reviewer 才计入完成数；malformed 事件行计入统计但不会中断解析。分析器不会推断子代理完整 token，也不把 reviewer 报告当成独立验收。
+## 对照臂说明
 
-### 已知限制：usage 来源与“未知 / 零”不可区分
+- 默认对照：`baseline`（无技能）、`checklist`、`easydev`（auto 自动分流）。
+- 强制档位：`easydev-quick`、`easydev-normal`、`easydev-full`（锁定特定路径，用于路由对照实验）。
+- 安全保护：`run` 执行期间默认将 `dataset.json`、`gold/` 与基线目录设为只读保护（mode 0），运行后恢复。
 
-`analyze_events` 目前只读 `result.json` 的 usage（含嵌套的 `agent.usage`），**不聚合事件流 `turn.completed` 里的 usage**。因此：
+## 事件归因与已知限制
 
-- 只有事件 usage、没有 result usage 时，token 计数输出 0，缓存率为 `None`；
-- 只有 result usage 时按 result 汇总；
-- 两者都缺失时输出 0 与 `None`；
-- 真实的零 token 也输出 0，无法与“未知”区分。
+`analyze_events.py` 解析模型声明路径、实际委派 reviewer、严重度分级（P0–P3）、文件读取及 usage 统计。
 
-这是当前实现的 characterization，不是“缺失即未知”的满足证明；要满足该语义需要产品侧修改分析器（本次不改被测系统）。离线测试 `test_usage_source_matrix_documents_known_limit` 固定了这四组输入的实际行为。
+**已知限制**：当前仅读取 `result.json` 中的 usage，不聚合 `turn.completed` 事件流中的 usage。若结果中缺失 usage，输出为 0，与真实的零 token 无法区分。
 
 ## 离线自测
 
@@ -84,36 +69,4 @@ python3 tests/experiments/swebench/analyze_events.py \
 python3 -m pytest tests/experiments/swebench -v
 ```
 
-本地验证应与 CI 一致使用 Python 3.12 复跑（本机可用 `/tmp/agents/uv-python/cpython-3.12-macos-aarch64-none/bin/python3.12`）；swebench 的全部用例在 3.9 与 3.12 下都要全绿。
-
-- `test_cli.py` 驱动 `setup`/`run`/`summarize`/`calibrate`，用 `tests/experiments/stubs/codex_stub.py` 与 `pytest_stub.py` 替代外部进程，覆盖结果读取器拒绝（身份、事件计数、协议、F2P/P2P 矛盾）、manifest 选择与报告计数、模板逃逸与合法链接/延迟目录属性、保护模式恢复细节、采集不执行 Agent hook/filter、无效调用、P2P 回归与报告。
-- `test_analyze_cli.py` 驱动 `analyze_events.py`，覆盖 quick/normal/full 声明及升降级、路由否定/候选档位、reviewer 完成条件、访问与元数据归因、current-protocol 契约、behavior 协议、嵌套 usage、零发现声明、畸形结构、usage 来源矩阵与 `--output`。
-
-两组检查不启动真实 Codex，也不执行真实 pytest，因此不能替代真实实验。
-
-## 产物
-
-```text
-<experiment>/
-├── manifest.json
-├── protected-modes.json        # 仅在运行中或中断后存在
-├── task-baselines/<instance_id>.json
-├── gold/<instance_id>/...
-├── runs/<instance_id>/<arm>/r<repeat>/
-│   ├── events.jsonl
-│   ├── stdout.log / stderr.log / last-message.txt
-│   ├── agent.patch
-│   ├── result.json 或 invalid-result.json
-│   └── grade/{junit.xml,pytest.stdout.log,pytest.stderr.log}
-├── results.jsonl
-├── summary.json
-└── report.md
-```
-
-## 限制
-
-- 本目录只做补丁级小样本实验，不是官方成绩；报告必须区分本地预实验与官方 Verified。
-- 请求关闭网络不等于已经具备强制隔离；正式评测仍应在断网、隔离基准材料的容器中运行。
-- patch 采集使用运行前保存的可信 `.git/config`，并禁用 hooks、fsmonitor、系统/全局 Git 配置与 attributes。
-
-评分证据假定测试进程可信；能够执行任意代码的被测程序仍可能篡改 XML 或提前伪造完成标记。正式评测须使用独立受保护的评测进程/容器，本地机制不提供恶意代码安全沙箱。
+通过 `codex_stub.py` 与 `pytest_stub.py` 替身驱动，覆盖 CLI 解析、模板安全解包、保护模式恢复、事件归因与 usage 边界。

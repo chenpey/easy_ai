@@ -1,33 +1,33 @@
 # 实验目录
 
-本目录保存两类材料：不启动真实模型的离线实验与复验（所有外部边界都是本地替身，测试通过 CLI 入口驱动被测脚本），
-以及另行记录的真实模型回放（`b67-replay/`、`behavior-replay/`，只有记录与证据，不含可执行检查，不进 CI）。
+本目录包含离线实验套件（替身驱动，无真实模型调用，进入 CI）与真实模型回放记录（`b67-replay/`、`behavior-replay/`，静态留存，不进 CI）。
 
-## 内容
+## 模块清单
 
 | 路径 | 作用 |
 | --- | --- |
-| `stubs/codex_stub.py` | 模拟 `codex exec ...`；由 `EASYDEV_STUB_PLAN` JSON 控制事件、reviewer、文件改动、索引暂存、运行时 Skill 编辑、退出码、挂起与子进程。 |
-| `stubs/pytest_stub.py` | 模拟 `venv/bin/python -m pytest`；由 `EASYDEV_PYTEST_PLAN` JSON 决定每个 nodeid 的状态，输出 pytest 风格行并写 JUnit XML。 |
-| `agent_runner/` | 单宿主行为 runner、B01/B02/B16/B61/B67（含 `b67-review`）/public-contract-callers 场景与 CLI 测试。 |
-| `swebench/` | SWE-bench Lite 小样本运行器、事件归因与 CLI 测试。 |
-| `review-ablation/README.md` | 四臂审查消融协议文档；只定义对照与记录口径，不含可执行检查或实验结果。 |
-| `routing-replay/README.md` | 三任务 × 三档的路由复放协议；只定义记录字段与判读规则，不含可执行检查或实验结果。 |
-| `b67-replay/<date>/README.md` | B67 实施侧与审查侧的真实回放记录；单次、单模型，不构成回归保护。 |
-| `behavior-replay/<date>/README.md` | B01/B67/B67-review/public-contract-callers 的真实模型回放记录；单次、宿主非隔离，不构成回归保护。 |
-| `role_metric.py` | 按角色统计一次 pi 会话的 references 读取；子代理另有实际模型、usage 与耗时（主会话 jsonl 不含 usage）。用于核对报告里的 `计量` 与「复审是否读了调用方」。 |
-| `process_control.py` | 行为 runner 与 SWE-bench runner 共用的超时/进程树清理逻辑。 |
+| `stubs/codex_stub.py` | 模拟 `codex exec`：通过 `EASYDEV_STUB_PLAN` JSON 注入事件流、审查报告、改动与退出码 |
+| `stubs/pytest_stub.py` | 模拟 `pytest`：通过 `EASYDEV_PYTEST_PLAN` 输出测试日志并生成 JUnit XML |
+| `agent_runner/` | 单宿主行为 Runner，覆盖 B01、B02、B16、B61、B67 及契约场景 |
+| `swebench/` | SWE-bench Lite 小样本运行器、事件归因与 CLI 套件 |
+| `process_control.py` | 共享的跨平台超时控制与进程树清理工具 |
+| `role_metric.py` | 按角色统计 references 文件读取、实际模型与 usage 消耗 |
+| `review-ablation/` | 独立审查四臂消融实验协议文档 |
+| `routing-replay/` | 三任务 × 三档位路由复放协议文档 |
+| `b67-replay/` | B67 实施侧与审查侧的真实模型回放证据 |
+| `behavior-replay/` | 四场景行为回放的静态评测记录 |
 
-## 运行
+## 运行方式
 
 ```bash
+# 需 pytest 环境
 python3 -m pytest tests/experiments/test_role_metric.py -v
 python3 -m pytest tests/experiments/agent_runner -v
 python3 -m pytest tests/experiments/swebench -v
 ```
 
-三组互不依赖，可并行；各自内部用例相互独立，单元测试文件按顺序执行，但单个用例只使用自己的临时目录。
+三组套件互不依赖，可并行执行；各测试用例使用专属临时目录隔离。
 
 ## 替身边界
 
-替身只实现被测脚本实际调用的参数与产物，不 import 被测模块。它们模拟的是外部进程边界（Codex CLI、pytest、时钟），不模拟被测代码的内部结构；断言只检查 `runner.py` / `run.py` / `analyze_events.py` 的 CLI 输出与产物。真实模型行为、真实 pytest 执行和网络隔离都不在离线检查范围内。
+替身仅模拟外部进程接口（Codex CLI、pytest、时钟），不侵入被测模块内部。断言基于 `runner.py`、`run.py` 和 `analyze_events.py` 的 CLI 输出与产物文件；不替代真实模型的自律性评测。
