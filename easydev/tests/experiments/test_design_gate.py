@@ -168,15 +168,20 @@ def test_incremental_budget_preserves_final_reviews():
     [
         ("references/design.md", "主代理可继续施工", "施工必须委派独立开发者", "主代理设计不额外强制委派施工"),
         ("references/workflow.md", "实施保持单写入者", "实施允许多写入者", "normal 单写并受历史预算约束"),
-        ("references/workflow.md", "未放行默认串行", "未放行默认并行", "并行写入放行、验证依赖与集成预算"),
-        ("references/workflow.md", "验证依赖变化使相关证据失效", "验证依赖变化不影响已有证据", "并行写入放行、验证依赖与集成预算"),
+        ("references/workflow.md", "独立性与隔离条件全部成立才可并行，否则串行", "无条件并行，不检查独立性与隔离条件", "并行判断门槛、验证依赖与集成预算"),
+        ("references/workflow.md", "验证依赖变化使相关证据失效", "验证依赖变化不影响已有证据", "并行判断门槛、验证依赖与集成预算"),
+        ("references/workflow.md", "内容自判 1–5 片，用户指定片数优先", "内容自判任意片数，用户指定不生效", "并行片数由内容判断且用户指定优先"),
+        ("references/workflow.md", "高风险边界默认串行", "高风险边界默认并行", "高风险并行例外须明确要求并可隔离恢复"),
+        ("references/workflow.md", "串行包装不得称并行", "串行包装可称并行", "并行判断门槛、验证依赖与集成预算"),
+        ("references/workflow.md", "各批验证及最终整仓验证期间所有相关写入者停写", "各批验证及最终整仓验证期间允许写入者继续修改", "并行判断门槛、验证依赖与集成预算"),
+        ("tests/experiments/fold-eval.md", "不作为启用并行写入的前置条件", "作为启用并行写入的前置条件", "并行收益观测可选且不作为准入门槛"),
     ],
 )
 def test_design_gate_cli_rejects_rule_regression(tmp_path, rel, old, new, label):
     root = MODEL_PATH.parents[3]
     copied = tmp_path / "easydev"
     paths = [
-        "SKILL.md", "tests/behavior.md",
+        "SKILL.md", "tests/behavior.md", "tests/experiments/fold-eval.md",
         "references/workflow.md", "references/design.md", "references/roles.md",
         "references/environment.md", "references/engineering.md", "references/review.md",
         "tests/cases/design-gate/run.sh", "tests/cases/design-gate/verify.py",

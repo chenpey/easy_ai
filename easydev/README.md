@@ -1,8 +1,8 @@
 # EasyDev
 
-当前版本：`2.4.1`
+当前版本：`2.4.2`
 
-EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4450 字节，普通 quick 不加载完整编排；详细规则按需读取。主代理默认唯一写入者；full 按配置与模型阶段委派，normal 保持单写。
+EasyDev 按实际风险组织编码、设计、排障和审查。入口不超过 4700 字节，普通 quick 不加载完整编排；详细规则按需读取。主代理默认唯一写入者；full 按配置与模型阶段委派，normal 保持单写。
 
 ## 使用
 
@@ -109,7 +109,7 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [environmen
 - 缺独立能力时先暂停报受阻，用户明确授权后在授权范围内自查并给可交接审查包、明确缺口；不能称独立审查通过或 full 闭环完成。不同实例继承上下文时披露隔离限制，见 [能力降级与审查包](references/environment.md#能力降级与审查包)。
 - audit 按模块或信任边界分片，记录覆盖与跨片接口；正文最多 20 条，全部发现及证据保存在任务目录 `findings.md`，未归档前保留并在交接提供路径；关键缺陷不会因截断丢失，见 [审查规程](references/review.md#6-报告规则)。
 - 待审脚本执行与凭证隔离遵守 [审查规程](references/review.md#不可信代码执行)。保留用户改动；提交、推送、发布和对外动作遵循明确授权。
-- normal 单写、允许只读并行；full 可做审查流水线。并行写入须有对应宿主与任务类型的评测通过记录，未放行默认串行，隔离评测须明确授权；宽度默认不超过 3，规则见 [并行执行](references/workflow.md#并行执行)。
+- 并行按内容自判 1–5 片，用户指定优先，1 片即串行；normal 单写、允许只读并行，full 可按独立性与隔离门槛并写和做审查流水线，不以对照评测作为前置。高风险边界默认串行，串行包装不得称并行；分片验证不替代最终完整检查，规则见 [并行执行](references/workflow.md#并行执行)。并行只压缩彼此独立的片，不压缩审查轮次与设计收敛，未实测不得宣称提速。
 
 ## 详细规则与维护
 
@@ -121,6 +121,6 @@ Windows 路径、字段、模型阶段和实际生效核对统一见 [environmen
 - [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选评审
 - [审查规程](references/review.md)：审查原则、强度分档与全仓审计规程
 - [环境与安全](references/environment.md)：模型配置、宿主能力降级、基线安全与工作区隔离
-- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[折叠评测](tests/experiments/fold-eval.md)（调整或废除子代理角色前的评测门槛）、[版本历史](CHANGELOG.md)
+- [维护检查](tests/README.md)、[行为规约](tests/behavior.md)、[实验](tests/experiments/README.md)、[折叠评测](tests/experiments/fold-eval.md)（调整或废除子代理角色前的评测门槛）、[并行收益观测（可选）](tests/experiments/fold-eval.md#并行收益观测可选)、[版本历史](CHANGELOG.md)
 
 `tests/` 不随运行时安装。离线替身只验证验收机制，不证明真实模型遵守规则；入口字节减少也不等于已证明 token、费用或耗时收益。修改规则时同步相关引用、行为规约及受影响的可执行检查，发布保持版本一致。

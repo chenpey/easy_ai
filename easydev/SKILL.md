@@ -3,7 +3,7 @@ name: easydev
 description: >-
   编码、修复、重构、设计、计划、排障与审查；按风险选择 quick / normal / full。适用于 coding 或显式调用；纯解释及非编码请求不启动开发流程。
 metadata:
-  version: "2.4.1"
+  version: "2.4.2"
 ---
 
 # easydev
@@ -42,7 +42,7 @@ quick 默认只读本页与尝试预算；例外必读：性能比较或收益�
 
 | 场景 | 模块 |
 | --- | --- |
-| normal、full 编排、风险分流、预算 | [workflow](references/workflow.md)；[独立设计环节门控](references/design.md#启用门控) |
+| normal、full 编排、风险分流、预算、并行分片 | [workflow](references/workflow.md)；[独立设计环节门控](references/design.md#启用门控) |
 | 实现、代码质量、排障、重构、验证 | [engineering](references/engineering.md) |
 | 澄清、计划、探针、多方案评审 | [design](references/design.md) |
 | review、audit、完整独立审查规程 | [review](references/review.md) |
@@ -50,4 +50,4 @@ quick 默认只读本页与尝试预算；例外必读：性能比较或收益�
 
 ## 全程约束
 
-授权跨阶段有效；提交、推送、发布、部署及对外消息须用户授权。仅主代理控流程，其他技能不另开闭环。区分自查、独立审查与能力受阻；需要独立设计、独立审查或指定模型委派而无委派能力时，按 environment 暂停报受阻，用户授权后交审查包，不虚称 full 完成。发现、预算与停止条件禁靠改名绕过。
+授权跨阶段有效；提交、推送、发布、部署及对外消息须用户授权。仅主代理控流程，其他技能不另开闭环。并行分片先读 workflow：内容自判 1–5 片，用户指定优先；normal 单写，full 并写须满足独立性与隔离门槛，串行包装不得称并行。区分自查、独立审查与能力受阻；需要独立设计、独立审查或指定模型委派而无委派能力时，按 environment 暂停报受阻，用户授权后交审查包，不虚称 full 完成。发现、预算与停止条件禁靠改名绕过。
