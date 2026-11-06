@@ -3,7 +3,7 @@ name: easydev
 description: >-
   编码、修复、重构、设计、计划、排障与审查；按风险选择 quick / normal / full。适用于 coding 或显式调用；纯解释及非编码请求不启动开发流程。
 metadata:
-  version: "2.4.3"
+  version: "2.4.4"
 ---
 
 # easydev
@@ -12,7 +12,7 @@ metadata:
 
 ## 入口与任务分流
 
-默认 auto（按下列条件自动判档）。仅要 design/plan/debug/review/audit/spike 时只交产物；实现按影响选档，自问：是否 ≥2 独立调用方依赖、是否改共享契约且有未改使用方、是否无改前检查拦回归、用户是否要求独立审查；任一成立先读 workflow 再定档。
+默认 auto（按下列条件自动判档）。仅要 design/plan/debug/review/audit/spike 时只交产物，只读路径不改代码、不跑全量测试、构建与全仓检查；实现按影响选档，自问：是否 ≥2 独立调用方依赖、是否改共享契约且有未改使用方、是否无改前检查拦回归、用户是否要求独立审查；任一成立先读 workflow 再定档。
 
 | 路径 | 条件与动作 |
 | --- | --- |
