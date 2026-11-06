@@ -109,9 +109,14 @@ GATE_CASES = [
         (True, ["跨边界", "公共契约或持久数据"]),
     ),
     (
-        "高风险边界仅改注释或日志措辞：门控第 5 项不启用",
+        "单包高风险边界仅改注释或日志措辞：其他四项未命中，不启用",
         {"packages": 1, "high_risk": True, "changes_high_risk_behavior": False},
         (False, []),
+    ),
+    (
+        "跨两个具名包仅改高风险边界文案：第 5 项豁免不抵销第 1 项",
+        {"packages": 2, "high_risk": True, "changes_high_risk_behavior": False},
+        (True, ["跨边界"]),
     ),
 ]
 
@@ -697,6 +702,20 @@ DOC_CONTRACT = [
         ["references/workflow.md#尝试预算", "三次仍失败即停"],
     ),
     (
+        "quick 专项验证有强制加载入口且不自动升级",
+        "easydev/SKILL.md",
+        "## quick 执行核心",
+        [
+            "例外必读",
+            "性能比较或收益声明",
+            "测试依赖未知外部能力",
+            "references/engineering.md#测试硬约束与选择",
+            "references/engineering.md#验证调度与证据",
+            "均不因此升级 full",
+        ],
+        {"forbidden": ["普通 quick 只需本页（含尝试预算，其余按需）"]},
+    ),
+    (
         "workflow.md 的判定依据引入可观察的第二视角信号",
         "easydev/references/workflow.md",
         "## 分流判定",
@@ -838,7 +857,7 @@ def _scope_body(text: str, anchor: str, scope: str) -> str | None:
     """断言作用域：file=整份文件；section=锚点起截到同级或更高级标题（围栏内伪标题不计）。
 
     标题锚点按自身层级截断，所以 `### 来源优先级` 的断言不会越到 `### 字段规范`；
-    非标题锚点沿用「截到下一个二级标题」。
+    非标题锚点沿用「截到下一个二级或更高级标题」。
     """
     idx = text.find(anchor)
     if idx < 0:
@@ -1007,6 +1026,26 @@ def run_doc_contract_mechanism() -> None:
         head, tail = text.split(marker, 1)
         return marker + tail + "\n" + head
 
+    quick_clause = (
+        "quick 默认只读本页与尝试预算；例外必读：性能比较或收益声明读 [性能](references/engineering.md#测试硬约束与选择)，"
+        "测试依赖未知外部能力读 [验证调度](references/engineering.md#验证调度与证据)；均不因此升级 full。"
+    )
+
+    def move_quick_clause(text: str) -> str:
+        if quick_clause + "\n\n" not in text or "## 按需加载" not in text:
+            raise RuleError("SKILL.md 的 quick 专项验证段与预期不符")
+        text = text.replace(quick_clause + "\n\n", "", 1)
+        return text.replace("## 按需加载", "## 按需加载\n\n" + quick_clause, 1)
+
+    def legacy_quick_clause(text: str) -> str:
+        if quick_clause not in text:
+            raise RuleError("SKILL.md 的 quick 专项验证段与预期不符")
+        return text.replace(
+            "## 按需加载",
+            "普通 quick 只需本页（含尝试预算，其余按需）。\n\n## 按需加载",
+            1,
+        )
+
     cases = (
         ("计量句移到邻节必须判负", "easydev/SKILL.md", move_metric, "计量降为按需", False),
         ("旧计量措辞与新措辞并存必须判负", "easydev/SKILL.md", legacy_metric, "计量降为按需", False),
@@ -1014,6 +1053,8 @@ def run_doc_contract_mechanism() -> None:
         ("围栏内锚点的断言不越出小节", "easydev/references/workflow.md", move_ledger_needle, "账本模板含门控判定", False),
         ("文件作用域允许跨节搬动", "easydev/references/engineering.md", move_generate_section, "注释与生成文件判据", True),
         ("来源规则搬到三级邻节必须判负", "easydev/references/environment.md", move_source_priority, "environment 的来源优先级", False),
+        ("quick 专项验证段移到邻节必须判负", "easydev/SKILL.md", move_quick_clause, "quick 专项验证", False),
+        ("旧 quick 措辞与新措辞并存必须判负", "easydev/SKILL.md", legacy_quick_clause, "quick 专项验证", False),
     )
     for label, rel, transform, label_part, should_pass in cases:
         with tempfile.TemporaryDirectory() as tmp:

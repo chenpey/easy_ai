@@ -2,6 +2,21 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.1 更新说明（2026-11-05）
+
+关闭深度审计的 7 项确定发现；模型配置 schema 与运行依赖不变，修复 3 次、d/3、r/5 上限不放宽。
+
+- **quick 专项验证**：入口列出性能比较/收益声明与未知外部测试能力的必读例外，链接工程验证小节，不因此升级 full。
+- **棘轮双写修复**：先将额度校验限定在与 SKILL 版本一致的最新发布小节，历史额度不再满足当前双写，再调整本版体积上限。
+- **规则与记录修复**：错误堆栈先脱敏，疑似凭据泄露先告知；声明模型配置文件类型、大小、重复键、相对路径及不回退口径；完整审查/审计记录保存为任务目录 findings.md，未归档前保留并在交接提供路径。
+- **行为与载体同步**：B64 的纯措辞豁免只限门控第 5 项，跨两包仍启用设计；B50/B56 明确 quick 专项加载；固定 B67 审查夹具只接受 P3，增加仅改 P2 的 CLI 负例。design-gate 增加跨包对照、quick 入口契约与机制自检。
+- **建议裁定**：S-1..S-4 本次不采纳：既有预算规则已覆盖轮次，恢复字段与返回协议统一另行处理，README 只同步本次受影响声明，避免扩展修复范围。
+- **体积与上限**：依据 2026-11-05 用户对话授权（总量上限不超过 75096、入口上限不超过 4830），保留既有规则信息以补齐审计缺口；SKILL.md 4198 → 4411 字节，入口上限 4200 → 4450，余量 39；规则正文合计 65301 → 66373 字节，MAX_TOTAL 65301 → 66500，余量 127；后续 SKILL.md + references/*.md 合计不得超过 66500 字节。
+
+验证记录：A-2 红绿在独立副本 `/tmp/easydev-a2-red/repo` 实跑：只把 `MAX_TOTAL` 改为 131715、当前 2.4.0 小节仍写 65301 时 exit 1，报错指向「当前版本 2.4.0 小节」；当前小节同步 131715 后 exit 0。最终 2.4.1 快照另跑三组集成：只把上限改为 70000 时 exit 1；前言围栏伪小节与缩进历史标题两组红态各 exit 1，按列 0 恢复后各 exit 0；同一红态文件上旧版全文 grep 仍 exit 0，证明历史额度不再满足当前双写。B67 新增 P2 负例在旧 `ALLOWED_SEVERITIES` 下失败（实际 returncode 0、期望 1，即 P2 被放行），改为只接受 P3 后 `python3 -m pytest tests/experiments/agent_runner/test_cli.py -k b67_review -v` 4 passed。新 quick 契约在旧入口上使 `bash tests/cases/design-gate/run.sh` exit 1（缺新触发词与两个锚点），入口改后 109/109 通过，两组机制变异分别判负为「缺 [」与「已废弃措辞」。§3 固定表 36 条与补充/反向 B01–B06、C01–C03 加追加边界共 53 条 awk 输入全部符合预期（B03 为 1、C03 为 0）。A-5 四条读取契约用 `models.select` 在隔离数据上 10/10（软链、524288/524289 字节、重复键、相对路径 + `repo_root`）。最终快照：`bash scripts/check.sh` exit 0（4411/4450、66373/66500、四处版本 2.4.1）；design-gate 109/109、audit-overflow 16/16、models-config 全部通过、version-gate 通过（本机未装 PyYAML，只跑无 PyYAML 分支）、public-contract-callers 固定补丁红绿与 11 类伪修复拒绝通过；pytest 48 + 91 + 54 passed（193 passed，pytest 8.4.2）。日志目录 `/tmp/easydev-fix-2026-11-05/logs/`。
+
+未验证：B50/B56 的真实模型加载与能力探测行为、B64 的真实模型分流、B67 的真实模型定级与只读行为均未做真实宿主回放；替身与确定性检查只验证验收机制。未核验用户配置升级模型是否在实际委派工具完整清单中，也未跨宿主核验 antigravity 档位及非推理模型 off 映射；不修改个人配置。已安装用户副本更新与宿主实际加载未实测，Windows/Linux 差异以对应 CI 或宿主实测为准。`bash scripts/smoke-install.sh` 原样执行被沙箱拒绝（`mktemp` 在 `/var/folders/...` 下报 Operation not permitted），改用脚本自带 `SMOKE_TMP=/tmp/easydev-smoke-home` 后 exit 0，仅覆盖脚本自建临时 HOME 的安装契约。本机 `python3` 缺 pytest，pytest 相关命令改用 `/tmp/easydev-venv/bin/python`（3.12.15，pytest 8.4.2，与 CI 固定版本一致）。CI 尚未运行，不以 CI 覆盖声明通过。
+
 ## 2.4.0 更新说明（2026-11-05）
 
 按审计结论修复宿主契约漂移、分档与施工闸口径、测试底线与交接可执行性。`models.json` schema 收紧：移除无宿主依据的 `none`/`ultra`，新增 `off`；修复 3 次、`d/3`、`r/5` 上限不放宽。

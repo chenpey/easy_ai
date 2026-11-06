@@ -34,7 +34,7 @@ for SKILL_NAME in easythink easydev; do
   SKILL_SIZE=$(tr -d '\r' < "$SKILL_FILE" | wc -c | tr -d ' ')
   case "$SKILL_NAME" in
     easythink) MAX_SIZE=12288 ;;
-    easydev) MAX_SIZE=4200 ;;
+    easydev) MAX_SIZE=4450 ;;
     *) MAX_SIZE=0 ;;
   esac
   if [ "$MAX_SIZE" -gt 0 ]; then
@@ -617,16 +617,66 @@ echo "=== 10. 规则文档总量棘轮（只减不增） ==="
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=65301
+MAX_TOTAL=66500
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then
   echo "Error: 规则文档总量超过棘轮 ($TOTAL > $MAX_TOTAL)；先删减同等篇幅再新增，或按 CHANGELOG 说明理由上调上限。" >&2
   exit 1
 fi
-# 基线双写：CHANGELOG 必须写明同一个上限（含「合计不得超过 N 字节」措辞），防止两处静默漂移。
-if ! grep -q "合计不得超过 $MAX_TOTAL 字节" easydev/CHANGELOG.md; then
-  echo "Error: MAX_TOTAL=$MAX_TOTAL 未出现在 CHANGELOG；基线双写须同步" >&2
+# 基线双写只接受最新发布小节；其版本须与 SKILL.md 一致。
+CURRENT_VERSION="$(python3 scripts/skill_version.py easydev/SKILL.md)"
+if ! awk -v version="$CURRENT_VERSION" -v limit="$MAX_TOTAL" '
+BEGIN {
+  prefix = "## " version " 更新说明（"
+  phrase = "合计不得超过 " limit " 字节"
+}
+{
+  if (index($0, "\r")) { unsupported = 1; next }
+  line = $0
+  marker = substr(line, 1, 1)
+  run_length = 0
+  if (marker == "`" || marker == "~") {
+    while (substr(line, run_length + 1, 1) == marker) run_length++
+  }
+  if (fence_char != "") {
+    if (marker == fence_char && run_length >= fence_length &&
+        substr(line, run_length + 1) ~ /^[[:space:]]*$/) {
+      fence_char = ""
+      fence_length = 0
+    }
+    next
+  }
+  if (line ~ /^[[:space:]]/) {
+    candidate = line
+    for (indent = 0; indent < 3 && substr(candidate, 1, 1) == " "; indent++) {
+      candidate = substr(candidate, 2)
+    }
+    if (indent > 0 && candidate !~ /^[[:space:]]/ &&
+        (candidate ~ /^```/ || candidate ~ /^~~~/ ||
+         (match(candidate, /^#+/) && RLENGTH <= 6 &&
+          (length(candidate) == RLENGTH || substr(candidate, RLENGTH + 1, 1) ~ /^[ \t]/)) ||
+         candidate ~ /^=+[ \t]*$/ || candidate ~ /^-+[ \t]*$/ ||
+         substr(candidate, 1, 1) == "<")) unsupported = 1
+    next
+  }
+  if (line ~ /^=+[ \t]*$/ || line ~ /^-+[ \t]*$/) { unsupported = 1; next }
+  if (substr(line, 1, 1) == "<") { unsupported = 1; next }
+  if (run_length >= 3 && index(substr(line, run_length + 1), marker) == 0) {
+    fence_char = marker
+    fence_length = run_length
+    next
+  }
+  if (line ~ /^##([ \t]|$)/) {
+    if (seen++) { active = 0; next }
+    active = (index(line, prefix) == 1)
+    valid = active
+  }
+  if (active && index(line, phrase)) matched = 1
+}
+END { exit !(valid && matched && fence_char == "" && !unsupported) }
+' easydev/CHANGELOG.md; then
+  echo "Error: MAX_TOTAL=$MAX_TOTAL 在 CHANGELOG 当前版本 $CURRENT_VERSION 小节校验失败（额度不一致或格式不支持）；请使用列 0 的 ## 发布标题与额度声明，基线双写须同步" >&2
   exit 1
 fi
 if [ "$TOTAL" -lt "$MAX_TOTAL" ]; then

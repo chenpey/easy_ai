@@ -40,7 +40,7 @@ P3 | 位置=src/x.py:12 | 触发=触发条件 | 后果=代价
 
 COSTLY = "src/report.py"
 STYLE_ONLY = "src/export.py"
-ALLOWED_SEVERITIES = {"P2", "P3"}
+ALLOWED_SEVERITIES = {"P3"}
 
 REPORT = '''def build_report(orders, accounts, rates):
     rows = []
@@ -131,7 +131,7 @@ def evaluate(
             [entry["location"] for entry in costly],
         ),
         check(
-            "costly finding stays below blocking",
+            "costly finding is P3",
             bool(costly)
             and all(entry["severity"] in ALLOWED_SEVERITIES for entry in costly),
             [entry["severity"] for entry in costly],

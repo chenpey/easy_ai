@@ -1397,6 +1397,30 @@ class RunnerCliTest:
         assert checks["review does not report pure style"]
         assert result["evaluation"]["details"]["code_quality_loaded"] is False
 
+    def test_run_b67_review_rejects_costly_p2(self) -> None:
+        report = (
+            "限制：未审并发写入路径。\n\n"
+            "```easydev-findings\n"
+            + B67_COST_FINDING.replace("P3 |", "P2 |", 1)
+            + "\n```"
+        )
+        fixture = self.stub_environment(
+            "b67-review-p2",
+            {"agent_messages": [report], "commands": ["cat src/report.py"]},
+        )
+        completed = self.run_scenario(fixture, "b67-review")
+        assert completed.returncode == 1, completed.stdout
+        result = self.result(fixture, "b67-review")
+        assert result["evaluation"]["passed"] is False
+        assert result["changed_paths"] == []
+        failed = [item for item in result["evaluation"]["checks"] if not item["passed"]]
+        assert len(failed) == 1, failed
+        assert failed[0]["detail"] == ["P2"]
+        findings = result["evaluation"]["details"]["findings"]
+        assert [(item["severity"], item["location"]) for item in findings] == [
+            ("P2", "src/report.py:4")
+        ]
+
     def test_run_b67_review_tracks_code_quality_module_access(self) -> None:
         report = (
             "限制：未审并发写入路径。\n\n"
