@@ -933,6 +933,46 @@ DOC_CONTRACT = [
         ["off / minimal", "xhigh / max", "非推理模型只有"],
         {"forbidden": ["ultra"]},
     ),
+    (
+        "入口把开工核实角色配置变成硬门",
+        "easydev/SKILL.md",
+        "## 全程约束",
+        ["除 quick 与单次只读审查外，开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
+        {"forbidden": ["需要独立设计、独立审查或指定模型委派"]},
+    ),
+    (
+        "模型配置在开工前必读",
+        "easydev/references/environment.md",
+        "## 模型配置",
+        ["开工前必读", "分派前按角色取模型"],
+        {"forbidden": ["仅在真正分派或用户要求查看/调整配置时读取"]},
+    ),
+    (
+        "生效模型写入交付报告",
+        "easydev/references/environment.md",
+        "### 分派与生效核对",
+        ["交付报告列出各角色生效模型"],
+    ),
+    (
+        "工作区外配置不可因权限被拒当作不存在",
+        "easydev/references/environment.md",
+        "### 来源优先级",
+        ["工作区外配置优先用宿主读取工具", "不得当不存在"],
+    ),
+    (
+        "normal 开工先核实角色模型",
+        "easydev/references/workflow.md",
+        "## normal 流程",
+        ["开工先按 [模型配置](environment.md#模型配置) 核实角色模型"],
+        {"forbidden": ["分派前按 [模型配置](environment.md#模型配置) 选模型"]},
+    ),
+    (
+        "full 开工先核实角色模型与深度",
+        "easydev/references/workflow.md",
+        "## full 编排",
+        ["开工先按 [模型配置](environment.md#模型配置) 核实角色模型与深度"],
+        {"forbidden": ["分派前按 [模型配置](environment.md#模型配置) 取角色模型"]},
+    ),
 ]
 
 
@@ -1095,6 +1135,16 @@ def run_doc_contract_mechanism() -> None:
         text = text.replace("设计环节（门控命中项或不启用理由）/design.md 版本与冻结时间/设计者：", "设计环节（门控命中项或不启用理由）/design.md 版本与快照/设计者：", 1)
         return text.replace("## 审查与修复", "## 审查与修复\n\n冻结时间：见上。", 1)
 
+    def move_model_gate(text: str) -> str:
+        clause = (
+            "除 quick 与单次只读审查外，开工先按 environment 核实角色配置；"
+            "未核实不得假定 inherit 自任设计或写入，任何分派都以核实值为准；"
+        )
+        if clause not in text or "## 按需加载" not in text:
+            raise RuleError("SKILL.md 的开工核实段与预期不符")
+        text = text.replace(clause, "", 1)
+        return text.replace("## 按需加载", "## 按需加载\n\n" + clause, 1)
+
     def move_source_priority(text: str) -> str:
         moved = (
             "- **文件不合并**：选定最高优先级的基础文件后再应用对话局部覆盖。"
@@ -1139,6 +1189,7 @@ def run_doc_contract_mechanism() -> None:
         ("围栏内锚点的断言不越出小节", "easydev/references/workflow.md", move_ledger_needle, "账本模板含门控判定", False),
         ("文件作用域允许跨节搬动", "easydev/references/engineering.md", move_generate_section, "注释与生成文件判据", True),
         ("来源规则搬到三级邻节必须判负", "easydev/references/environment.md", move_source_priority, "environment 的来源优先级", False),
+        ("开工核实角色配置搬到按需加载必须判负", "easydev/SKILL.md", move_model_gate, "入口把开工核实角色配置变成硬门", False),
         ("quick 专项验证段移到邻节必须判负", "easydev/SKILL.md", move_quick_clause, "quick 专项验证", False),
         ("旧 quick 措辞与新措辞并存必须判负", "easydev/SKILL.md", legacy_quick_clause, "quick 专项验证", False),
         ("并行门槛搬到邻节必须判负", "easydev/references/workflow.md",
