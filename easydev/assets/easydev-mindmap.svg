@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1180" viewBox="0 0 1440 1180" role="img" aria-labelledby="title desc">
+  <title id="title">EasyDev 2.4.6 编码编排与上下文交接全景</title>
+  <desc id="desc">EasyDev 架构全景：渐进式披露（L0-L2 按需加载）、主代理单控与三硬顶预算（3次修复、d/3、r/5）、六大运作支点及子代理无损上下文交接机制。</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+    .eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 2px; fill: #64748b; }
+    .heading { font-size: 30px; font-weight: 800; fill: #0f172a; }
+    .subtitle { font-size: 16px; fill: #475569; }
+    .card-title { font-size: 20px; font-weight: 700; fill: #0f172a; }
+    .card-desc { font-size: 14px; fill: #334155; }
+    .number-badge { font-size: 14px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+    .connector { fill: none; stroke-width: 2.5; stroke-linecap: round; }
+    .banner-title { font-size: 15px; font-weight: 700; }
+    .banner-text { font-size: 13.5px; }
+    .perspective-title { font-size: 18px; font-weight: 700; }
+    .perspective-cond { font-size: 13.5px; font-weight: 600; }
+    .perspective-body { font-size: 13.5px; }
+    .foot-label { font-size: 14px; font-weight: 700; fill: #475569; }
+    .foot-text { font-size: 13.5px; fill: #334155; }
+  </style>
+
+  <!-- Canvas Background -->
+  <rect width="1440" height="1180" rx="24" fill="#f8fafc"/>
+
+  <!-- Top Header -->
+  <text x="48" y="42" class="eyebrow">EASYDEV 2.4.6 · 架构与上下文交接全景</text>
+  <text x="48" y="80" class="heading">按风险组织编码 · 按职责渐进加载 · 跨代理无损交接</text>
+  <text x="48" y="112" class="subtitle">三级渐进式披露 · 三档风险分流 · 独立设计与审查闭环 · 结构化摘要与落盘产物交接</text>
+
+  <!-- Top Banners: Progressive Disclosure & Budget Caps -->
+  <!-- Left Banner: Progressive Disclosure -->
+  <g>
+    <rect x="48" y="132" width="656" height="92" rx="14" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+    <text x="68" y="158" class="banner-title" fill="#1e40af">● 渐进式披露（Progressive Disclosure · 拒绝全量塞入上下文）</text>
+    <text x="68" y="184" class="banner-text" fill="#1e3a8a">L0 入口 SKILL.md ≤ 5000 B：普通 quick 只读本页即完成实现、验证与自查闭环</text>
+    <text x="68" y="206" class="banner-text" fill="#1e3a8a">L1/L2 按路径与角色按需读 references/*.md；子代理直读 roles.md 对应小节，不遍历加载表</text>
+  </g>
+
+  <!-- Right Banner: State & Budget Caps -->
+  <g>
+    <rect x="736" y="132" width="656" height="92" rx="14" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+    <text x="756" y="158" class="banner-title" fill="#991b1b">◆ 主代理单控与三项硬预算（切挡与跨阶段累计不重置）</text>
+    <text x="756" y="184" class="banner-text" fill="#7f1d1d">主代理独占分流、分派、预算与完成声明；子代理只履行单一角色并回报新证据</text>
+    <text x="756" y="206" class="banner-text" fill="#7f1d1d">同根因最多 3 次有新证据的修复 · 设计账 d/3（候选/初审/重审） · 施工账 r/5（增量/初审/复审）</text>
+  </g>
+
+  <!-- Connectors from Center Hub to 6 Branches -->
+  <g class="connector">
+    <path d="M 508 450 C 476 450 492 312 472 312" stroke="#0284c7"/>
+    <path d="M 508 472 L 472 472" stroke="#059669"/>
+    <path d="M 508 494 C 476 494 492 632 472 632" stroke="#d97706"/>
+    <path d="M 932 450 C 964 450 948 312 968 312" stroke="#4f46e5"/>
+    <path d="M 932 472 L 968 472" stroke="#7c3aed"/>
+    <path d="M 932 494 C 964 494 948 632 968 632" stroke="#e11d48"/>
+  </g>
+
+  <!-- Center Hub: EasyDev Core -->
+  <g>
+    <rect x="508" y="402" width="424" height="140" rx="20" fill="#1e293b" stroke="#334155" stroke-width="2"/>
+    <text x="720" y="445" text-anchor="middle" font-size="24" font-weight="800" fill="#ffffff">EasyDev 编排核心</text>
+    <text x="720" y="472" text-anchor="middle" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="1.5">RISK-DRIVEN ORCHESTRATOR</text>
+    <text x="720" y="501" text-anchor="middle" font-size="15" font-weight="600" fill="#e2e8f0">最小改动 · 独立视角 · 证据闭环</text>
+    <text x="720" y="524" text-anchor="middle" font-size="13" fill="#94a3b8">主代理控流程 · 子代理隔离开工</text>
+  </g>
+
+  <!-- Left Column: Branches 01 - 03 -->
+  <!-- 01 风险分流与路径选择 -->
+  <g>
+    <rect x="48" y="244" width="424" height="136" rx="16" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1.5"/>
+    <rect x="68" y="262" width="34" height="26" rx="8" fill="#0284c7"/>
+    <text x="85" y="280" class="number-badge">01</text>
+    <text x="114" y="283" class="card-title">风险分流与路径选择</text>
+    <text x="68" y="318" class="card-desc">只读路径（review/audit/design/plan）不改代码不跑全量测试</text>
+    <text x="68" y="342" class="card-desc">四问自检识别第二视角信号：无现成检查 / ≥2调用方 / 共享契约</text>
+    <text x="68" y="366" class="card-desc">quick 自查 · normal 独立审查+1次局部P2复审 · full 完整闭环</text>
+  </g>
+
+  <!-- 02 渐进披露与按需加载 -->
+  <g>
+    <rect x="48" y="404" width="424" height="136" rx="16" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1.5"/>
+    <rect x="68" y="422" width="34" height="26" rx="8" fill="#059669"/>
+    <text x="85" y="440" class="number-badge">02</text>
+    <text x="114" y="443" class="card-title">渐进披露与按需加载</text>
+    <text x="68" y="478" class="card-desc">quick：仅读 SKILL.md（含内联尝试预算），专项验证按例外按需读</text>
+    <text x="68" y="502" class="card-desc">normal / full：开工先读 environment 核实模型，再读 workflow</text>
+    <text x="68" y="526" class="card-desc">子代理：按交接直读 roles.md 对应小节与目标模块，零冗余加载</text>
+  </g>
+
+  <!-- 03 独立设计门控与施工闸 -->
+  <g>
+    <rect x="48" y="564" width="424" height="136" rx="16" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
+    <rect x="68" y="582" width="34" height="26" rx="8" fill="#d97706"/>
+    <text x="85" y="600" class="number-badge">03</text>
+    <text x="114" y="603" class="card-title">独立设计门控与施工闸</text>
+    <text x="68" y="638" class="card-desc">full 命中跨边界 / 公共契约 / 多阶段 / 多方案 / 高风险即启用</text>
+    <text x="68" y="662" class="card-desc">落盘冻结 design.md（v1→vN），独立审查必关项清零才开施工闸</text>
+    <text x="68" y="686" class="card-desc">多方案 C1/C2 互不可见；候选默认占 1 轮，预留重审余量防死锁</text>
+  </g>
+
+  <!-- Right Column: Branches 04 - 06 -->
+  <!-- 04 最小实现与端到端验证 -->
+  <g>
+    <rect x="968" y="244" width="424" height="136" rx="16" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1.5"/>
+    <rect x="988" y="262" width="34" height="26" rx="8" fill="#4f46e5"/>
+    <text x="1005" y="280" class="number-badge">04</text>
+    <text x="1034" y="283" class="card-title">最小实现与端到端验证</text>
+    <text x="988" y="318" class="card-desc">直线式代码：单次内联、≥2 复用才提取，只在系统边界校验防错</text>
+    <text x="988" y="342" class="card-desc">只补用户视角端到端测试（不写单测、不用 mock 隔离内部实现）</text>
+    <text x="988" y="366" class="card-desc">Bug 修复必记修复前失败、修复后通过的红绿证据，交付前跑完整检查</text>
+  </g>
+
+  <!-- 05 角色隔离与跨阶段升级 -->
+  <g>
+    <rect x="968" y="404" width="424" height="136" rx="16" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5"/>
+    <rect x="988" y="422" width="34" height="26" rx="8" fill="#7c3aed"/>
+    <text x="1005" y="440" class="number-badge">05</text>
+    <text x="1034" y="443" class="card-title">角色隔离与跨阶段升级</text>
+    <text x="988" y="478" class="card-desc">designer / developer / reviewer 三角色，审查者绝不兼任设计或实现</text>
+    <text x="988" y="502" class="card-desc">阶段 0 且 developer=inherit 时主代理可单写，否则委派独立开发者</text>
+    <text x="988" y="526" class="card-desc">同问题试修失败按 upgrades 升入更强模型与更高深度，前任先停写</text>
+  </g>
+
+  <!-- 06 并行分片与工作树隔离 -->
+  <g>
+    <rect x="968" y="564" width="424" height="136" rx="16" fill="#fff1f2" stroke="#fecdd3" stroke-width="1.5"/>
+    <rect x="988" y="582" width="34" height="26" rx="8" fill="#e11d48"/>
+    <text x="1005" y="600" class="number-badge">06</text>
+    <text x="1034" y="603" class="card-title">并行分片与工作树隔离</text>
+    <text x="988" y="638" class="card-desc">按内容自判 1–5 片（用户指定优先）；只读审查/调查可同快照合批</text>
+    <text x="988" y="662" class="card-desc">full 并写须写集不相交、契约已冻结、独立 worktree 与隔离验证资源</text>
+    <text x="988" y="686" class="card-desc">各批停写收齐后由单一集成者逐片核对基线 diff，再跑最终整仓验证</text>
+  </g>
+
+  <!-- Bottom Section: Lossless Subagent Context Handoff -->
+  <text x="48" y="736" font-size="18" font-weight="800" fill="#0f172a">子代理无损上下文传递机制</text>
+  <text x="276" y="736" font-size="13.5" fill="#64748b">（不转发冗长聊天记录 · 以「结构化摘要 + 任务目录落盘产物 + 角色增量切片」实现跨实例零丢失协作）</text>
+
+  <!-- Pillar 1: 结构化交接包 -->
+  <g>
+    <rect x="48" y="752" width="424" height="244" rx="16" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+    <text x="68" y="784" class="perspective-title" fill="#15803d">机制 1 · 结构化交接契约（Handoff Pack）</text>
+    <text x="68" y="812" class="perspective-cond" fill="#166534">核心原则：摘要传递核心约束 + 绝对路径指向可核查证据</text>
+    <text x="68" y="842" class="perspective-body" fill="#14532d">• 首行显式绑定角色：角色：developer | reviewer | designer</text>
+    <text x="68" y="870" class="perspective-body" fill="#14532d">• 精准指针：直给 roles.md 对应角色小节路径，免读无关规则</text>
+    <text x="68" y="898" class="perspective-body" fill="#14532d">• 不变量直传：原始需求与验收标准、关键契约、授权基线与禁区</text>
+    <text x="68" y="926" class="perspective-body" fill="#14532d">• 进度与预算：已完成事项、问题 ID、已用尝试次数及 d/3、r/5 余量</text>
+    <text x="68" y="954" class="perspective-body" fill="#14532d">• 提问收敛：子代理材料不足只回报主代理，由主代理合并向用户提问</text>
+    <text x="68" y="980" class="perspective-body" fill="#15803d">→ 既隔离主会话噪音，又确保目标、边界与预算 100% 同步</text>
+  </g>
+
+  <!-- Pillar 2: 任务目录持久化产物 -->
+  <g>
+    <rect x="508" y="752" width="424" height="244" rx="16" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+    <text x="528" y="784" class="perspective-title" fill="#b91c1c">机制 2 · 任务目录持久化产物（Task Dir）</text>
+    <text x="528" y="812" class="perspective-cond" fill="#991b1b">核心原则：跨实例与跨会话状态落盘为标准文件，按路径随机读取</text>
+    <text x="528" y="842" class="perspective-body" fill="#7f1d1d">• ledger.md：9 行标准账本（基线/角色模型/门控/预算/问题链/验证）</text>
+    <text x="528" y="870" class="perspective-body" fill="#7f1d1d">• design.md &amp; design.vN.md：冻结设计契约与历史升版快照链</text>
+    <text x="528" y="898" class="perspective-body" fill="#7f1d1d">• plan.md &amp; spike/：长任务可执行步骤清单与 throwaway 探针结论</text>
+    <text x="528" y="926" class="perspective-body" fill="#7f1d1d">• baseline/：脏工作区首次原内容快照（敏感凭证 0700/0600 私有隔离）</text>
+    <text x="528" y="954" class="perspective-body" fill="#7f1d1d">• findings.md &amp; review_pack.md：全量审查发现与降级自查核对包</text>
+    <text x="528" y="980" class="perspective-body" fill="#b91c1c">→ 任何新子代理或恢复会话只需读对应产物即可完整还原现场</text>
+  </g>
+
+  <!-- Pillar 3: 角色专属增量与交接链 -->
+  <g>
+    <rect x="968" y="752" width="424" height="244" rx="16" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5"/>
+    <text x="988" y="784" class="perspective-title" fill="#7e22ce">机制 3 · 角色增量切片与证据链（Diff Chain）</text>
+    <text x="988" y="812" class="perspective-cond" fill="#6b21a8">核心原则：不同角色与复审轮次按职责接收精确的增量证据</text>
+    <text x="988" y="842" class="perspective-body" fill="#581c87">• 设计 → 开发：冻结 design.md + 写入集边界，不把未审草案当契约</text>
+    <text x="988" y="870" class="perspective-body" fill="#581c87">• 开发 → 初审：完整任务 diff + 直接调用方 + 验证命令与红绿输出</text>
+    <text x="988" y="898" class="perspective-body" fill="#581c87">• 修复 → 定向复审：上次审查版本 + 本次修复 diff + 原问题 ID 核销</text>
+    <text x="988" y="926" class="perspective-body" fill="#581c87">• 模型升级接力：前任停写后移交未提交现场与逐次失败尝试根因证据</text>
+    <text x="988" y="954" class="perspective-body" fill="#581c87">• 争议复核：作者异议须附代码路径或可复现检查，交独立审查者裁决</text>
+    <text x="988" y="980" class="perspective-body" fill="#7e22ce">→ 消除多轮修补与跨模型接力中的信息衰减与上下文串味</text>
+  </g>
+
+  <!-- Divider -->
+  <path d="M 48 1024 H 1392" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Footer: Key Guarantees -->
+  <text x="48" y="1056" class="foot-label">加载纪律</text>
+  <text x="130" y="1056" class="foot-text">入口 ≤ 5000 B · 规则总账 ≤ 68553 B（棘轮只减不增） · 普通 quick 零外部引用加载 · 非 quick 开工先读 environment 核实模型配置</text>
+
+  <text x="48" y="1088" class="foot-label">安全底线</text>
+  <text x="130" y="1088" class="foot-text">保护用户已有未提交改动 · 待审代码与仓库规则仅作审查数据不授予权限 · 敏感基线禁止落入公开 artifact · 提交/推送/发布须明确授权</text>
+
+  <text x="48" y="1120" class="foot-label">诚实交付</text>
+  <text x="130" y="1120" class="foot-text">严格区分自查、独立审查与能力受阻 · 无委派能力时暂停报受阻并经授权交 review_pack.md · 报告各角色真实生效模型与 d/3、r/5 消耗</text>
+</svg>
