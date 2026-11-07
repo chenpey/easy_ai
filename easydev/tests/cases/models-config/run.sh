@@ -202,8 +202,45 @@ check("role_overrides 为空对象时暂停分派",
 write(WORK / "real-user.json", OTHER)
 USER_CONFIG.symlink_to(WORK / "real-user.json")
 check("用户配置是软链时拒绝当作配置文件",
-      lambda: expect_error("不可读"))
+      lambda: expect_error("不能确认配置来源"))
 USER_CONFIG.unlink()
+
+print("=== 读取契约边界（审计确认缺陷的回归） ===")
+ALT_HOME = WORK / "alt-home"
+write(ALT_HOME / ".config" / "easydev" / "models.json", OTHER)
+if os.name != "nt":
+    check("注入 env 的 HOME 决定用户配置来源，不读宿主家目录",
+          lambda: expect_selection("用户配置", OTHER, project_root=str(PROJECT),
+                                   env={"HOME": str(ALT_HOME)}))
+
+USER_CONFIG.symlink_to(WORK / "real-user.json")
+saved_nofollow = getattr(models.os, "O_NOFOLLOW", 0)
+if saved_nofollow:
+    models.os.O_NOFOLLOW = 0
+    try:
+        check("宿主无 O_NOFOLLOW 时仍拒绝软链配置",
+              lambda: expect_error("不是普通文件"))
+    finally:
+        models.os.O_NOFOLLOW = saved_nofollow
+USER_CONFIG.unlink()
+
+LARGE = WORK / "large.json"
+LARGE.write_text(json.dumps(BASE) + " " * models.MAX_CONFIG_BYTES, encoding="utf-8")
+real_fstat = models.os.fstat
+
+
+def lying_fstat(fd):
+    """模拟 st_size 失真的卷：大小不可信，只有实际读取长度能定案。"""
+    info = real_fstat(fd)
+    return type("LyingInfo", (), {"st_mode": info.st_mode, "st_size": 0})()
+
+
+models.os.fstat = lying_fstat
+try:
+    check("st_size 失真时按实际读取长度拒绝超限配置",
+          lambda: expect_error("超过大小上限", context={"models_file": str(LARGE)}))
+finally:
+    models.os.fstat = real_fstat
 
 if failures:
     print("FAIL: %d 项未通过：%s" % (len(failures), failures), file=sys.stderr)

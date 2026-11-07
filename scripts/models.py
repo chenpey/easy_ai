@@ -101,8 +101,8 @@ def _role_tuple(role: Dict[str, Any]) -> Tuple[Any, Any]:
     return (role.get("model"), role.get("reasoning_effort"))
 
 
-def validate_config(value: Any, *, partial_roles: bool = False) -> None:
-    """严格校验一份完整配置；partial_roles 供 machine context 的合成校验使用。"""
+def validate_config(value: Any) -> None:
+    """严格校验一份完整配置。"""
     config = _require_object(value, "$")
     _reject_unknown(config, TOP_LEVEL_KEYS, "$")
     for role_name in REQUIRED_ROLES:
@@ -174,12 +174,18 @@ def user_config_path(env: Optional[Dict[str, str]] = None) -> str:
     appdata = environment.get("APPDATA")
     if os.name == "nt" and appdata:
         return os.path.join(appdata, "easydev", "models.json")
-    return os.path.join(os.path.expanduser("~"), ".config", "easydev", "models.json")
+    # 注入的 env 优先：隔离环境不能被静默地换成宿主家目录。
+    home = environment.get("HOME") or os.path.expanduser("~")
+    return os.path.join(home, ".config", "easydev", "models.json")
 
 
 def _read_config(path: str, source: str) -> Selection:
     path = os.path.expanduser(path)
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    if not nofollow and os.path.islink(path):
+        # 平台无 O_NOFOLLOW（如 Windows）时显式拦软链，不靠打开的副作用。
+        return Selection(None, source, "%s 不是普通文件；不能确认配置来源" % source)
     try:
         fd = os.open(path, flags)
     except FileNotFoundError:
@@ -196,6 +202,9 @@ def _read_config(path: str, source: str) -> Selection:
         with os.fdopen(fd, "rb") as handle:
             fd = -1
             payload = handle.read(MAX_CONFIG_BYTES + 1)
+        # st_size 可能失真（特殊卷）或与并发追写赛跑，以实际读取长度定案。
+        if len(payload) > MAX_CONFIG_BYTES:
+            return Selection(None, source, "%s 超过大小上限；不能确认配置来源" % source)
     except OSError:
         return Selection(None, source, "%s 不可读；不能确认配置来源，按规则暂停分派" % source)
     finally:

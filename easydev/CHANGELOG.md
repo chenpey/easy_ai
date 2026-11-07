@@ -2,6 +2,30 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.6 更新说明（2026-11-08）
+
+修复 Gemini 全仓审计与 easydev full 完整初审中经复核确认的 18 项缺陷（4 项 P1、8 项 P2、6 项 P3），并对 6 项判为不成立或无需改动；另有 8 条改进建议未实施。流程档位、审查轮次、三次修复上限与模型 schema 不变。
+
+- **normal 放行漏洞（P1）**：`gate_model.NormalReviewFlow._is_immediate_full` 只对 `in_scope` 为真的 P2 判「未确证局部」，触及公共契约或数据语义的 P2（`in_scope` 为假）既不算局部 P2 也不立即转 full，被过滤后直接报「normal 完成」。改为「P2 且未确证为局部 P2 即立即转 full」。实测旧代码 `findings=[{"severity": "P2", "in_scope": False}]` 得 path=normal、「normal 完成」；修复后转 full、`r=1/5`。
+- **升版脏现场（P2）**：`Budget.rework` 先在关闭施工闸、清冻结标记并记录变更后，才判 `d/3` 与剩余 `r`，两个失败路径都会留下「已升版未审」的脏账本。改为两个停止条件（`d/3` 用尽、剩余 `r<2`）均先于任何状态改写；回归断言 `rework_count == 0`、`design_reviewed` 与 `gate_open` 保持原值。
+- **配置读取隔离（P1 三项，`scripts/models.py`）**：`user_config_path` 在 POSIX 下忽略注入的 `env["HOME"]` 而读宿主家目录 → 注入优先；`_read_config` 只信 `st_size`，特殊卷或并发追写可绕过 512 KiB 上限 → 补实际读取长度判定；Windows 无 `os.O_NOFOLLOW` 时软链配置被当普通文件 → 无该标志时用 `os.path.islink` 显式拦截。三条在旧实现上均实测失败（读宿主家目录 / 软链被接受 / 超限被接受），修复后通过。
+- **静默未收集的测试（P2）**：`engineering.md` 测试入口补「既有入口只收集 `TestCase` 时，新测试须仍能被它执行，否则暂停请示迁移入口」，堵住沿用 `unittest discover` 仓库时 pytest 风格新测试不被执行却报通过。AGENTS.md §6 的「不新写 `unittest.TestCase`」是硬基准，本技能不放宽，只要求暂停请示。
+- **死参数清理（P2）**：删除 `validate_config` 上从未被引用的 `partial_roles` 形参（原注释声称供 machine context 合成校验，实际无条件校验必需角色），仓内五处调用均为单参；JSON schema 本身未变。
+- **normal 转 full 的 `d/3` 继承（P2）**：`workflow.md` normal 流程只写继承 `r`，与 `design.md`「quick/normal 候选评审转 full 后记入 `d/3`」不对称；改为「继承发现、尝试、已用审查与候选评审（转 full 后记入 `d/3`）」。
+- **降级句主谓（P2）**：`workflow.md`「重入 full 不退还 `d/3`、`r/5`，也不重新获得 normal 审查」自相矛盾（处于 full 时无「重新获得 normal 审查」对象），改为「重入 full 不退还……，降级回 normal 也不重新获得已用的 normal 审查」。
+- **quick 生成产物与逃生舱（P2）**：`SKILL.md` quick 执行核心补「不手改生成产物，改源头后重生；不用 `any`、空 catch 逃生舱写法」，quick 只读本页时不再缺这两条硬约束。
+- **审查包产物名（P3）**：`environment.md` 产物清单补 `review_pack.md`，自查降级审查包不再缺固定名、不会被当 throwaway 清理。
+- **门控升级措辞（P3）**：`design.md`「升级进入」补「升级至 full 后」，与 workflow「不能用门控反向升级」对齐。
+- **凭据时序（P3）**：`engineering.md` 把「疑似凭据泄露先告知用户」改为「疑似密钥或凭据立即停止打印与落盘，先告知用户」，避免先落盘再告知。
+- **正例格式（P3）**：`review.md` 确定缺陷正例补「场景与影响」标签，与报告规则的四要素一致。
+- **口径漂移（P3）**：`tests/behavior.md` B63 由「分派按 B48 优先级读一次」改为「normal 开工先按 B48 优先级核实一次」，与 2.4.5 开工硬门一致。
+- **全仓审完的报告被误判（P3）**：`audit-overflow/verify.py` 的 `audit_errors` 无条件要求覆盖记录同时含 `reviewed/partial/unreviewed`，使全仓顺利审完（全部 `reviewed`）的合法报告被判不合规。
+- **部分审计被逼造 partial 片（P2）**：上一版把三状态要求收窄为「含 `partial`/`unreviewed` 的报告」，仍会拒掉「只有已审与未审片」的合法部分审计（`statuses = reviewed+unreviewed` 时被要求补 `partial`）。改为只校验状态取值属于三种枚举，保留「局部片须列未覆盖范围、未审片须列原因、有缺口不得称全覆盖」，并单独断言固定夹具演示三种状态；三个旧「缺一种状态即拒绝」用例按新语义改为正例，新增非法取值拒绝用例。旧载体验证：上一版 4 项判负、更早的无条件版 5 项判负（含上述两个失败路径），现 20/20。
+- **漏列分片仍可声称全覆盖（P2，full 完整初审）**：上一版放宽三状态后没补上真正的逐片完整性核对：`full_coverage` 正例只列 `api/ops` 而漏了 `core`，仍被当作全仓审完；把 `coverage` 清空并保留 `coverage_claim=complete` 也能通过。改为按**独立分片清单**（`FIXTURE_SHARDS`，可含零发现分片）核对每片都有覆盖记录，并新增「漏一片」「空覆盖称 complete」两条拒绝用例；三个“不要求三状态同时出现”的正例改为保留分片、只改状态。旧载体验证：去掉分片检查后该两条均报 `mutant was accepted`，现状 22/22。
+- **判为不成立或不改**：入口自问清单（同页 full 行与「高风险边界」句已覆盖）；`engineering.md` 作者争议（workflow.md 审查与修复第 3 条已要求主代理核实、作者不得自闭）；`repo_root` 纯空白（无实际影响，按「犹豫从简」不加防御）；`audit-overflow` 的 `record: "appendix"`（指报告附录，与 `findings.md` 并存不矛盾）；`smoke-install` 场景 3 只测 easythink 软链（同一映射机制，easydev 安装由场景 4/5 覆盖）；`Budget` 缺 `prior_r`（normal 转 full 由 `NormalReviewFlow.prior_full_reviews` 建模，加参数属未被要求的扩展）；8 条改进建议未实施。
+- **回归载体**：design-gate 新增 2 条行为断言与 6 条文档契约（127 → 135 项，契约 55 → 61 条，README 计数同步），行为断言中 `in_scope` 为假那条在旧实现上判负、另一条为回归护栏，6 条文档契约在旧文档上均判负；models-config 新增 3 条读取契约均在旧实现上判负；audit-overflow 新增 5 条正例、3 条拒绝与 1 条夹具状态断言（16 → 22 项），上一版与更早版本载体均实测判负。
+- **总量**：规则正文 68298 → 68663 字节，MAX_TOTAL 68298 → 68663（净增 365 字节，均为本轮确认缺陷的规则文本）；本轮按用户「判断并修复审计建议」的指示扩容，未新增流程档位或额度，`check.sh` §10 标题同步为「默认只减不增，扩容须记入 CHANGELOG」；后续 SKILL.md + references/*.md 合计不得超过 68663 字节。
+
 ## 2.4.5 更新说明（2026-11-07）
 
 分派前取角色模型从「按需」提为硬门，并把读取时机前移到非 quick 开工：入口要求先核实角色配置再决定自任设计与写入，未核实不得假定 `inherit`；环境模块要求交付报告列出各角色实际生效模型，并明确工作区外配置须用宿主读取工具、权限被拒不得当作不存在。流程档位、审查轮次、三次修复上限、模型 schema 不变。

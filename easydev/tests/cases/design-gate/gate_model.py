@@ -168,13 +168,12 @@ class NormalReviewFlow:
 
     @staticmethod
     def _is_immediate_full(finding: dict) -> bool:
-        """P0/P1、验收缺口、潜在高风险，或无法确证四条判据的 P2，一律立即转 full。"""
+        """P0/P1、验收缺口、潜在高风险，或未确证四条判据的 P2，一律立即转 full。"""
         severity = str(finding.get("severity", "")).upper()
         if severity in {"P0", "P1"} or finding.get("acceptance_gap") or finding.get("potential_high_risk"):
             return True
-        if severity == "P2" and finding.get("in_scope", True) and not finding.get("is_local", False):
-            return True
-        return False
+        # 判据①②③任一不成立（in_scope 为假）的 P2 同样不是局部 P2，不能被过滤掉。
+        return severity == "P2" and not NormalReviewFlow._is_local_p2(finding)
 
     def record_review(
         self,
@@ -365,16 +364,19 @@ class Budget:
         升版会吃掉两轮，与「设计审查 3 轮」的口径不符。
         """
         self._require_design_phase("升版重审")
-        self.gate_open = False
-        self.full_reviewed = False
-        self.design_reviewed = False
-        self.design_frozen = False
-        self.record_change()
+        # 停止条件先于状态改写：否则会留下升版脏现场，直到下一次设计审查才报错。
+        if self.d >= D_CAP:
+            raise Stop("未完成", "d/3 已用尽，无法升版重审")
         if self._r_left() < R_RESERVE:
             raise Stop(
                 "未完成",
                 f"剩余 r={self._r_left()} 不足两轮，不得单开设计重审——设计契约缺陷导致未完成",
             )
+        self.gate_open = False
+        self.full_reviewed = False
+        self.design_reviewed = False
+        self.design_frozen = False
+        self.record_change()
         self.rework_count += 1
         self.log.append(f"design v{self.rework_count + 1} (rework, no round spent)")
 

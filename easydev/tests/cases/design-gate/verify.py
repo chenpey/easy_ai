@@ -303,7 +303,14 @@ def run_budget_cases() -> None:
     try:
         b.rework()
     except Stop as stop:
-        ok(f"剩余 r=1 时禁止升版重审（{stop.reason[:24]}…）")
+        if b.rework_count == 0 and b.design_reviewed and b.gate_open:
+            ok(f"剩余 r=1 时在改状态前禁止升版重审（{stop.reason[:24]}…）")
+        else:
+            bad(
+                "剩余 r=1 时升版重审",
+                f"停止前已改状态：rework_count={b.rework_count} "
+                f"design_reviewed={b.design_reviewed} gate_open={b.gate_open}",
+            )
     else:
         bad("剩余 r=1 时升版重审", "未停止")
 
@@ -344,9 +351,11 @@ def run_budget_cases() -> None:
     b.open_gate()
     try:
         b.rework()
-        b.design_review()
     except Stop as stop:
-        ok(f"施工期 d 用尽时停止（{stop.reason[:20]}…）")
+        if b.rework_count == 0 and b.design_reviewed:
+            ok(f"施工期 d 用尽时在改状态前停止（{stop.reason[:20]}…）")
+        else:
+            bad("施工期 d 用尽", f"停止前已改状态：rework_count={b.rework_count} design_reviewed={b.design_reviewed}")
     else:
         bad("施工期 d 用尽", "未停止")
 
@@ -468,6 +477,17 @@ def run_normal_cases() -> None:
             bad("normal 审查硬上限", f"异常={exc}")
     else:
         bad("normal 审查硬上限", "第三次审查未被拒绝")
+
+    for label, finding in (
+        ("P2 触及公共契约", {"severity": "P2", "in_scope": False}),
+        ("P2 未确证属局部", {"severity": "P2", "in_scope": True}),
+    ):
+        not_local = NormalReviewFlow(author_instance_id="developer-1")
+        not_local.record_review("reviewer-1", "有一个未确证局部的 P2。", findings=[finding])
+        if not_local.path == "full" and not_local.r == 1 and not_local.finish() == "full 未闭环":
+            ok(f"{label}：不得当局部 P2 放行，转 full 记 r=1/5")
+        else:
+            bad(label, f"path={not_local.path} r={not_local.r} finish={not_local.finish()}")
 
     upgrade = NormalReviewFlow(
         author_instance_id="developer-1",
@@ -972,6 +992,43 @@ DOC_CONTRACT = [
         "## full 编排",
         ["开工先按 [模型配置](environment.md#模型配置) 核实角色模型与深度"],
         {"forbidden": ["分派前按 [模型配置](environment.md#模型配置) 取角色模型"]},
+    ),
+    (
+        "normal 转 full 一并继承候选评审轮次",
+        "easydev/references/workflow.md",
+        "## normal 流程",
+        ["继承发现、尝试、已用审查与候选评审（转 full 后记入 `d/3`）"],
+        {"forbidden": ["继承发现、尝试与已用审查："]},
+    ),
+    (
+        "降级不退还账本也不补发已用审查",
+        "easydev/references/workflow.md",
+        "## 路径升降级",
+        ["重入 full 不退还 `d/3`、`r/5`", "降级回 normal 也不重新获得已用的 normal 审查"],
+    ),
+    (
+        "既有入口只收集 TestCase 时不静默丢弃新测试",
+        "easydev/references/engineering.md",
+        "## 测试硬约束与选择",
+        ["既有入口只收集 `TestCase` 时，新测试须仍能被它执行，否则暂停请示迁移入口"],
+    ),
+    (
+        "疑似凭据停止打印与落盘先告知",
+        "easydev/references/engineering.md",
+        "## 验证调度与证据",
+        ["疑似密钥或凭据立即停止打印与落盘，先告知用户"],
+    ),
+    (
+        "quick 核心覆盖生成产物与逃生舱写法",
+        "easydev/SKILL.md",
+        "## quick 执行核心",
+        ["不手改生成产物，改源头后重生", "不用 `any`、空 catch 逃生舱写法"],
+    ),
+    (
+        "自查降级审查包有固定产物名且不算 throwaway",
+        "easydev/references/environment.md",
+        "## 任务目录与恢复",
+        ["自查降级审查包放 `review_pack.md`；它们与 `plan.md` 均不是 throwaway", "未归档前保留"],
     ),
 ]
 

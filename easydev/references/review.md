@@ -42,7 +42,8 @@
 - ❌ 反例（缺路径与证据）："建议在 `services/token.ts#refreshToken` 增加 try-catch、并发锁和重试，且补单测。"
 - ✅ 正例（确定缺陷）：
   **[P1] 并发刷新重复换发 Token**
-  位置：`services/token.ts#refreshToken`。并发 401 请求同时进入刷新分支，写回不同 Token，部分请求因旧凭证失效而失败。证据：`refreshToken()` 无 Promise 缓存；旧 Token 立即失效。修复与验证：共享 pending Promise；并发 3 次请求验证仅刷新一次。
+  位置：`services/token.ts#refreshToken`。
+  场景与影响：并发 401 请求同时进入刷新分支，写回不同 Token，部分请求因旧凭证失效而失败。证据：`refreshToken()` 无 Promise 缓存；旧 Token 立即失效。修复与验证：共享 pending Promise；并发 3 次请求验证仅刷新一次。
 - ⚠️ 待验证风险（有线索、条件未确认）：
   **[待验证风险] 迁移非空列与旧版写入共存**
   线索：`003_add_status.sql` 新增无默认值非空列。成立条件：发布窗口内旧实例仍在写入。潜在影响：旧实例写入整批失败。最小确认：确认发布是否先停旧实例或数据库有默认值兜底。

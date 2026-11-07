@@ -69,8 +69,15 @@ FIXTURE_COVERAGE = [
     },
 ]
 
+# 审计范围内的分片清单：独立于发现条目，允许含零发现的分片。
+FIXTURE_SHARDS = ("core", "api", "ops")
 
-def audit_errors(report: dict, source_findings: list[dict]) -> list[str]:
+
+def audit_errors(
+    report: dict,
+    source_findings: list[dict],
+    expected_shards: tuple[str, ...] = FIXTURE_SHARDS,
+) -> list[str]:
     """Independent acceptance predicate for one rendered audit artifact."""
     errors = []
     body = report.get("body_findings")
@@ -164,15 +171,29 @@ def audit_errors(report: dict, source_findings: list[dict]) -> list[str]:
     if not isinstance(coverage, list):
         errors.append("coverage record is missing")
     else:
+        known_statuses = {"reviewed", "partial", "unreviewed"}
         statuses = {
             item.get("status")
             for item in coverage
             if isinstance(item, dict)
         }
-        missing_statuses = {"reviewed", "partial", "unreviewed"} - statuses
-        if missing_statuses:
+        # B65 要求部分审计逐片列出状态，取值限于这三种；不要求三种同时出现，
+        # 否则「分片全审完」与「无任何局部片」的合法报告会被逼造出一个 partial 片。
+        invalid_statuses = statuses - known_statuses
+        if invalid_statuses:
             errors.append(
-                f"coverage must disclose {sorted(missing_statuses)}"
+                f"coverage contains invalid statuses: {sorted(map(str, invalid_statuses))}"
+            )
+        # 未列出的分片等于把“没审”计作“已审”，必须拿独立分片清单核对。
+        listed_shards = {
+            item.get("shard")
+            for item in coverage
+            if isinstance(item, dict)
+        }
+        missing_shards = [shard for shard in expected_shards if shard not in listed_shards]
+        if missing_shards:
+            errors.append(
+                f"coverage must list every shard; missing {sorted(missing_shards)}"
             )
         for item in coverage:
             if not isinstance(item, dict):
@@ -296,40 +317,65 @@ def main() -> int:
         "must not claim complete coverage",
     )
 
-    missing_status = copy.deepcopy(report)
-    missing_status["coverage"] = [
-        item
-        for item in missing_status["coverage"]
-        if item["status"] != "unreviewed"
+    if {item["status"] for item in FIXTURE_COVERAGE} == {"reviewed", "partial", "unreviewed"}:
+        ok("固定夹具同时演示已审、部分与未审三种分片状态")
+    else:
+        bad("夹具状态覆盖", str(FIXTURE_COVERAGE))
+
+    no_unreviewed = copy.deepcopy(report)
+    next(
+        item for item in no_unreviewed["coverage"] if item["shard"] == "ops"
+    ).update({"status": "reviewed", "reason": None})
+    expect_valid("部分审计无未审片（已审 + 局部，分片齐全）不被误判", no_unreviewed)
+
+    full_coverage = [
+        {"shard": shard, "status": "reviewed", "scope": f"{shard} 全审"}
+        for shard in FIXTURE_SHARDS
+    ]
+    full_report = render_audit(FIXTURE_FINDINGS, full_coverage)
+    expect_valid("全仓审完（分片齐全且全为 reviewed）的报告不被误判", full_report)
+    if full_report["summary"]["coverage_claim"] == "complete":
+        ok("全部 reviewed 时 coverage_claim 为 complete")
+    else:
+        bad("全仓审完的 coverage_claim", str(full_report["summary"]))
+
+    no_reviewed = copy.deepcopy(report)
+    next(
+        item for item in no_reviewed["coverage"] if item["shard"] == "core"
+    ).update({"status": "partial", "uncovered": "异步重试分支未审"})
+    expect_valid("预算提前耗尽（局部 + 未审，分片齐全）不被误判", no_reviewed)
+
+    no_partial = copy.deepcopy(report)
+    next(
+        item for item in no_partial["coverage"] if item["shard"] == "api"
+    ).update({"status": "reviewed", "uncovered": None})
+    expect_valid("分片全无局部审（已审 + 未审，分片齐全）不被误判", no_partial)
+
+    missing_shard = copy.deepcopy(full_report)
+    missing_shard["coverage"] = [
+        item for item in missing_shard["coverage"] if item["shard"] != "core"
     ]
     expect_invalid(
-        "coverage without unreviewed shards is rejected",
-        missing_status,
-        "['unreviewed']",
+        "漏列一个分片（core）即使其余全部 reviewed 且声称 complete 也被拒绝",
+        missing_shard,
+        "missing ['core']",
     )
 
-    missing_reviewed = copy.deepcopy(report)
-    missing_reviewed["coverage"] = [
-        item
-        for item in missing_reviewed["coverage"]
-        if item["status"] != "reviewed"
-    ]
+    empty_coverage = copy.deepcopy(report)
+    empty_coverage["coverage"] = []
+    empty_coverage["summary"]["coverage_claim"] = "complete"
     expect_invalid(
-        "coverage without reviewed shards is rejected",
-        missing_reviewed,
-        "['reviewed']",
+        "空覆盖记录无权声称全仓审完",
+        empty_coverage,
+        "missing ['api', 'core', 'ops']",
     )
 
-    missing_partial = copy.deepcopy(report)
-    missing_partial["coverage"] = [
-        item
-        for item in missing_partial["coverage"]
-        if item["status"] != "partial"
-    ]
+    invalid_status = copy.deepcopy(report)
+    invalid_status["coverage"][0]["status"] = "done"
     expect_invalid(
-        "coverage without partial shards is rejected",
-        missing_partial,
-        "['partial']",
+        "覆盖状态不在 reviewed/partial/unreviewed 内被拒绝",
+        invalid_status,
+        "coverage contains invalid statuses: ['done']",
     )
 
     partial_without_scope = copy.deepcopy(report)

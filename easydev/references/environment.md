@@ -49,7 +49,7 @@
 ## 任务目录与恢复
 
 - 非敏感记录优先使用宿主确认可用的 scratch/产物目录（无此能力时不猜路径）；否则使用系统临时目录 `easydev/<repo-id>/<task-id>/`。
-- 账本为 `ledger.md`，长任务计划放 `plan.md`，非敏感基线放 `baseline/`，探针产物放 `spike/`（标 `throwaway`），设计环节产物放 `design.md`（含 `design.vN.md`），完整审查/审计记录放 `findings.md`；它们与 `plan.md` 均不是 throwaway，未归档前保留。
+- 账本为 `ledger.md`，长任务计划放 `plan.md`，非敏感基线放 `baseline/`，探针产物放 `spike/`（标 `throwaway`），设计环节产物放 `design.md`（含 `design.vN.md`），完整审查/审计记录放 `findings.md`，自查降级审查包放 `review_pack.md`；它们与 `plan.md` 均不是 throwaway，未归档前保留。
 - 恢复由交接提供账本与 `findings.md` 路径；临时目录已清理或无法核实基线与预算时暂停并报受阻交用户确认，不默认为新任务。确认无需恢复后按宿主权限清理 throwaway 或已归档产物，不将快照移入产品仓库。
 
 ## 工作区隔离与分支收尾
