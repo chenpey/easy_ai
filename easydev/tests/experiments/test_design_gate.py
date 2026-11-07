@@ -163,6 +163,53 @@ def test_incremental_budget_preserves_final_reviews():
     assert budget.r == 5
 
 
+def test_normal_upgrade_inherits_candidate_and_review_budgets_into_full():
+    flow = gate.NormalReviewFlow(author_instance_id="author")
+    flow.record_candidate()
+    with pytest.raises(gate.RuleError, match="第 2 轮"):
+        flow.record_candidate()
+    local_p2 = {"severity": "P2", "in_scope": True, "is_local": True}
+    flow.record_review("reviewer", "首轮局部 P2", findings=[dict(local_p2)])
+    flow.record_repair()
+    flow.record_review("reviewer", "复审仍未关闭", findings=[dict(local_p2)])
+    assert (flow.path, flow.candidate_rounds, flow.r) == ("full", 1, 2)
+
+    budget = flow.to_full_budget(design_enabled=True)
+    assert (budget.d, budget.r, budget.gate_open) == (1, 2, False)
+    budget.design_review(findings=1)
+    budget.rework()
+    budget.design_review()
+    budget.resolve_findings()
+    budget.open_gate()
+    # 已继承 r=2，阶段增量审查最多只能跑 3 - 2 = 1 轮。
+    budget.incremental_review()
+    with pytest.raises(gate.Stop, match="预留两轮"):
+        budget.incremental_review()
+    budget.full_review(findings=1)
+    budget.resolve_findings()
+    budget.rereview()
+    assert budget.finish() == "闭环完成"
+    assert (budget.d, budget.r) == (3, 5)
+
+
+def test_reentering_full_preserves_prior_design_reviews_and_separates_candidate_count():
+    # 先前 full 已用 d=1（设计审查，非候选）與 r=1，降级 normal 后做 1 轮候选，再因 P1 重入 full：
+    # 继承后总 d=2、候选轮数=1、r=2；剩余 d 仅 1 轮（只够首次设计审查，不够升版重审）。
+    flow = gate.NormalReviewFlow(
+        author_instance_id="author",
+        prior_design_reviews=1,
+        prior_full_reviews=1,
+    )
+    flow.record_candidate()
+    flow.record_review("reviewer", "发现 P1", findings=[{"severity": "P1"}])
+    budget = flow.to_full_budget(design_enabled=True)
+    assert (budget.d, budget.r, budget.candidate_rounds) == (2, 2, 1)
+    budget.design_review(findings=1)
+    with pytest.raises(gate.Stop, match="d/3 已用尽"):
+        budget.rework()
+    assert (budget.d, budget.r, budget.rework_count) == (3, 2, 0)
+
+
 @pytest.mark.parametrize(
     "rel,old,new,label",
     [
@@ -175,6 +222,7 @@ def test_incremental_budget_preserves_final_reviews():
         ("references/workflow.md", "串行包装不得称并行", "串行包装可称并行", "并行判断门槛、验证依赖与集成预算"),
         ("references/workflow.md", "各批验证及最终整仓验证期间所有相关写入者停写", "各批验证及最终整仓验证期间允许写入者继续修改", "并行判断门槛、验证依赖与集成预算"),
         ("tests/experiments/fold-eval.md", "不作为启用并行写入的前置条件", "作为启用并行写入的前置条件", "并行收益观测可选且不作为准入门槛"),
+        ("references/design.md", "默认最多用 1 轮", "按至多 2 轮独立评审", "quick 与 normal 候选第 2 轮须明确要求并知悉转 full 余量代价"),
     ],
 )
 def test_design_gate_cli_rejects_rule_regression(tmp_path, rel, old, new, label):

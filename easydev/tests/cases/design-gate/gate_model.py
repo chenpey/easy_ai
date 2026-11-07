@@ -129,6 +129,9 @@ class NormalReviewFlow:
         author_instance_id: str,
         repair_attempts: int = 0,
         prior_full_reviews: int = 0,
+        prior_design_reviews: int = 0,
+        prior_candidate_rounds: int = 0,
+        candidate_second_opt_in: bool = False,
     ):
         if not author_instance_id.strip():
             raise RuleError("normal 必须记录实现作者实例")
@@ -136,16 +139,53 @@ class NormalReviewFlow:
             raise RuleError("修复尝试次数不能为负")
         if prior_full_reviews < 0 or prior_full_reviews >= R_CAP:
             raise RuleError(f"进入 normal 前已有完整审查须在 0..{R_CAP - 1} 轮内")
+        if prior_design_reviews < 0 or prior_design_reviews > D_CAP:
+            raise RuleError(f"进入 normal 前已有设计审查须在 0..{D_CAP} 轮内")
+        if prior_candidate_rounds < 0 or prior_candidate_rounds > min(2, prior_design_reviews):
+            raise RuleError("进入 normal 前已有候选轮次不能为负、不能超过 2，且不能大于已有设计总账")
         self.author_instance_id = author_instance_id
         self.repair_attempts = repair_attempts
         self.path = "normal"
+        self.d = prior_design_reviews
+        self.prior_design_reviews = prior_design_reviews
         self.r = prior_full_reviews
         self.prior_full_reviews = prior_full_reviews
+        self.candidate_rounds = prior_candidate_rounds
+        self.candidate_second_opt_in = candidate_second_opt_in
         self.review_count = 0
         self.local_repair_done = False
         self.reviewer_instance_id = None
         self.report = ""
         self.must_close_findings = []
+
+    def record_candidate(self) -> None:
+        """记录实现路径（quick/normal）的候选方案评审；转 full 时记入 d/3。"""
+        if self.path != "normal":
+            raise RuleError("已转 full，不得继续 normal 候选评审")
+        if self.review_count > 0:
+            raise RuleError("候选评审应在施工审查之前")
+        if self.candidate_rounds >= 2:
+            raise RuleError("候选评审合计至多 2 轮")
+        if self.candidate_rounds == 1 and not self.candidate_second_opt_in:
+            raise RuleError(
+                "实现路径候选默认最多用 1 轮；第 2 轮须用户明确要求并接受转 full 后无升版重审余量"
+            )
+        if self.d >= D_CAP:
+            raise Stop("未完成", "历史设计审查与候选评审已用尽 d/3 预算")
+        self.candidate_rounds += 1
+        self.d += 1
+
+    def to_full_budget(self, *, design_enabled: bool = True) -> Budget:
+        """转 full 后生成继承已用设计总账（d/3）、候选轮次与已用审查轮次（r/5）的账本。"""
+        if self.path != "full":
+            raise RuleError("尚未转 full，不能生成 full 继承账本")
+        return Budget(
+            candidate_second_opt_in=self.candidate_second_opt_in,
+            design_enabled=design_enabled,
+            prior_d=self.d,
+            prior_r=self.r,
+            prior_candidate_rounds=self.candidate_rounds,
+        )
 
     @staticmethod
     def _is_local_p2(finding: dict) -> bool:
@@ -283,12 +323,21 @@ class Budget:
         candidate_second_opt_in: bool = False,
         design_enabled: bool = True,
         pure_design: bool = False,
+        prior_d: int = 0,
+        prior_r: int = 0,
+        prior_candidate_rounds: int = 0,
     ):
-        self.d = 0
-        self.r = 0
+        if prior_d < 0 or prior_d > D_CAP:
+            raise RuleError(f"继承的 d 轮次须在 0..{D_CAP} 内")
+        if prior_r < 0 or prior_r > R_CAP:
+            raise RuleError(f"继承的 r 轮次须在 0..{R_CAP} 内")
+        if prior_candidate_rounds < 0 or prior_candidate_rounds > min(2, prior_d):
+            raise RuleError("继承的候选轮次不能为负、不能超过 2，且不能大于继承的 d 轮次")
+        self.d = prior_d
+        self.r = prior_r
         self.pure_design = pure_design
         self.design_enabled = design_enabled and not pure_design
-        self.candidate_rounds = 0
+        self.candidate_rounds = prior_candidate_rounds
         self.design_reviewed = False
         self.design_frozen = False
         self.blocked = False

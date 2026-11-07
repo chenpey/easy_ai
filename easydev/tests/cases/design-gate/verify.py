@@ -513,6 +513,84 @@ def run_normal_cases() -> None:
             f"finish={upgrade.finish()}",
         )
 
+    # normal 候选评审第 2 轮须用户明确 opt-in，且转 full 后与 r 一并继承进 Budget。
+    cand_no_opt = NormalReviewFlow(author_instance_id="developer-1")
+    cand_no_opt.record_candidate()
+    try:
+        cand_no_opt.record_candidate()
+    except RuleError as exc:
+        ok(f"normal 候选第 2 轮未获 opt-in 被拒绝（{exc}）")
+    else:
+        bad("normal 候选第 2 轮未获 opt-in", "未被拒绝")
+
+    # normal 候选 1 轮 + 初审转 full（d=1, r=1）+ 补设计门控报缺陷 + 升版重审闭环（d=3, r=3）。
+    cand_one_up = NormalReviewFlow(author_instance_id="developer-1")
+    cand_one_up.record_candidate()
+    cand_one_up.record_review("reviewer-1", "非局部 P2。", findings=[{"severity": "P2", "in_scope": False}])
+    b_from_normal = cand_one_up.to_full_budget(design_enabled=True)
+    b_from_normal.design_review(findings=1)
+    b_from_normal.rework()
+    b_from_normal.design_review()
+    b_from_normal.resolve_findings()
+    b_from_normal.open_gate()
+    b_from_normal.full_review()
+    b_from_normal.rereview()
+    if (b_from_normal.d, b_from_normal.r, b_from_normal.finish()) == (3, 3, "闭环完成"):
+        ok("normal 候选 1 轮转 full 补设计门控：报缺陷后升版重审仍可闭环（d=3/3 r=3/5）")
+    else:
+        bad(
+            "normal 候选 1 轮转 full 联合路径",
+            f"d={b_from_normal.d} r={b_from_normal.r}",
+        )
+
+    # normal 候选 2 轮（opt-in）+ 复审未关闭转 full（d=2, r=2）：补设计门控报缺陷时 d=3/3 停止，不留脏现场。
+    cand_two_up = NormalReviewFlow(author_instance_id="developer-1", candidate_second_opt_in=True)
+    cand_two_up.record_candidate()
+    cand_two_up.record_candidate()
+    cand_two_up.record_review("reviewer-1", "局部 P2。", findings=[dict(local_p2)])
+    cand_two_up.record_repair()
+    cand_two_up.record_review("reviewer-1", "仍未关闭。", findings=[dict(local_p2)])
+    b_two = cand_two_up.to_full_budget(design_enabled=True)
+    b_two.design_review(findings=1)
+    try:
+        b_two.rework()
+    except Stop as stop:
+        if (b_two.d, b_two.r, b_two.rework_count, b_two.gate_open) == (3, 2, 0, False):
+            ok(f"normal 候选 2 轮转 full（d=2 r=2）后设计审查报缺陷：d=3/3 在改状态前停止（{stop.state}）")
+        else:
+            bad("normal 候选 2 轮转 full 停止状态", f"d={b_two.d} r={b_two.r} rework={b_two.rework_count}")
+    else:
+        bad("normal 候选 2 轮转 full 报缺陷", "未按 d=3/3 停止")
+
+    # full（已耗 d=1 设计审查、r=1）降级 normal（无新增候选），初审非局部 P2 重入 full：
+    # 必须保留历史 d=1（总 d=1、候选轮数=0、r=2），重入后经过 1 次报缺陷设计审查 + 1 次升版重审即达 d=3/3 上限。
+    reenter = NormalReviewFlow(
+        author_instance_id="developer-1",
+        prior_design_reviews=1,
+        prior_full_reviews=1,
+    )
+    reenter.record_review("reviewer-1", "非局部 P2。", findings=[{"severity": "P2", "in_scope": False}])
+    b_reenter = reenter.to_full_budget(design_enabled=True)
+    if (b_reenter.d, b_reenter.r, b_reenter.candidate_rounds) == (1, 2, 0):
+        ok("full(d=1,r=1)→normal→full：保留历史设计总账 d=1、r=2，且不把历史设计审查误记为候选轮次")
+    else:
+        bad(
+            "full→normal→full 继承账本",
+            f"d={b_reenter.d} r={b_reenter.r} candidate_rounds={b_reenter.candidate_rounds}",
+        )
+    b_reenter.design_review(findings=1)
+    b_reenter.rework()
+    b_reenter.design_review(findings=1)
+    try:
+        b_reenter.rework()
+    except Stop as stop:
+        if (b_reenter.d, b_reenter.r, b_reenter.rework_count) == (3, 2, 1):
+            ok(f"full→normal→full 继承 d=1 后再经两轮设计审查即触发 d=3/3 停止（{stop.state}）")
+        else:
+            bad("full→normal→full 额度耗尽", f"d={b_reenter.d} r={b_reenter.r} rework={b_reenter.rework_count}")
+    else:
+        bad("full→normal→full 额度耗尽", "丢失历史 d=1 导致多获得一轮设计重审")
+
 
 # --- 宿主能力替身：设计分派形态与受阻处置 --------------------------------
 
@@ -776,6 +854,12 @@ DOC_CONTRACT = [
         "easydev/references/design.md",
         "纯 design / plan 路径",
         ["无 `d`/`r` 账", "至多 2 轮独立循环"],
+    ),
+    (
+        "quick 与 normal 候选第 2 轮须明确要求并知悉转 full 余量代价",
+        "easydev/references/design.md",
+        "quick / normal 实现路径",
+        ["默认最多用 1 轮", "第 2 轮修订复核须用户明确要求并接受转 full 后无升版重审余量", "记入 `d/3`"],
     ),
     (
         "按需加载表链接到门控正文",
