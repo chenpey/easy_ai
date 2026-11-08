@@ -14,7 +14,7 @@ import sys
 from audit_model import render_audit
 
 
-MAX_BODY_FINDINGS = 20
+MAX_BODY_FINDINGS = 30
 SEVERITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 failures = 0
@@ -36,8 +36,8 @@ def bad(label: str, detail: str) -> None:
 
 def fixture_findings() -> list[dict]:
     findings = []
-    for index in range(1, 24):
-        severity = "P1" if index <= 21 else "P2"
+    for index in range(1, 34):
+        severity = "P1" if index <= 31 else "P2"
         findings.append(
             {
                 "id": f"F{index:02d}",
@@ -154,7 +154,7 @@ def audit_errors(
         SEVERITY_ORDER.get(source_by_id[finding_id]["severity"], 99)
         for finding_id in overflow_ids
     ]
-    # 正文必须是严重度最高的前 20 条：溢出区出现比正文更重的发现即属倒挂。
+    # 正文必须是严重度最高的前 30 条：溢出区出现比正文更重的发现即属倒挂。
     if body_ranks and overflow_ranks and max(body_ranks) > min(overflow_ranks):
         errors.append(
             "body must contain the highest-severity findings; overflow has a more severe finding"
@@ -276,18 +276,18 @@ def expect_invalid(
 def main() -> int:
     print("=== B65 audit overflow ===")
     report = render_audit(FIXTURE_FINDINGS, FIXTURE_COVERAGE)
-    expect_valid("23 findings: 20 in body, all records in appendix", report)
+    expect_valid("33 findings: 30 in body, all records in appendix", report)
 
     body = report["body_findings"]
     appendix = report["appendix_findings"]
     summary = report["summary"]
     if (
-        len(body) == 20
-        and len(appendix) == 23
-        and sum(item["severity"] == "P1" for item in appendix) == 21
+        len(body) == 30
+        and len(appendix) == 33
+        and sum(item["severity"] == "P1" for item in appendix) == 31
         and sum(item["severity"] == "P2" for item in appendix) == 2
     ):
-        ok("fixed fixture preserves 21 P1 and 2 P2 findings")
+        ok("fixed fixture preserves 31 P1 and 2 P2 findings")
     else:
         bad("fixture counts", f"body={len(body)} appendix={len(appendix)}")
 
@@ -295,24 +295,24 @@ def main() -> int:
     if (
         disclosure.get("count") == 1
         and len(disclosure.get("impacts", [])) == 1
-        and disclosure["impacts"][0]["id"] == "F21"
+        and disclosure["impacts"][0]["id"] == "F31"
     ):
         ok("summary discloses the one P1 outside the body")
     else:
         bad("overflow summary", str(summary))
 
     two_overflow_findings = copy.deepcopy(FIXTURE_FINDINGS)
-    two_overflow_findings[21]["severity"] = "P1"
+    two_overflow_findings[31]["severity"] = "P1"
     two_overflow = render_audit(two_overflow_findings, FIXTURE_COVERAGE)
     two_disclosure = two_overflow["summary"]["overflow_critical"]
     expect_valid(
-        "22 P1 causes two body-overflow P1 findings",
+        "32 P1 causes two body-overflow P1 findings",
         two_overflow,
         two_overflow_findings,
     )
     if [
         impact["id"] for impact in two_disclosure.get("impacts", [])
-    ] == ["F21", "F22"]:
+    ] == ["F31", "F32"]:
         ok("summary preserves every body-overflow P1 impact")
     else:
         bad("two overflow P1 impacts", str(two_disclosure))
@@ -324,13 +324,13 @@ def main() -> int:
 
     too_long = copy.deepcopy(report)
     too_long["body_findings"].append(copy.deepcopy(appendix[-1]))
-    expect_invalid("body over 20 is rejected", too_long, "limit is 20")
+    expect_invalid("body over 30 is rejected", too_long, "limit is 30")
 
     inverted = copy.deepcopy(report)
     source_by_id = {finding["id"]: finding for finding in FIXTURE_FINDINGS}
     inverted["body_findings"] = [
-        finding for finding in inverted["body_findings"] if finding["id"] != "F20"
-    ] + [copy.deepcopy(source_by_id["F22"])]
+        finding for finding in inverted["body_findings"] if finding["id"] != "F30"
+    ] + [copy.deepcopy(source_by_id["F32"])]
     inverted["summary"]["overflow_critical"] = {
         "count": 2,
         "impacts": [
@@ -338,7 +338,7 @@ def main() -> int:
                 "id": finding_id,
                 "consequence": source_by_id[finding_id]["consequence"],
             }
-            for finding_id in ("F20", "F21")
+            for finding_id in ("F30", "F31")
         ],
         "record": "appendix",
     }
@@ -361,17 +361,17 @@ def main() -> int:
     short_body = copy.deepcopy(report)
     short_body["body_findings"].pop()
     expect_invalid(
-        "正文未收录满 20 条被拒绝",
+        "正文未收录满 30 条被拒绝",
         short_body,
-        "body must contain 20 findings",
+        "body must contain 30 findings",
     )
 
     missing_record = copy.deepcopy(report)
     missing_record["appendix_findings"].pop()
     expect_invalid(
-        "appendix missing one of 23 is rejected",
+        "appendix missing one of 33 is rejected",
         missing_record,
-        "missing ['F23']",
+        "missing ['F33']",
     )
 
     missing_overflow = copy.deepcopy(report)

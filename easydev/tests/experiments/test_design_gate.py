@@ -231,7 +231,7 @@ def test_reentering_full_preserves_prior_design_reviews_and_separates_candidate_
         ("references/workflow.md", "实施保持单写入者", "实施允许多写入者", "normal 单写并受历史预算约束"),
         ("references/workflow.md", "独立性与隔离条件全部成立才可并行，否则串行", "无条件并行，不检查独立性与隔离条件", "并行判断门槛、验证依赖与集成预算"),
         ("references/workflow.md", "验证依赖变化使相关证据失效", "验证依赖变化不影响已有证据", "并行判断门槛、验证依赖与集成预算"),
-        ("references/workflow.md", "内容自判 1–5 片，用户指定片数优先", "内容自判任意片数，用户指定不生效", "并行片数由内容判断且用户指定优先"),
+        ("references/workflow.md", "内容自判 1–6 片，用户指定片数优先", "内容自判任意片数，用户指定不生效", "并行片数由内容判断且用户指定优先"),
         ("references/workflow.md", "高风险边界默认串行", "高风险边界默认并行", "高风险并行例外须明确要求并可隔离恢复"),
         ("references/workflow.md", "串行包装不得称并行", "串行包装可称并行", "并行判断门槛、验证依赖与集成预算"),
         ("references/workflow.md", "各批验证及最终整仓验证期间所有相关写入者停写", "各批验证及最终整仓验证期间允许写入者继续修改", "并行判断门槛、验证依赖与集成预算"),

@@ -16,7 +16,7 @@
 | `version-gate` | `SKILL.md` 版本提取合法性与非法格式防御（PyYAML 与标准库双分支） | `bash tests/cases/version-gate/run.sh` |
 | `models-config` | `scripts/models.py` schema 校验与来源优先级（项目 > 用户 > 默认） | `bash tests/cases/models-config/run.sh` |
 | `design-gate` | normal 审查复审、转 full 继承、启用门控、两本账与施工闸状态机 | `bash tests/cases/design-gate/run.sh` |
-| `audit-overflow` | 23 项发现时正文上限 20 条、附录全量保留与溢出 P1 披露 | `bash tests/cases/audit-overflow/run.sh` |
+| `audit-overflow` | 33 项发现时正文上限 30 条、附录全量保留与溢出 P1 披露 | `bash tests/cases/audit-overflow/run.sh` |
 
 其余行为场景由 [tests/behavior.md](../behavior.md) 定义：
 - B01、B02、B16、B61（观测部分）、B67 由 `tests/experiments/agent_runner/` 驱动。

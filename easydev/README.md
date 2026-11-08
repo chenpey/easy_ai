@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`2.4.7`
+当前版本：`2.4.8`
 
 EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（≤5000 字节），普通 quick 不加载完整编排，详细规则按需读取；主代理默认单写，full 依据配置与模型级委派。
 
@@ -58,7 +58,7 @@ EasyDev 的设计围绕三个核心问题展开：**如何让低风险任务零�
 - **L0 入口常驻层（[SKILL.md](SKILL.md)，≤ 5000 B）**：包含角色边界声明、四问快速分流表、开工调查底线、`quick` 完整执行核心（最小改动、端到端测试、项目脚本验证、3 次修复预算与交付自查）以及模块路由表。**普通 `quick` 任务仅凭 `SKILL.md` 即可闭环，默认零额外引用加载。**
 - **L1 编排与环境层（进入非 `quick` 路径或分派子代理时加载）**：
   - [environment.md](references/environment.md)：读取 `~/.config/easydev/models.json`（或本地覆盖），核实 `developer` / `reviewer` / `designer` 角色配置、工作区脏改动快照与宿主委派能力。
-  - [workflow.md](references/workflow.md)：定义 `normal` 与 `full` 编排、三态风险分类、两本账（`d/3`、`r/5`）与尝试预算、1–5 片并行分片门控及任务账本 `ledger.md`。
+  - [workflow.md](references/workflow.md)：定义 `normal` 与 `full` 编排、三态风险分类、两本账（`d/3`、`r/5`）与尝试预算、1–6 片并行分片门控及任务账本 `ledger.md`。
   - [roles.md](references/roles.md)：子代理的唯一直达入口。被委派的 `developer`、`reviewer`、`designer` 子代理无需通读主控编排，直接跳转到各自章节履职。
 - **L2 专项细则层（按当前动作与高风险触发条件加载）**：
   - [design.md](references/design.md)：高代价歧义的选项式澄清、独立设计环节 5 项触发门控、`design.md`（`v1 → vN`）施工闸与多方案（`C1/C2`）并发探索。
@@ -109,7 +109,7 @@ EasyDev 的运行不是机械套用固定模板，而是由**主代理单写控�
    - **跨模型级升级（`upgrades`）**：当模型级 0 触发升级条件（同一确认问题在本级试修一次仍失败或关闭证据不足）且配置了 `upgrades` 时，主代理按序切入模型级 `1..N`（例如将开发者从常规模型切换至攻坚模型，将审查者推理深度提至 `max`），暂停并行分片并改为串行交接。任一硬顶耗尽仍未闭环时，立即停止并向用户汇报根因与残余风险。
 
 5. **并行分片与工作树隔离（Sharding & Worktree Isolation）**
-   - 主代理根据可独立交付的子问题数量自判 `1–5` 片（用户显式指定片数优先）。
+   - 主代理根据可独立交付的子问题数量自判 `1–6` 片（用户显式指定片数优先）。
    - `normal` 保持单写（仅可并行只读探索或独立验证命令）；`full` 仅在各分片**写入文件集互不重叠、共享契约已在 `design.md` 冻结、且每个并发写入分片运行在独立 `git worktree`** 时才允许并发写入，最后由单一集成者在主工作区合入、核对相对基线的完整 diff 并跑全量检查。
 
 ---
@@ -155,7 +155,7 @@ EasyDev 的运行不是机械套用固定模板，而是由**主代理单写控�
 
 ## 架构与运作全景脑图
 
-![EasyDev 2.4.7 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
+![EasyDev 2.4.8 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
 
 ## 模型配置
 
@@ -213,9 +213,9 @@ Windows 路径、字段及生效核对见 [environment.md](references/environmen
 - **测试与验证**：优先复用既有检查，只针对覆盖缺口补写端到端测试；按项目脚本运行，独立项可并行，详见 [工程实践](references/engineering.md)。
 - **交付闭环**：quick 交付自查报告；normal 交付独立定向审查报告；full 依门控流程确认闭环，见 [流程编排](references/workflow.md#full-编排)。修复次数受限于 [尝试预算](references/workflow.md#尝试预算)。
 - **能力受阻**：缺失独立委派能力时先暂停报错；经授权自查须附交接审查包并标明缺口，不得宣称独立审查通过，详见 [能力降级与审查包](references/environment.md#能力降级与审查包)。
-- **分片审计**：audit 按信任边界分片，正文最多 20 条，完整清单落盘任务目录 `findings.md`，规范见 [审查规程](references/review.md#6-报告规则)。
+- **分片审计**：audit 按信任边界分片，正文最多 30 条，完整清单落盘任务目录 `findings.md`，规范见 [审查规程](references/review.md#6-报告规则)。
 - **安全与权限**：代码执行与凭证隔离遵 [审查规程](references/review.md#不可信代码执行)；保留用户改动，外部动作须明确授权。
-- **并行调度**：自判 1–5 片（用户指定优先）；normal 保持单写，full 满足隔离门槛可并写，分片不替代全量检查，见 [并行执行](references/workflow.md#并行执行)。
+- **并行调度**：自判 1–6 片（用户指定优先）；normal 保持单写，full 满足隔离门槛可并写，分片不替代全量检查，见 [并行执行](references/workflow.md#并行执行)。
 
 ## 详细规则与维护
 

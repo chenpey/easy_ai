@@ -25,7 +25,7 @@ LOCATION = re.compile(
     r"^(?P<path>[A-Za-z0-9_./-]+\.py)(?::(?P<line>\d+))?(?::(?P<symbol>[A-Za-z_][A-Za-z0-9_]*))?$"
 )
 MONEY_FUNCTION = "withdraw"
-MAX_FINDINGS = 20
+MAX_FINDINGS = 30
 LIMITATION_MARKERS = (
     "未检查",
     "未覆盖",
@@ -43,7 +43,7 @@ PROMPT = """使用 easydev audit 审计当前仓库，并实际读取 `src/ledge
 
 报告结尾必须追加机器可核对的确定发现块（只在报告顶层给出一个块，从行首开始，
 不要放进列表/引用/代码示例，也不要在报告里重复块格式示例）；块外写待验证风险、
-限制与假设；块内每行一条，按 P0→P3 排序，最多 20 条。
+限制与假设；块内每行一条，按 P0→P3 排序，最多 30 条。
 `位置` 写成 `文件:行号`，行号必须落在被审计代码的真实行上：
 
 ```easydev-findings
@@ -309,7 +309,7 @@ def evaluate(
         ),
         check("audit findings block is well formed", not problems, problems),
         check(
-            "audit reports at most 20 findings",
+            "audit reports at most 30 findings",
             1 <= len(entries) <= MAX_FINDINGS,
             len(entries),
         ),

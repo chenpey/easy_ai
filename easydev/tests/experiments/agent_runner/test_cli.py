@@ -1049,9 +1049,9 @@ class RunnerCliTest:
                 "audit ranks findings by severity",
             ),
             (
-                "more than twenty findings",
-                [report([valid_row] * 21)],
-                "audit reports at most 20 findings",
+                "more than thirty findings",
+                [report([valid_row] * 31)],
+                "audit reports at most 30 findings",
             ),
             (
                 "no read evidence",

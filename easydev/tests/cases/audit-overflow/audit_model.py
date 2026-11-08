@@ -1,4 +1,4 @@
-"""Executable B65 rules for rendering an inventory larger than 20 findings.
+"""Executable B65 rules for rendering an inventory larger than 30 findings.
 
 This is a conformance model for the audit report contract, not a scanner.  It
 keeps every confirmed finding in the appendix and makes the selected body,
@@ -8,7 +8,7 @@ overflow critical count and shard coverage independently visible.
 from __future__ import annotations
 
 
-MAX_BODY_FINDINGS = 20
+MAX_BODY_FINDINGS = 30
 SEVERITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 

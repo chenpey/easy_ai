@@ -29,7 +29,7 @@ python3 -m pytest tests/experiments/swebench -v
 - **版本提取门禁** (`tests/cases/version-gate/`)：提取 `metadata.version`，拒绝重复键、错位键、未闭合引号及非法转义（覆盖 PyYAML 与标准库无 yaml 降级模式）。
 - **模型配置校验** (`tests/cases/models-config/`)：`scripts/models.py` 的 schema 校验与来源优先级（项目 > 用户 > 内置默认，且文件不合并；拒绝非法键/角色/供应商缺失与越界参数）。
 - **设计门控与流程状态机** (`tests/cases/design-gate/`)：normal 定向审查与局部 P2 修复；转 full 继承账本；门控五项判定、`d/3` 与 `r/5` 预算记账、施工闸放行条件及文档契约回归。
-- **审计分片与溢出处理** (`tests/cases/audit-overflow/`)：正文上限 20 条，附录保留全量记录，摘要逐条披露溢出 P1 影响与覆盖完整性校验。
+- **审计分片与溢出处理** (`tests/cases/audit-overflow/`)：正文上限 30 条，附录保留全量记录，摘要逐条披露溢出 P1 影响与覆盖完整性校验。
 - **行为 Runner CLI** (`tests/experiments/agent_runner/`)：覆盖 `list`/`prepare`/`run` 命令行生命周期；B01 quick 保持、B02 full 委派、B16 只读 audit、B61 normal 微闭环与复审范围、B67 代码质量判据。
 - **SWE-bench Runner CLI** (`tests/experiments/swebench/`)：小样本运行器 `setup`/`run`/`summarize`/`calibrate`；结果解析、模板解包安全、路径保护与异常退出处理。
 - **事件归因分析** (`tests/experiments/swebench/analyze_events.py`)：解析路径声明、reviewer 独立性、P0–P3 严重度分级、文件访问及 usage 统计。
