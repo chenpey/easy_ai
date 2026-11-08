@@ -167,7 +167,12 @@ for i in 0 1; do
     echo "Runtime rule must be a regular file: ${targets[$i]}" >&2
     exit 1
   fi
-  diff -q "${sources[$i]}" "${targets[$i]}"
+  if [ ! -f "${targets[$i]}" ]; then
+    echo "Missing or non-regular target file: ${targets[$i]}" >&2
+    exit 1
+  fi
+  # diff 的缺文件退出码是 2，与本脚本的用法错误码相同；统一归一化为 1。
+  diff -q "${sources[$i]}" "${targets[$i]}" || exit 1
 done
 
 hash_sha256 "${sources[@]}" "${targets[@]}"

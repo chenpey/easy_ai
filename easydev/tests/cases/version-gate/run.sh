@@ -63,6 +63,17 @@ metadata:
 ---
 YAML
 
+cat > "$FIXTURES/commented-block.md" <<'YAML'
+---
+name: easydev
+description: >- # 行尾注释不影响块标量
+  metadata 写法示例：
+  version: 9.9.9
+metadata:
+  version: "0.14.5"
+---
+YAML
+
 cat > "$FIXTURES/description-only-version.md" <<'YAML'
 ---
 name: easydev
@@ -157,6 +168,7 @@ run_branch() {
   echo "=== 版本提取：$mode 分支 ==="
   expect_version "$mode" valid.md 0.14.5
   expect_version "$mode" description-version.md 0.14.5
+  expect_version "$mode" commented-block.md 0.14.5
   expect_rejected "$mode" duplicate-version.md "重复键"
   expect_rejected "$mode" misplaced-version.md "metadata"
   expect_rejected "$mode" description-only-version.md "metadata.version"

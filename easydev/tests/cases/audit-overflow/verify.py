@@ -127,6 +127,39 @@ def audit_errors(
     if not body_ids <= set(source_by_id):
         errors.append("body contains findings outside the complete inventory")
 
+    body_id_list = [
+        finding.get("id") for finding in body if isinstance(finding, dict)
+    ]
+    if len(body_id_list) != len(set(body_id_list)):
+        errors.append("body findings contain duplicate ids")
+    appendix_id_list = [
+        finding.get("id") for finding in appendix if isinstance(finding, dict)
+    ]
+    if len(appendix_id_list) != len(set(appendix_id_list)):
+        errors.append("appendix findings contain duplicate ids")
+    expected_body_size = min(MAX_BODY_FINDINGS, len(source_findings))
+    if len(body) != expected_body_size:
+        errors.append(
+            f"body must contain {expected_body_size} findings; got {len(body)}"
+        )
+    overflow_ids = [
+        finding["id"] for finding in source_findings if finding["id"] not in body_ids
+    ]
+    body_ranks = [
+        SEVERITY_ORDER.get(finding.get("severity"), 99)
+        for finding in body
+        if isinstance(finding, dict)
+    ]
+    overflow_ranks = [
+        SEVERITY_ORDER.get(source_by_id[finding_id]["severity"], 99)
+        for finding_id in overflow_ids
+    ]
+    # 正文必须是严重度最高的前 20 条：溢出区出现比正文更重的发现即属倒挂。
+    if body_ranks and overflow_ranks and max(body_ranks) > min(overflow_ranks):
+        errors.append(
+            "body must contain the highest-severity findings; overflow has a more severe finding"
+        )
+
     if not isinstance(summary, dict):
         errors.append("summary is missing")
     else:
@@ -292,6 +325,46 @@ def main() -> int:
     too_long = copy.deepcopy(report)
     too_long["body_findings"].append(copy.deepcopy(appendix[-1]))
     expect_invalid("body over 20 is rejected", too_long, "limit is 20")
+
+    inverted = copy.deepcopy(report)
+    source_by_id = {finding["id"]: finding for finding in FIXTURE_FINDINGS}
+    inverted["body_findings"] = [
+        finding for finding in inverted["body_findings"] if finding["id"] != "F20"
+    ] + [copy.deepcopy(source_by_id["F22"])]
+    inverted["summary"]["overflow_critical"] = {
+        "count": 2,
+        "impacts": [
+            {
+                "id": finding_id,
+                "consequence": source_by_id[finding_id]["consequence"],
+            }
+            for finding_id in ("F20", "F21")
+        ],
+        "record": "appendix",
+    }
+    expect_invalid(
+        "正文 P2 挤掉 P1 的跨区严重度倒挂被拒绝",
+        inverted,
+        "highest-severity",
+    )
+
+    duplicate_body = copy.deepcopy(report)
+    duplicate_body["body_findings"][1] = copy.deepcopy(
+        duplicate_body["body_findings"][0]
+    )
+    expect_invalid(
+        "正文重复条目被拒绝",
+        duplicate_body,
+        "body findings contain duplicate ids",
+    )
+
+    short_body = copy.deepcopy(report)
+    short_body["body_findings"].pop()
+    expect_invalid(
+        "正文未收录满 20 条被拒绝",
+        short_body,
+        "body must contain 20 findings",
+    )
 
     missing_record = copy.deepcopy(report)
     missing_record["appendix_findings"].pop()

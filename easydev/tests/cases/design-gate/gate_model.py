@@ -77,7 +77,7 @@ def resolve_designer(
             "gate": "closed",
             "must_delegate_developer": bool(developer_non_inherit or in_upgrade_stage),
             "context_isolation": "isolated" if context_isolated else "limited",
-            "reason": "主代理设计；施工是否必须委派由 developer 配置与模型升级阶段决定",
+            "reason": "主代理设计；施工是否必须委派由 developer 配置与模型升级决定",
         }
     # 设计者身份不改变施工的强制委派条件；可选委派由宿主编排决定。
     return {
@@ -296,6 +296,20 @@ class NormalReviewFlow:
         return "normal 未完成"
 
 
+def high_risk_active(task: dict) -> bool:
+    """高风险三态的统一判定：兼容布尔替身，纯文案/注释改动不激活。"""
+    level = task.get("high_risk", False)
+    if level is True:
+        level = "confirmed"
+    elif not level:
+        level = "excluded"
+    return (
+        level in ("confirmed", "unverified")
+        and task.get("changes_high_risk_behavior", True)
+        and not task.get("presentation_or_comment_only")
+    )
+
+
 def decide_gate(task: dict) -> dict:
     """按 design.md「启用门控」的五项判定是否启用本环节。"""
     hits = []
@@ -309,9 +323,88 @@ def decide_gate(task: dict) -> dict:
         "user_requests_comparison"
     ):
         hits.append("多方案")
-    if task.get("high_risk") and task.get("changes_high_risk_behavior", True):
+    if high_risk_active(task):
         hits.append("高风险边界")
     return {"enabled": bool(hits), "hits": hits}
+
+
+PATH_RANK = {"quick": 0, "normal": 1, "full": 2}
+ROUTE_READONLY = "只读交付"
+ROUTE_PAUSE = "暂停披露并等待放宽确认"
+
+
+def second_view_signals(task: dict) -> list[str]:
+    """workflow.md「第二视角信号」四项，命中任一即具备。"""
+    hits = []
+    # 信号 1：「现成检查」指改动前已存在且仍有效；本次新增测试不算。
+    # 纯新增行为、纯展示文案与注释不因此命中。
+    if (
+        task.get("changes_existing_behavior", True)
+        and not task.get("prior_check_catches_regression")
+        and not task.get("presentation_or_comment_only")
+    ):
+        hits.append("无现成检查")
+    if task.get("independent_consumers", 0) >= 2:
+        hits.append("多独立消费方")
+    if task.get("shared_contract") and task.get("unchanged_users"):
+        hits.append("共享契约且有未改使用方")
+    if task.get("user_requests_independent_review"):
+        hits.append("用户要求独立审查")
+    return hits
+
+
+def full_conditions(task: dict) -> list[str]:
+    """workflow.md 路径表里 full 的条件；「尚未核实」的高风险经调查仍不明也进 full。"""
+    hits = []
+    if high_risk_active(task):
+        hits.append("高风险边界")
+    if task.get("major_contract_or_data"):
+        hits.append("重大外部契约或持久数据影响")
+    if task.get("key_uncertainty_unresolved"):
+        hits.append("关键不确定性经调查仍不明")
+    if task.get("user_requests_full"):
+        hits.append("用户要求完整闭环")
+    return hits
+
+
+def decide_route(task: dict) -> dict:
+    """按 workflow.md「分流判定」定路径，并处理高风险下用户指定低档位。
+
+    用户指定的档位优先；唯一约束是指定档位低于高风险边界所需时不得静默降档：
+    交互环境先暂停披露；明确同意后按指定档并断言未覆盖风险，明确拒绝或非交互
+    按 full 执行并报告偏离；尚未答复才停在暂停披露。设计门控不参与分流，也
+    不能反向升级。
+    """
+    if task.get("read_only_deliverable"):
+        return {"path": ROUTE_READONLY, "actions": [], "needs": []}
+    fulls = full_conditions(task)
+    signals = second_view_signals(task)
+    needed = "full" if fulls else ("normal" if signals else "quick")
+    requested = task.get("user_tier")
+    if requested is None:
+        return {"path": needed, "actions": [], "needs": fulls or signals}
+    if PATH_RANK[requested] >= PATH_RANK[needed]:
+        return {"path": requested, "actions": [], "needs": fulls or signals}
+    if not high_risk_active(task):
+        return {"path": requested, "actions": [], "needs": fulls or signals}
+    if not task.get("interactive", True):
+        return {"path": "full", "actions": ["报告偏离"], "needs": fulls}
+    relax_confirmed = task.get("relax_confirmed")
+    if relax_confirmed is True:
+        return {"path": requested, "actions": ["断言未覆盖风险"], "needs": fulls}
+    if relax_confirmed is False:
+        return {"path": "full", "actions": ["报告偏离"], "needs": fulls}
+    return {"path": ROUTE_PAUSE, "actions": ["披露高风险边界与缺失独立审查风险"], "needs": fulls}
+
+
+def decide_review_intensity(task: dict) -> str:
+    """review.md 强度分档：高风险边界下用户指定低于「深」同样须放宽确认。"""
+    requested = task.get("requested_intensity")
+    if high_risk_active(task):
+        if requested in (None, "深"):
+            return "深"
+        return requested if task.get("interactive", True) and task.get("relax_confirmed") else "深"
+    return requested or "标准"
 
 
 class Budget:
@@ -345,6 +438,8 @@ class Budget:
         self.open_findings = 0  # 未关闭的确认缺陷（含范围内 P2、验收缺口）
         self.full_reviewed = False
         self.review_current = False
+        # 上次审查后是否发生过修改：定向复审必须有新的修复证据。
+        self.change_since_review = False
         # 未启用本环节时没有施工闸，直接按 full 其余流程施工。
         self.gate_open = not self.design_enabled and not pure_design
         # 用户是否明确要求候选第二轮并接受「设计审查将无升版重审余量」
@@ -398,13 +493,14 @@ class Budget:
 
     def design_review(self, findings: int = 0, blocked: bool = False) -> None:
         self._require_design_phase("发起设计审查")
-        if self.design_reviewed:
-            raise RuleError("同一版本的设计审查只能发起一次；升版后走 rework")
+        if self.design_reviewed and not self.blocked:
+            raise RuleError("同一版本的设计审查只能发起一次；升版走 rework；受阻轮可原版本重派")
         self._spend_d("设计审查")
         self.design_reviewed = True
-        self.open_findings += findings
-        # 新一轮结果替代旧的受阻状态，但不清除未关闭发现。
+        # 本轮审查结果替代旧版本结论：升版重审报 0 项即表示旧缺陷已被新版本取代。
+        self.open_findings = findings
         self.blocked = blocked
+        self.change_since_review = False
 
     def rework(self) -> None:
         """升版（v(N+1)）：实现者发现契约不可行，或施工审核发现根因在设计。
@@ -430,12 +526,16 @@ class Budget:
         self.log.append(f"design v{self.rework_count + 1} (rework, no round spent)")
 
     def resolve_findings(self, count: int | None = None) -> None:
+        """施工期修复后核销已关闭缺陷；设计缺陷只能靠升版重审关闭。"""
+        if not self.gate_open:
+            raise RuleError("施工闸开启前不得核销设计缺陷；须升版重审")
         self.record_change()
         self.open_findings = 0 if count is None else max(0, self.open_findings - count)
 
     def record_change(self) -> None:
         """实现、调用方或验证依赖变化：旧审查不再证明当前版本。"""
         self.review_current = False
+        self.change_since_review = True
 
     def freeze(self) -> None:
         self._require_design_phase("冻结设计版本")
@@ -463,27 +563,32 @@ class Budget:
                 f"阶段增量审查后仅余 {self._r_left() - 1} 轮，无法为最终完整审查与必要复审预留两轮；应按依赖合批或报未完成",
             )
         self._spend_r("阶段增量审查")
+        self.change_since_review = False
 
     def full_review(self, findings: int = 0) -> None:
         if not self.gate_open:
             raise RuleError("完整初审须在施工闸之后")
         self._spend_r("完整初审")
         self.full_reviewed = True
-        self.open_findings += findings
+        self.open_findings = findings
         self.review_current = self.open_findings == 0
+        self.change_since_review = False
         if findings and self._r_left() < 1:
             raise Stop("未完成", "完整初审报出缺陷但已无复审轮次")
 
-    def rereview(self) -> None:
+    def rereview(self, findings: int = 0) -> None:
         if self.pure_design:
             raise RuleError("纯 design 路径无独立设计施工审查环节，不得发起施工复审")
         if not self.gate_open:
             raise RuleError("复审须在施工闸之后")
         if not self.full_reviewed:
             raise RuleError("未经完整初审不得以复审替代")
+        if not self.change_since_review:
+            raise RuleError("复审前必须有新的修改或修复证据；无修改不得用复审清零缺陷")
         self._spend_r("复审")
-        self.resolve_findings()
-        self.review_current = True
+        self.open_findings = findings
+        self.review_current = self.open_findings == 0
+        self.change_since_review = False
 
     def finish(self) -> str:
         if not self.gate_open:

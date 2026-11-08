@@ -522,7 +522,6 @@ def run_agent(
     timeout: int,
 ) -> Dict[str, Any]:
     events_path = run_dir / "events.jsonl"
-    stdout_path = run_dir / "stdout.log"
     stderr_path = run_dir / "stderr.log"
     last_message_path = run_dir / "last-message.txt"
     env = codex_env(workdir, venv, run_dir)
@@ -550,9 +549,9 @@ def run_agent(
     started = time.time()
     timed_out = False
     try:
-        with events_path.open("w", encoding="utf-8") as events_file, stdout_path.open(
+        with events_path.open("w", encoding="utf-8") as events_file, stderr_path.open(
             "w", encoding="utf-8"
-        ) as stdout_file, stderr_path.open("w", encoding="utf-8") as stderr_file:
+        ) as stderr_file:
             process = subprocess.Popen(
                 command,
                 cwd=str(workdir),
@@ -973,9 +972,6 @@ def run_one(
         base_url=args.base_url,
         timeout=args.agent_timeout,
     )
-    captured = capture_patch(workdir, base_sha, task, trusted_git_config)
-    patch = captured["patch"]
-    (run_dir / "agent.patch").write_text(patch, encoding="utf-8")
     invocation = {
         "result_protocol": RESULT_PROTOCOL,
         "agent_returncode": agent["returncode"],
@@ -1018,6 +1014,10 @@ def run_one(
         }
         write_json(run_dir / "invalid-result.json", invalid_result)
         raise RuntimeError(f"agent invocation failed: {reason}")
+    # 进程树清理失败（returncode=-1）时不落 patch：避免与仍存活的子进程竞争工作区。
+    captured = capture_patch(workdir, base_sha, task, trusted_git_config)
+    patch = captured["patch"]
+    (run_dir / "agent.patch").write_text(patch, encoding="utf-8")
     grade = grade_patch(
         template=experiment / "templates" / f"{task_id}.tar",
         task=task,

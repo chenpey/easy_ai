@@ -12,7 +12,7 @@ if [ -n "${SMOKE_TMP:-}" ]; then
   mkdir -p "$TMP_HOME"
   cleanup() { :; }   # 调用方指定的目录不擅自删除
 else
-  TMP_HOME="$(mktemp -d)"
+  TMP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/easy_ai_smoke.XXXXXX")"
   cleanup() { rm -rf "$TMP_HOME"; }
 fi
 trap cleanup EXIT

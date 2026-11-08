@@ -30,6 +30,8 @@ from gate_model import (
     RuleError,
     Stop,
     decide_gate,
+    decide_review_intensity,
+    decide_route,
     resolve_blocked,
     resolve_designer,
 )
@@ -118,6 +120,21 @@ GATE_CASES = [
         {"packages": 2, "high_risk": True, "changes_high_risk_behavior": False},
         (True, ["跨边界"]),
     ),
+    (
+        "高风险三态 confirmed 与布尔替身一致",
+        {"packages": 1, "high_risk": "confirmed"},
+        (True, ["高风险边界"]),
+    ),
+    (
+        "高风险三态 excluded 不被当成真值",
+        {"packages": 1, "high_risk": "excluded"},
+        (False, []),
+    ),
+    (
+        "高风险纯展示文案：presentation 豁免与布尔口径一致",
+        {"packages": 1, "high_risk": "confirmed", "presentation_or_comment_only": True},
+        (False, []),
+    ),
 ]
 
 
@@ -131,6 +148,93 @@ def run_gate_cases() -> None:
             ok(label)
 
 
+# --- 分流判定与高风险降档确认 ----------------------------------------------
+ROUTE_CASES = [
+    # (标签, 任务, 预期路径, 预期动作)
+    ("纯展示文案且无检查：不命中信号 1，quick",
+     {"presentation_or_comment_only": True}, "quick", []),
+    ("改既有行为且无改前检查：命中信号 1，normal",
+     {}, "normal", []),
+    ("改前已有检查能拦回归：无信号，quick",
+     {"prior_check_catches_regression": True}, "quick", []),
+    ("作者本次新增的测试不算现成检查：仍 normal",
+     {"prior_check_catches_regression": False, "author_added_tests": True}, "normal", []),
+    ("纯新增行为不因信号 1 命中：quick",
+     {"changes_existing_behavior": False}, "quick", []),
+    ("两个独立消费方：normal",
+     {"prior_check_catches_regression": True, "independent_consumers": 2}, "normal", []),
+    ("共享契约且有未改使用方：normal",
+     {"prior_check_catches_regression": True, "shared_contract": True, "unchanged_users": True}, "normal", []),
+    ("共享契约但使用方全部随改：quick",
+     {"prior_check_catches_regression": True, "shared_contract": True, "unchanged_users": False}, "quick", []),
+    ("用户要求独立审查：normal",
+     {"prior_check_catches_regression": True, "user_requests_independent_review": True}, "normal", []),
+    ("高风险已确认涉及：full",
+     {"high_risk": "confirmed"}, "full", []),
+    ("高风险尚未核实：不当作已排除，full",
+     {"high_risk": "unverified", "prior_check_catches_regression": True}, "full", []),
+    ("高风险已排除：按信号定档",
+     {"high_risk": "excluded", "prior_check_catches_regression": True}, "quick", []),
+    ("高风险布尔真值同样进 full",
+     {"high_risk": True}, "full", []),
+    ("高风险纯展示文案不因边界字段进 full",
+     {"high_risk": "confirmed", "presentation_or_comment_only": True,
+      "prior_check_catches_regression": True}, "quick", []),
+    ("高风险指定 quick，披露后用户明确拒绝放宽：按 full 报告偏离",
+     {"high_risk": "confirmed", "user_tier": "quick", "interactive": True, "relax_confirmed": False},
+     "full", ["报告偏离"]),
+    ("重大外部契约或持久数据影响：full",
+     {"major_contract_or_data": True}, "full", []),
+    ("用户要求完整闭环：full",
+     {"user_requests_full": True, "prior_check_catches_regression": True}, "full", []),
+    ("设计/审查等只读交付不自动扩大为实现",
+     {"read_only_deliverable": True, "high_risk": "confirmed"}, "只读交付", []),
+    ("用户指定高于所需：按用户指定",
+     {"user_tier": "full", "prior_check_catches_regression": True}, "full", []),
+    ("非高风险下用户指定低档位：按用户指定，无需放宽确认",
+     {"user_tier": "quick"}, "quick", []),
+    ("高风险下指定 quick（交互、未确认）：暂停披露，不静默降档",
+     {"high_risk": "confirmed", "user_tier": "quick", "interactive": True}, "暂停披露并等待放宽确认",
+     ["披露高风险边界与缺失独立审查风险"]),
+    ("高风险下指定 normal 且已放宽确认：按指定并断言未覆盖风险",
+     {"high_risk": "confirmed", "user_tier": "normal", "interactive": True, "relax_confirmed": True},
+     "normal", ["断言未覆盖风险"]),
+    ("高风险下指定 quick（非交互）：按 full 执行并报告偏离",
+     {"high_risk": "confirmed", "user_tier": "quick", "interactive": False}, "full", ["报告偏离"]),
+    ("非交互时即使带放宽确认标记也按 full",
+     {"high_risk": "unverified", "user_tier": "normal", "interactive": False, "relax_confirmed": True},
+     "full", ["报告偏离"]),
+    ("设计门控命中不把 quick/normal 反向升级",
+     {"prior_check_catches_regression": True, "public_contract": True, "packages": 3}, "quick", []),
+]
+
+INTENSITY_CASES = [
+    ("高风险未指定强度：深", {"high_risk": "confirmed"}, "深"),
+    ("高风险指定轻（交互、未确认）：仍按深", {"high_risk": "confirmed", "requested_intensity": "轻", "interactive": True}, "深"),
+    ("高风险指定轻且已放宽确认：按指定", {"high_risk": "confirmed", "requested_intensity": "轻", "interactive": True, "relax_confirmed": True}, "轻"),
+    ("高风险指定轻（非交互）：仍按深", {"high_risk": "confirmed", "requested_intensity": "轻", "interactive": False, "relax_confirmed": True}, "深"),
+    ("非高风险指定轻：按指定", {"requested_intensity": "轻"}, "轻"),
+    ("高风险纯展示文案不升级强度",
+     {"high_risk": "confirmed", "presentation_or_comment_only": True, "requested_intensity": "轻"}, "轻"),
+]
+
+
+def run_route_cases() -> None:
+    print("=== 分流判定与降档确认（workflow.md「分流判定」、review.md「强度分档」） ===")
+    for label, task, path, actions in ROUTE_CASES:
+        got = decide_route(task)
+        if (got["path"], got["actions"]) != (path, actions):
+            bad(label, f"得到 {got['path']}/{got['actions']}，预期 {path}/{actions}")
+        else:
+            ok(label)
+    for label, task, expected in INTENSITY_CASES:
+        got = decide_review_intensity(task)
+        if got != expected:
+            bad(label, f"得到 {got}，预期 {expected}")
+        else:
+            ok(label)
+
+
 # --- 记账与停止 -----------------------------------------------------------
 
 
@@ -140,10 +244,9 @@ def run_budget_cases() -> None:
     # 不启用门控的局部 full：没有施工闸，也不记 design账。
     b = Budget(design_enabled=False)
     b.full_review()
-    b.rereview()
     b.finish()
-    if (b.d, b.r) == (0, 2):
-        ok("不启用门控：d 不计，r=2 完成")
+    if (b.d, b.r) == (0, 1):
+        ok("不启用门控：d 不计，单次完整审查 r=1 完成")
     else:
         bad("不启用门控", f"d={b.d} r={b.r}")
 
@@ -153,10 +256,9 @@ def run_budget_cases() -> None:
     b.freeze()
     b.open_gate()
     b.full_review()
-    b.rereview()
     b.finish()
-    if (b.d, b.r) == (1, 2):
-        ok("单方案设计审查通过：d=1 r=2")
+    if (b.d, b.r) == (1, 1):
+        ok("单方案设计审查通过：d=1 r=1")
     else:
         bad("单方案路径", f"d={b.d} r={b.r}")
 
@@ -167,10 +269,9 @@ def run_budget_cases() -> None:
     b.freeze()
     b.open_gate()
     b.full_review()
-    b.rereview()
     b.finish()
-    if (b.d, b.r) == (2, 2):
-        ok("候选首轮 + 设计审查通过：d=2 r=2")
+    if (b.d, b.r) == (2, 1):
+        ok("候选首轮 + 设计审查通过：d=2 r=1")
     else:
         bad("候选首轮路径", f"d={b.d} r={b.r}")
 
@@ -203,16 +304,61 @@ def run_budget_cases() -> None:
     b.design_review(findings=1)
     b.rework()
     b.design_review()
-    b.resolve_findings()
     b.freeze()
     b.open_gate()
     b.full_review()
-    b.rereview()
     b.finish()
-    if (b.d, b.r) == (3, 2):
-        ok("默认分配：候选 1 轮 + 设计审查 1 轮 + 升版重审 1 轮 = d/3，r=2 完成")
+    if (b.d, b.r) == (3, 1):
+        ok("默认分配：候选 1 轮 + 设计审查 1 轮 + 升版重审 1 轮 = d/3，r=1 完成")
     else:
         bad("默认分配", f"d={b.d} r={b.r}")
+
+    # 复审必须有新的修改证据，不得在同一已审版本上直接清零缺陷。
+    b = Budget(design_enabled=False)
+    b.full_review(findings=1)
+    try:
+        b.rereview()
+    except RuleError as exc:
+        ok(f"无修复证据的复审被拒绝（{exc}）")
+    else:
+        bad("无修复证据的复审", "未被拒绝")
+    b.resolve_findings()
+    b.rereview()
+    if b.open_findings == 0 and b.finish() == "闭环完成":
+        ok("记录修复后复审可关闭缺陷并完成")
+    else:
+        bad("修复后复审", f"open={b.open_findings} review_current={b.review_current}")
+
+    # 设计缺陷不得在施工闸前用 resolve_findings 核销，必须先升版重审。
+    b = Budget()
+    b.design_review(findings=1)
+    try:
+        b.resolve_findings()
+    except RuleError as exc:
+        ok(f"闸前核销设计缺陷被拒绝（{exc}）")
+    else:
+        bad("闸前核销设计缺陷", "未被拒绝")
+    b.rework()
+    b.design_review()
+    b.freeze()
+    b.open_gate()
+    b.full_review()
+    if b.finish() == "闭环完成":
+        ok("升版重审报 0 项后可直接冻结并闭环")
+    else:
+        bad("升版重审闭环", b.finish())
+
+    # 受阻轮允许原版本重派，不必为重派虚增版本。
+    b = Budget()
+    b.design_review(blocked=True)
+    b.design_review()
+    b.freeze()
+    b.open_gate()
+    b.full_review()
+    if (b.rework_count, b.d, b.finish()) == (0, 2, "闭环完成"):
+        ok("受阻轮可在原版本重派，重派成功即开闸")
+    else:
+        bad("受阻轮重派", f"rework={b.rework_count} d={b.d}")
 
     # 纯 design / plan 路径：无 d/r 账，支持至多 2 轮候选评估无需 opt-in，第 3 轮被拒绝。
     b = Budget(pure_design=True)
@@ -282,14 +428,14 @@ def run_budget_cases() -> None:
     b.incremental_review()  # r=3，剩余 2
     b.rework()
     b.design_review()
-    b.resolve_findings()
     b.freeze()
     b.open_gate()
-    b.full_review()
+    b.full_review(findings=1)
+    b.resolve_findings()
     b.rereview()
     b.finish()
     if b.r == R_CAP:
-        ok("剩余 r=2 时允许升版重审，重审后完整初审 + 复审刚好用完 r/5")
+        ok("剩余 r=2 时允许升版重审，重审后完整初审 + 修复复审刚好用完 r/5")
     else:
         bad("剩余 r=2 时升版重审", f"r={b.r}")
 
@@ -531,9 +677,9 @@ def run_normal_cases() -> None:
     b_from_normal.design_review(findings=1)
     b_from_normal.rework()
     b_from_normal.design_review()
-    b_from_normal.resolve_findings()
     b_from_normal.open_gate()
-    b_from_normal.full_review()
+    b_from_normal.full_review(findings=1)
+    b_from_normal.resolve_findings()
     b_from_normal.rereview()
     if (b_from_normal.d, b_from_normal.r, b_from_normal.finish()) == (3, 3, "闭环完成"):
         ok("normal 候选 1 轮转 full 补设计门控：报缺陷后升版重审仍可闭环（d=3/3 r=3/5）")
@@ -596,7 +742,7 @@ def run_normal_cases() -> None:
 
 HOST_CASES = [
     (
-        "inherit + 有委派：主代理设计，阶段 0 可自行施工",
+        "inherit + 有委派：主代理设计，模型级 0 可自行施工",
         dict(model="inherit"),
         dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=False),
     ),
@@ -616,7 +762,7 @@ HOST_CASES = [
         dict(mode=DESIGNER_DELEGATED, must_delegate_developer=True),
     ),
     (
-        "具体模型可用 + 升级阶段：仍须委派",
+        "具体模型可用 + 升级级：仍须委派",
         dict(model="gpt-6.1-sol", in_upgrade_stage=True),
         dict(mode=DESIGNER_DELEGATED, must_delegate_developer=True),
     ),
@@ -702,7 +848,7 @@ DOC_CONTRACT = [
         "多阶段按验收而非实施实例或模型升级判定",
         "easydev/references/design.md",
         "## 启用门控",
-        ["独立验收", "实施实例接力", "不单独触发", "模型升级阶段"],
+        ["独立验收", "实施实例接力", "不单独触发", "模型升级"],
         {"forbidden": ["≥2 个实施实例接力"]},
     ),
     (
@@ -712,10 +858,10 @@ DOC_CONTRACT = [
         ["实施保持单写入者", "只读并行", "历史预算", "无复审机会的修复"],
     ),
     (
-        "full 委派条件区分模型阶段与交付阶段",
+        "full 委派条件区分模型级与交付阶段",
         "easydev/references/workflow.md",
         "## full 编排",
-        ["模型阶段 0", "模型与深度均为 `inherit`", "交付验收阶段不等于模型升级阶段"],
+        ["模型级 0", "模型与深度均为 `inherit`", "自上而下取第一条", "自查（非独立）"],
     ),
     (
         "并行判断门槛、验证依赖与集成预算",
@@ -822,7 +968,7 @@ DOC_CONTRACT = [
         "B60 对照四遵守当前委派条件",
         "easydev/tests/behavior.md",
         "| B60 独立设计环节",
-        ["对照四", "阶段 0", "模型与深度均为 `inherit`", "主代理可继续施工"],
+        ["对照四", "模型级 0", "模型与深度均为 `inherit`", "主代理可继续施工"],
         {"forbidden": ["对照四施工委派独立开发者实例"]},
     ),
     (
@@ -874,10 +1020,11 @@ DOC_CONTRACT = [
         ["对照五", "对照六"],
     ),
     (
-        "SKILL.md 的 quick 核心链接到尝试预算唯一事实源",
+        "SKILL.md 的 quick 核心内联尝试预算且不外链整份 workflow",
         "easydev/SKILL.md",
         "## quick 执行核心",
-        ["references/workflow.md#尝试预算", "三次仍失败即停"],
+        ["三次仍失败即停", "换实例、模型级或编号不重置"],
+        {"forbidden": ["references/workflow.md#尝试预算"]},
     ),
     (
         "quick 专项验证有强制加载入口且不自动升级",
@@ -1064,6 +1211,15 @@ DOC_CONTRACT = [
         ["工作区外配置优先用宿主读取工具", "不得当不存在"],
     ),
     (
+        "项目配置不授予新供应商外传权限",
+        "easydev/references/environment.md",
+        "### 来源优先级",
+        ["外发安全门槛", "项目配置不授予新供应商外传权限",
+         "分派外发代码前须暂停并披露供应商与模型", "取得授权后方可分派",
+         "不得静默外发", "仅读取配置或未触发的 upgrade 级不阻断"],
+        {"forbidden": ["项目配置授予新供应商外传权限"]},
+    ),
+    (
         "normal 开工先核实角色模型",
         "easydev/references/workflow.md",
         "## normal 流程",
@@ -1113,6 +1269,32 @@ DOC_CONTRACT = [
         "easydev/references/environment.md",
         "## 任务目录与恢复",
         ["自查降级审查包放 `review_pack.md`；它们与 `plan.md` 均不是 throwaway", "未归档前保留"],
+    ),
+    (
+        "review 强度分档的降档确认只引用 workflow 分流判定",
+        "easydev/references/review.md",
+        "高风险边界任务中用户指定低于「深」时",
+        ["workflow.md#分流判定", "放宽确认"],
+        {"forbidden": ["交互环境先暂停披露未覆盖风险"]},
+    ),
+    (
+        "review 严重程度定义以 roles.md 审查角色为正源",
+        "easydev/references/review.md",
+        "- **严重程度**：",
+        ["roles.md#审查角色", "范围内必关项"],
+        {"forbidden": ["灾难性阻断问题（明确证据的数据破坏"]},
+    ),
+    (
+        "workflow full 角色用判定表给出写入者",
+        "easydev/references/workflow.md",
+        "| 条件 | 写入者与标注 |",
+        ["模型级 0", "实现=主代理", "自查（非独立）", "委派开发者"],
+    ),
+    (
+        "SKILL.md 高风险简写含并发与生产日志并链接边界表",
+        "easydev/SKILL.md",
+        "高风险边界（",
+        ["并发", "生产日志", "references/workflow.md#高风险边界"],
     ),
 ]
 
@@ -1215,6 +1397,13 @@ def _copy_contract_tree(destination: Path) -> None:
     (destination / "easydev").mkdir(parents=True)
     shutil.copy2(EASYDEV / "SKILL.md", destination / "easydev/SKILL.md")
     shutil.copytree(EASYDEV / "references", destination / "easydev/references")
+    # 契约也覆盖 tests/ 下的行为规约与折叠评测；机制自检须能在同一根目录内变异它们。
+    (destination / "easydev/tests/experiments").mkdir(parents=True)
+    shutil.copy2(EASYDEV / "tests/behavior.md", destination / "easydev/tests/behavior.md")
+    shutil.copy2(
+        EASYDEV / "tests/experiments/fold-eval.md",
+        destination / "easydev/tests/experiments/fold-eval.md",
+    )
 
 
 def _apply_mutation(root: Path, rel: str, transform) -> None:
@@ -1279,7 +1468,7 @@ def run_doc_contract_mechanism() -> None:
     def move_model_gate(text: str) -> str:
         clause = (
             "除 quick 与单次只读审查外，开工先按 environment 核实角色配置；"
-            "未核实不得假定 inherit 自任设计或写入，任何分派都以核实值为准；"
+            "未核实不得假定 inherit 自任设计或写入，任何分派都以核实值为准。"
         )
         if clause not in text or "## 按需加载" not in text:
             raise RuleError("SKILL.md 的开工核实段与预期不符")
@@ -1304,7 +1493,7 @@ def run_doc_contract_mechanism() -> None:
         return marker + tail + "\n" + head
 
     quick_clause = (
-        "quick 默认只读本页与尝试预算；例外必读：性能比较或收益声明读 [性能](references/engineering.md#测试硬约束与选择)，"
+        "quick 默认只读本页；例外必读：性能比较或收益声明读 [性能](references/engineering.md#测试硬约束与选择)，"
         "测试依赖未知外部能力读 [验证调度](references/engineering.md#验证调度与证据)；均不因此升级 full。"
     )
 
@@ -1376,11 +1565,9 @@ def run_reachability() -> None:
             if findings:
                 b.rework()
                 b.design_review()
-                b.resolve_findings()
             b.freeze()
             b.open_gate()
             b.full_review()
-            b.rereview()
             b.finish()
         except Stop as stop:
             outcome = stop.state
@@ -1411,6 +1598,7 @@ def run_reachability() -> None:
 
 def main() -> int:
     run_gate_cases()
+    run_route_cases()
     run_budget_cases()
     run_normal_cases()
     run_host_cases()

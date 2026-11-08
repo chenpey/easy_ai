@@ -2,6 +2,18 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.7 更新说明（2026-11-08）
+
+规则文本去重与术语消歧，外加分流判定与高风险降档确认的确定性测试。流程档位、审查轮次、三次修复上限、预算算术与模型 schema 均不变；并行执行小节未动。
+
+- **quick 不再被外链拖进整份 `workflow.md`**：入口去掉 `workflow.md#尝试预算` 链接与「与尝试预算」，尝试预算核心句内联为「按根因或症状识别，换实例、模型级或编号不重置」；`workflow.md#尝试预算` 仍是完整说明。普通 quick 只读 `SKILL.md`。
+- **术语消歧**：把模型升级序列的「阶段」统一改称「模型级」（0 级为初始配置，`upgrades` 依次为 1、2 级），「阶段」只留给交付阶段与阶段增量审查；删除补丁句「交付验收阶段不等于模型升级阶段」。涉及 `workflow.md`、`design.md`、`roles.md`、`environment.md` 与 `tests/` 内对应断言和文案。
+- **去重，各指定一个正源**：P0–P3 定义以 `roles.md` 审查角色为正源（`review.md` 只补 full 必关项与 P3 口径）；用户指定低于「深」的降档确认以 `workflow.md` 分流判定为正源（`review.md` 改引用）；审查者实例隔离以 `roles.md` 为正源（`design.md` 改引用）；高风险纯文案豁免判定同 `workflow.md` 高风险边界（`design.md` 改引用）；normal 交接不再重复 `**[P级] 简短标题**` 格式（以 `roles.md` 为准）。
+- **长条件句改表格与条目**：`workflow.md` full「谁来写」改为自上而下取第一条的判定表；`SKILL.md` 全程约束拆为 6 条；入口高风险简写补「并发」「生产日志」，并链接到 `workflow.md#高风险边界`；删除 1.x 旧语境句「normal 是实现路径，非聊天长度档」。
+- **测试**：`gate_model.py` 新增 `decide_route`、`second_view_signals`、`full_conditions`、`decide_review_intensity`，`verify.py` 新增 31 条分流与降档确认用例（第二视角信号 1–4、「现成检查」限定为改动前已存在、高风险尚未核实不当作已排除、交互/非交互下指定低档位的暂停披露/放宽确认/按 full 报告偏离、设计门控不反向升级）和 5 条文档契约；原尝试预算链接契约改为内联契约，`behavior.md` B01/B25/B25q/B60 与 `fold-eval.md` 随术语同步。
+- **审计复核修复**：全仓审计复核后修复确认缺陷，并统一高风险三态、术语与文档计数。设计门控模型禁止在施工闸前用 `resolve_findings()` 核销设计缺陷，升版重审的结果替代旧版本结论，受阻轮允许原版本重派，定向复审必须有新的修改/修复证据且按复审 `findings` 更新未决项；`decide_gate` / `decide_route` / `decide_review_intensity` 统一兼容高风险布尔与三态，并补纯注释/文案豁免；B01 收紧为普通 quick 只读 `SKILL.md`，读取 `workflow.md` 判负；`audit-overflow` 增加正文满额、正文/附录去重与跨区严重度不倒挂校验；`models.py` 在注入 env 缺少 HOME 时回退内置默认而非宿主家目录；`sync-agent-rules.sh --check` 对缺失/非普通目标统一退出 1；`smoke-install.sh` 的 `mktemp` 改用 `${TMPDIR:-/tmp}` 模板；`check_think_rubric.py` 校验 TR/NT/BH 三组全量范围并拒绝重复矩阵行/标签定义；`check.sh` 无 PyYAML 分支拒绝未知顶层键；`skill_version.py` 降级分支支持块标量头行尾注释与两种指示符顺序；SWE-bench 先校验调用有效再抓取 patch，并移除未使用的 `stdout.log`；同步 README/SVG/behavior 的门控、局部 P2、敏感基线、锚点与术语。排除 5 个不成立或无行为影响的子项：`to_full_budget` 未继承发现计数、`render_audit` 覆盖声明（已由独立验收拒绝）、注入 env 的 `~` 展开、`SMOKE_TMP` 指定目录重入、链接检查围栏/递归 glob（当前无未覆盖文件）。回归载体：design-gate 172→185 项、契约 66→67 条，audit-overflow 22→25 项，models-config 新增 1 条 env 隔离回归，version-gate 新增 1 条带注释块标量回归。
+- **规则文档总量棘轮**：68553 → 68521 字节；`SKILL.md` + `references/*.md` 合计不得超过 68521 字节。
+
 ## 2.4.6 更新说明（2026-11-08）
 
 修复 Gemini 全仓审计与 easydev full 完整初审中经复核确认的 18 项缺陷（4 项 P1、8 项 P2、6 项 P3），并对 6 项判为不成立或无需改动；另有 8 条改进建议未实施。流程档位、审查轮次、三次修复上限与模型 schema 不变。

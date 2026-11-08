@@ -24,7 +24,7 @@ from pathlib import Path
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 TOP_LEVEL_RE = re.compile(r"^([A-Za-z0-9_-]+):(.*)$")
-BLOCK_SCALAR_RE = re.compile(r"^[>|][+-]?[0-9]?$")
+BLOCK_SCALAR_RE = re.compile(r"^[>|](?:[+-][0-9]?|[0-9][+-]?)?$")
 
 
 class FrontmatterError(ValueError):
@@ -128,7 +128,10 @@ def version_without_yaml(frontmatter: str) -> str:
                 raise FrontmatterError(f"frontmatter 存在重复键: {key}")
             top_keys.add(key)
             current_key = key
-            block_scalar = bool(BLOCK_SCALAR_RE.match(rest))
+            # 块标量头允许行尾注释（如 `>- # note`），也允许两种指示符顺序。
+            block_scalar = bool(
+                BLOCK_SCALAR_RE.match(re.sub(r"[ \t]+#.*$", "", rest))
+            )
             continue
         if not line[:1].isspace():
             raise FrontmatterError(f"frontmatter 存在非法顶层行: {line!r}")

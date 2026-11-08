@@ -3,7 +3,7 @@
 
 只校验可机械判定的部分，不评价行为质量：
 1. TR/NT/BH 用例编号唯一、连续，且断言表与覆盖矩阵的编号集合相等；
-2. 「全量定义」的范围在所有出现处一致；
+2. 「全量定义」中 TR/NT/BH 的范围在所有出现处一致，且等于断言表实际最大编号；
 3. RG/SV/EV 标签被引用前必须已在「标签索引」中定义；
 4. README 的关键判据短语与 SKILL.md 同源（README 只是副本，规则以 SKILL.md 为准）；
 5. 回归记录首行版本与 SKILL.md 的 metadata.version 一致。
@@ -31,6 +31,7 @@ SHARED_PHRASES = (
     "且指向心境而非单纯事务忙碌",
     "且无任何上述风险标记",
     "绝不替用户推荐具体投资标的或杠杆倍数",
+    "；寻求自伤方法",
 )
 
 errors: list[str] = []
@@ -65,36 +66,61 @@ for prefix in ("TR", "NT", "BH"):
     elif len(found) != len(unique):
         errors.append("%s 在断言表里重复出现：%s" % (prefix, found))
 
-matrix = set(re.findall(r"^\| ((?:TR|NT|BH)-\d{2}) ", records, re.MULTILINE))
-if not matrix:
+matrix_rows = re.findall(r"^\| ((?:TR|NT|BH)-\d{2}) ", records, re.MULTILINE)
+matrix = set(matrix_rows)
+if not matrix_rows:
     errors.append("回归记录里找不到覆盖矩阵")
+elif len(matrix_rows) != len(matrix):
+    duplicates = sorted({row for row in matrix_rows if matrix_rows.count(row) > 1})
+    errors.append("回归记录覆盖矩阵有重复行：%s" % duplicates)
 elif matrix != defined:
     errors.append(
         "覆盖矩阵与断言表不一致：仅矩阵有 %s，仅断言表有 %s"
         % (sorted(matrix - defined), sorted(defined - matrix))
     )
 
-# 2. 全量定义范围一致，且等于断言表里实际存在的最大用例（不写死数字）
-ranges = set(re.findall(r"BH-01～(\d{2})", behavior + records))
-if len(ranges) > 1:
-    errors.append("全量定义的 BH 上限不一致：%s" % sorted(ranges))
-if not ranges:
-    errors.append("找不到全量定义里的 BH 范围")
-else:
-    bh_ids = sorted({i for i in defined if i.startswith("BH-")})
-    expected_top = bh_ids[-1][3:] if bh_ids else None
-    for value in sorted(ranges):
-        if value != expected_top:
+# 2. 全量定义范围一致，且每个前缀都等于断言表里实际存在的最大用例（不写死数字）
+expected_tops = {}
+for prefix in ("TR", "NT", "BH"):
+    prefix_ids = sorted(i for i in defined if i.startswith(prefix + "-"))
+    if not prefix_ids:
+        errors.append("断言表缺少 %s 前缀的用例" % prefix)
+    else:
+        expected_tops[prefix] = prefix_ids[-1][3:]
+
+for name, text in (("README.md", readme), ("tests/runs/README.md", records)):
+    matches = re.findall(r"\b(TR|NT|BH)-01～(\d{2})", text)
+    if not matches:
+        errors.append("%s 找不到全量定义里的用例范围" % name)
+        continue
+    found_prefixes = {p for p, _ in matches}
+    for prefix in ("TR", "NT", "BH"):
+        if prefix not in found_prefixes:
+            errors.append("%s 的全量定义缺少 %s-01～ 范围" % (name, prefix))
+    for prefix, value in matches:
+        expected = expected_tops.get(prefix)
+        if expected and value != expected:
             errors.append(
-                "全量定义的 BH 上限 %s 与断言表最大用例 %s 不一致" % (value, expected_top)
+                "%s 中全量定义的 %s 上限 %s 与断言表最大用例 %s 不一致"
+                % (name, prefix, value, expected)
             )
 
-# 3. 标签：引用集合必须是标签索引里已定义的子集
+# 3. 标签：引用集合必须是标签索引里已定义的子集，且各前缀 01..N 连续
 legend = behavior.split("## 标签索引", 1)
+defined_labels: set[str] = set()
 if len(legend) != 2:
     errors.append("behavior.md 缺少「标签索引」小节")
 else:
-    defined_labels = set(re.findall(r"\*\*((?:RG|SV|EV)-\d{2}) ", legend[1].split("## 1.", 1)[0]))
+    label_defs = re.findall(r"\*\*((?:RG|SV|EV)-\d{2}) ", legend[1].split("## 1.", 1)[0])
+    defined_labels = set(label_defs)
+    if len(label_defs) != len(defined_labels):
+        duplicates = sorted({label for label in label_defs if label_defs.count(label) > 1})
+        errors.append("标签索引有重复定义：%s" % duplicates)
+    for prefix in ("RG", "SV", "EV"):
+        matched = sorted(l for l in defined_labels if l.startswith(prefix + "-"))
+        expected_labels = ["%s-%02d" % (prefix, i) for i in range(1, len(matched) + 1)]
+        if matched != expected_labels:
+            errors.append("标签索引 %s 编号不连续或有缺失：%s" % (prefix, matched))
     referenced = set(re.findall(r"(?:RG|SV|EV)-\d{2}", behavior)) | set(
         re.findall(r"(?:RG|SV|EV)-\d{2}", records)
     )
@@ -132,5 +158,5 @@ if errors:
     sys.exit(1)
 print(
     "OK: 行为规约门禁通过（%d 条用例、%d 个标签、%d 条共享判据、记录版本 %s）"
-    % (len(defined), len(re.findall(r"\*\*(?:RG|SV|EV)-\d{2} ", behavior)), len(SHARED_PHRASES), rows[0])
+    % (len(defined), len(defined_labels), len(SHARED_PHRASES), rows[0])
 )

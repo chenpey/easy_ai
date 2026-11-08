@@ -74,10 +74,25 @@ def test_rework_closes_gate_and_invalidates_previous_full_review():
 def test_repair_needs_rereview_after_findings_resolved():
     budget = gate.Budget(design_enabled=False)
     budget.full_review(findings=1)
+    with pytest.raises(gate.RuleError, match="修复证据"):
+        budget.rereview()
+    assert budget.r == 1
     budget.resolve_findings()
     with pytest.raises(gate.RuleError, match="审查"):
         budget.finish()
     budget.rereview()
+    assert budget.finish() == "闭环完成"
+
+
+def test_design_findings_cannot_be_resolved_before_gate():
+    budget = gate.Budget()
+    budget.design_review(findings=1)
+    with pytest.raises(gate.RuleError, match="升版重审"):
+        budget.resolve_findings()
+    budget.rework()
+    budget.design_review()
+    budget.open_gate()
+    budget.full_review()
     assert budget.finish() == "闭环完成"
 
 
@@ -179,7 +194,6 @@ def test_normal_upgrade_inherits_candidate_and_review_budgets_into_full():
     budget.design_review(findings=1)
     budget.rework()
     budget.design_review()
-    budget.resolve_findings()
     budget.open_gate()
     # 已继承 r=2，阶段增量审查最多只能跑 3 - 2 = 1 轮。
     budget.incremental_review()

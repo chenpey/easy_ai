@@ -212,6 +212,12 @@ if os.name != "nt":
     check("注入 env 的 HOME 决定用户配置来源，不读宿主家目录",
           lambda: expect_selection("用户配置", OTHER, project_root=str(PROJECT),
                                    env={"HOME": str(ALT_HOME)}))
+    # 宿主家目录里放一份配置：隔离 env 缺 HOME 时必须走内置默认，不能回退去读它。
+    write(USER_CONFIG, OTHER)
+    check("注入不含 HOME 的隔离 env 时回退内置默认，不读宿主用户配置",
+          lambda: expect_selection("内置默认", models.builtin_config(),
+                                   project_root=str(PROJECT), env={}))
+    USER_CONFIG.unlink()
 
 USER_CONFIG.symlink_to(WORK / "real-user.json")
 saved_nofollow = getattr(models.os, "O_NOFOLLOW", 0)

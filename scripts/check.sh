@@ -97,7 +97,7 @@ if yaml is not None:
         print(f"Error: {path} description 长度不合规 ({len(desc)} > 1024)", file=sys.stderr)
         sys.exit(1)
 else:
-    print("提示: 未安装 PyYAML，启用严格降级校验（拒绝内联 description 中的 ASCII \": \" 与非法顶层行）")
+    print("提示: 未安装 PyYAML，启用严格降级校验（拒绝内联 description 中的 ASCII \": \"、未知或非法顶层行）")
     m_name = re.search(r"^name:[ \t]*(\S+)[ \t]*$", fm, re.MULTILINE)
     if not m_name or m_name.group(1) != name:
         print(f"Error: {path} frontmatter 中的 name 必须为 {name}", file=sys.stderr)
@@ -111,9 +111,16 @@ else:
     if not body.lstrip().startswith((">", "|")) and re.search(r":\s", body):
         print(f"Error: {path} 的 description 是内联标量且含 ASCII \": \"，会被 YAML 当作键值分隔而解析失败", file=sys.stderr)
         sys.exit(1)
+    allowed_keys = {"name", "description", "metadata"}
     for line in fm.splitlines():
-        if line and not line[0].isspace() and not re.match(r"^[a-zA-Z0-9_-]+:", line):
+        if not line or line[0].isspace():
+            continue
+        key = re.match(r"^([a-zA-Z0-9_-]+):", line)
+        if key is None:
             print(f"Error: frontmatter 存在非法顶层行: {line!r}", file=sys.stderr)
+            sys.exit(1)
+        if key.group(1) not in allowed_keys:
+            print(f"Error: frontmatter 含未知顶层字段: {key.group(1)!r}", file=sys.stderr)
             sys.exit(1)
     if not re.search(r"^metadata:[ \t]*$", fm, re.MULTILINE):
         print("Error: frontmatter 缺少 metadata 映射", file=sys.stderr)
@@ -617,7 +624,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=68553
+MAX_TOTAL=68521
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

@@ -432,13 +432,14 @@ class RunnerCliTest:
         assert patch.strip()
         assert ".agents/skills" not in patch
 
-    def test_run_b01_allows_workflow_reference(self) -> None:
+    def test_run_b01_rejects_workflow_reference(self) -> None:
         fixture = self.stub_environment(
             "b01-workflow", self.b01_plan(commands=["cat references/workflow.md"])
         )
         completed = self.run_scenario(fixture, "b01")
-        assert completed.returncode == 0, completed.stderr + completed.stdout
-        assert self.result(fixture, "b01")["resolved"]
+        assert completed.returncode == 1, completed.stderr + completed.stdout
+        result = self.result(fixture, "b01")
+        assert "quick loaded no other references" in self.failed_checks(result)
 
     def test_run_b01_rejects_other_references(self) -> None:
         fixture = self.stub_environment(

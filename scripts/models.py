@@ -127,7 +127,7 @@ def validate_config(value: Any) -> None:
             validate_role(entry[role_name], path + "." + role_name)
         current = {role: _role_tuple(entry[role]) for role in REQUIRED_ROLES}
         if all(current[role] == previous[role] for role in REQUIRED_ROLES):
-            raise ConfigError(path, "与上一阶段完全相同，至少一个角色必须变化")
+            raise ConfigError(path, "与上一模型级完全相同，至少一个角色必须变化")
         previous = current
 
 
@@ -169,14 +169,18 @@ class Selection(object):
         return self.error is None
 
 
-def user_config_path(env: Optional[Dict[str, str]] = None) -> str:
+def user_config_path(env: Optional[Dict[str, str]] = None) -> Optional[str]:
     environment = env if env is not None else os.environ
     appdata = environment.get("APPDATA")
     if os.name == "nt" and appdata:
         return os.path.join(appdata, "easydev", "models.json")
-    # 注入的 env 优先：隔离环境不能被静默地换成宿主家目录。
-    home = environment.get("HOME") or os.path.expanduser("~")
-    return os.path.join(home, ".config", "easydev", "models.json")
+    # 注入的 env 优先：隔离环境没有 HOME 时不得静默换成宿主家目录。
+    home = environment.get("HOME")
+    if home:
+        return os.path.join(home, ".config", "easydev", "models.json")
+    if env is not None:
+        return None
+    return os.path.join(os.path.expanduser("~"), ".config", "easydev", "models.json")
 
 
 def _read_config(path: str, source: str) -> Selection:
@@ -249,11 +253,12 @@ def select(
         if project.config is not None:
             return _apply_overrides(project, context)
     user_path = user_config_path(env)
-    user = _read_config(user_path, "用户配置")
-    if user.error:
-        return user
-    if user.config is not None:
-        return _apply_overrides(user, context)
+    if user_path is not None:
+        user = _read_config(user_path, "用户配置")
+        if user.error:
+            return user
+        if user.config is not None:
+            return _apply_overrides(user, context)
     selection = Selection(builtin_config(), "内置默认")
     return _apply_overrides(selection, context)
 

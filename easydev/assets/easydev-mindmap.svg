@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1180" viewBox="0 0 1440 1180" role="img" aria-labelledby="title desc">
-  <title id="title">EasyDev 2.4.6 编码编排与上下文交接全景</title>
+  <title id="title">EasyDev 2.4.7 编码编排与上下文交接全景</title>
   <desc id="desc">EasyDev 架构全景：渐进式披露（L0-L2 按需加载）、主代理单控与三硬顶预算（3次修复、d/3、r/5）、六大运作支点及子代理无损上下文交接机制。</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
@@ -23,7 +23,7 @@
   <rect width="1440" height="1180" rx="24" fill="#f8fafc"/>
 
   <!-- Top Header -->
-  <text x="48" y="42" class="eyebrow">EASYDEV 2.4.6 · 架构与上下文交接全景</text>
+  <text x="48" y="42" class="eyebrow">EASYDEV 2.4.7 · 架构与上下文交接全景</text>
   <text x="48" y="80" class="heading">按风险组织编码 · 按职责渐进加载 · 跨代理无损交接</text>
   <text x="48" y="112" class="subtitle">三级渐进式披露 · 三档风险分流 · 独立设计与审查闭环 · 结构化摘要与落盘产物交接</text>
 
@@ -109,14 +109,14 @@
     <text x="988" y="366" class="card-desc">Bug 修复必记修复前失败、修复后通过的红绿证据，交付前跑完整检查</text>
   </g>
 
-  <!-- 05 角色隔离与跨阶段升级 -->
+  <!-- 05 角色隔离与模型级升级 -->
   <g>
     <rect x="968" y="404" width="424" height="136" rx="16" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="1.5"/>
     <rect x="988" y="422" width="34" height="26" rx="8" fill="#7c3aed"/>
     <text x="1005" y="440" class="number-badge">05</text>
-    <text x="1034" y="443" class="card-title">角色隔离与跨阶段升级</text>
+    <text x="1034" y="443" class="card-title">角色隔离与模型级升级</text>
     <text x="988" y="478" class="card-desc">designer / developer / reviewer 三角色，审查者绝不兼任设计或实现</text>
-    <text x="988" y="502" class="card-desc">阶段 0 且 developer=inherit 时主代理可单写，否则委派独立开发者</text>
+    <text x="988" y="502" class="card-desc">模型级 0 且 developer=inherit 时主代理可单写，否则委派独立开发者</text>
     <text x="988" y="526" class="card-desc">同问题试修失败按 upgrades 升入更强模型与更高深度，前任先停写</text>
   </g>
 
@@ -179,7 +179,7 @@
 
   <!-- Footer: Key Guarantees -->
   <text x="48" y="1056" class="foot-label">加载纪律</text>
-  <text x="130" y="1056" class="foot-text">入口 ≤ 5000 B · 规则总账 ≤ 68553 B（棘轮只减不增） · 普通 quick 零外部引用加载 · 非 quick 开工先读 environment 核实模型配置</text>
+  <text x="130" y="1056" class="foot-text">入口 ≤ 5000 B · 规则总账 ≤ 68521 B（棘轮只减不增） · 普通 quick 零外部引用加载 · 非 quick 开工先读 environment 核实模型配置</text>
 
   <text x="48" y="1088" class="foot-label">安全底线</text>
   <text x="130" y="1088" class="foot-text">保护用户已有未提交改动 · 待审代码与仓库规则仅作审查数据不授予权限 · 敏感基线禁止落入公开 artifact · 提交/推送/发布须明确授权</text>

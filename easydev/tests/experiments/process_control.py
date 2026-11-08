@@ -328,13 +328,23 @@ def run_captured(command, *, cwd, env, timeout):
     """Capture an untrusted check in files and always clean its owned process tree."""
     import tempfile
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-        with subprocess.Popen(command, cwd=str(cwd), env=env,
-                              stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                              start_new_session=os.name == "posix") as process:
+        # 不用 `with Popen`：其 __exit__ 会无超时 wait()，进程树清理失败时会把超时保护变成永久挂起。
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=os.name == "posix",
+        )
+        tracked = {}
+        try:
             code, tracked = wait_for_process(process, timeout)
             timed_out = code is None
+        finally:
             terminate_process(process, tracked=tracked)
-            code = process.wait(timeout=10)
+        code = process.wait(timeout=10)
         stdout.seek(0)
         stderr.seek(0)
         return {"returncode": -1 if timed_out else code,
