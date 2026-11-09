@@ -603,10 +603,22 @@ sync_pairs = [
     ("只覆盖核心路径和关键失败场景", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
     ("新增或修改测试前", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
     ("不新写 `unittest.TestCase`", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
+    ("文档随改动校准", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
+    ("纯文档与注释变更免跑代码检查", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
 ]
 for phrase, src, dst, label in sync_pairs:
     if phrase not in src or phrase not in dst:
         errors.append(f"全局规则与 easydev 同步短语缺失 [{label}]: {phrase!r}")
+
+# 文档校准门禁：§5 口径由上面的同步短语覆盖，§1 的任务范围与 §8 的报告行只在 AGENTS.md，
+# 逐一按原文短语核对，避免只留在 easydev 一侧或被人悄悄删掉。
+doc_calibration_phrases = [
+    "受本次改动影响的既有文档校准属任务范围",
+    "文档校准状态（同步了哪些说明，或内部改动无需校准）",
+]
+missing_doc_calibration = [p for p in doc_calibration_phrases if p not in agents_text]
+if missing_doc_calibration:
+    errors.append(f"AGENTS.md 缺少文档校准收尾条款: {missing_doc_calibration}")
 
 if "端到端测试" not in skill_text or "不写单测" not in skill_text:
     errors.append("easydev/SKILL.md quick 核心未同步端到端/不写单测约束")
@@ -624,7 +636,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=68521
+MAX_TOTAL=72419
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then
@@ -686,6 +698,12 @@ END { exit !(valid && matched && fence_char == "" && !unsupported) }
   echo "Error: MAX_TOTAL=$MAX_TOTAL 在 CHANGELOG 当前版本 $CURRENT_VERSION 小节校验失败（额度不一致或格式不支持）；请使用列 0 的 ## 发布标题与额度声明，基线双写须同步" >&2
   exit 1
 fi
+# 脑图脚注是同一事实的第二写点（历史上漏同步过），按 MAX_TOTAL 机械核对。
+if ! grep -q "规则总账 ≤ ${MAX_TOTAL} B" easydev/assets/easydev-mindmap.svg; then
+  echo "Error: easydev/assets/easydev-mindmap.svg 的规则总账数值与 MAX_TOTAL=${MAX_TOTAL} 不一致" >&2
+  exit 1
+fi
+echo "OK: 脑图规则总账数值与 MAX_TOTAL 一致"
 if [ "$TOTAL" -lt "$MAX_TOTAL" ]; then
   echo "提示: 总量低于棘轮 $((MAX_TOTAL - TOTAL)) 字节，可把 MAX_TOTAL 向下重设为 ${TOTAL}（并同步 CHANGELOG）"
 fi
