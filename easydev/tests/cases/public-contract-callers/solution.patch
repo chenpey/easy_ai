@@ -34,7 +34,7 @@ index 3e73d3b..4bb91ed 100644
 -    order = get_order(order_id)
 +    try:
 +        order = get_order(order_id, request["user_id"])
-+    except PermissionError:
++    except (KeyError, PermissionError):
 +        return {"status": STATUS_FORBIDDEN}
      if order is None:
          return {"status": STATUS_NOT_FOUND}

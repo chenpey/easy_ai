@@ -18,6 +18,7 @@ resolved = 全部 FAIL_TO_PASS 修复成功
 1. `princeton-nlp/SWE-bench_Lite` 任务元数据 JSON。
 2. 各任务源码压缩包 `<instance_id>.tar` 与 Python 虚拟环境 `<instance_id>`。
 3. 可用的 Codex CLI 及 `~/.codex/auth.json`。
+4. `run` 的默认参数指向本机模型代理（`--base-url http://127.0.0.1:3425/backend-api/codex`、`--model opencode-go/deepseek-v4.1-flash`、`--reasoning-effort low`）：未在本机跑同款代理时须显式传 `--base-url`/`--model`/`--reasoning-effort`，否则该轮全部任务在模型侧失败。
 
 解包阶段内建路径逃逸安全检查（拒绝绝对路径、`..` 越界或外部硬链接）。
 

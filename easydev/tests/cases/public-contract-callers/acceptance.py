@@ -1,9 +1,10 @@
 """Independent acceptance for the public-contract-callers fixture.
 
 The checks are a data table: every row carries a label, the call to exercise,
-the expected value or exception, and whether the result may not contain any
-order data.  The runner below applies one uniform policy per mode, so adding a
-case cannot silently change how failures are reported.
+the expected value or exception, whether the result may not contain any order
+data, and whether a web-boundary row must answer instead of raising.  The
+runner below applies one uniform policy per mode, so adding a case cannot
+silently change how failures are reported.
 
 Usage:
     python3 acceptance.py <checked-out fixture>
@@ -182,6 +183,7 @@ def iter_checks():
         "missing request identity does not read order",
         lambda: handle_show_order({}, "o1"),
         known_inputs=("o1",),
+        rejects=True,
         no_order=True,
     )
     yield row(
@@ -193,12 +195,14 @@ def iter_checks():
         "none request identity does not read order",
         lambda: handle_show_order({"user_id": None}, "o1"),
         known_inputs=("o1",),
+        rejects=True,
         no_order=True,
     )
     yield row(
         "empty request identity does not read order",
         lambda: handle_show_order({"user_id": ""}, "o1"),
         known_inputs=("o1",),
+        rejects=True,
         no_order=True,
     )
 
@@ -347,6 +351,10 @@ def run_check(row):
     except Exception as error:  # noqa: BLE001 - acceptance reports failures
         expected = row.get("raises")
         if expected is None:
+            if row.get("rejects"):
+                # Web 边界必须回受控的 4xx 响应；未捕获异常等同 500 崩溃，不能因为
+                # 错误文案未泄露订单就放行。
+                return f"{label}: unexpected {type(error).__name__}: {error}"
             if row.get("no_order"):
                 if error_leaks(error):
                     return f"{label}: error leaked order data {error!r}"
@@ -365,6 +373,12 @@ def run_check(row):
 
     if row.get("raises") is not None:
         return f"{label}: expected {row['raises'].__name__}, got {actual!r}"
+    if row.get("rejects"):
+        # Web 边界只接受受控的 4xx 响应；None 或空容器不算「拒绝」，不能靠它遮住 500。
+        # 只加这一道关，随后仍走 no_order 的结构与泄露校验（不许绕过键白名单）。
+        status = actual.get("status") if isinstance(actual, dict) else None
+        if not isinstance(status, int) or not 400 <= status < 500:
+            return f"{label}: expected a 4xx response, got {actual!r}"
     if row.get("no_order"):
         if not is_empty_result(actual):
             return f"{label}: returned non-empty result {actual!r}"

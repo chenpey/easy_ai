@@ -238,6 +238,18 @@ def terminate_process(
     root_alive = bool(root_identity) and _identity_alive(process.pid, root_identity, snapshot)
     if not snapshot:
         root_alive = process.poll() is None
+    # 组信号只在能证明该 PGID 仍属本任务时发出：等待期间观测到的后代仍存活**且仍在原组**，
+    # 说明组里还有成员，内核不会把这个 PID 回收给别的会话；后代已 setsid 离开原组时不算证据。
+    tracked_alive = False
+    for pid, identity in known.items():
+        if not _identity_alive(pid, identity, snapshot):
+            continue
+        try:
+            if os.getpgid(pid) == process.pid:
+                tracked_alive = True
+                break
+        except (ProcessLookupError, PermissionError):
+            continue
     # A missing leader permits cleaning its remaining group. An existing PID
     # must match the recorded identity; never adopt a replacement process.
     owns_group = root_alive or (bool(snapshot) and actual is None and process.poll() is not None)
@@ -251,7 +263,10 @@ def terminate_process(
         if root_alive:
             for pid, identity in _descendants({process.pid}, snapshot).items():
                 known.setdefault(pid, identity)
-        _signal_group(process.pid, signal.SIGTERM)
+        # leader 已退出且无任何已跟踪后代存活时，该 PGID 可能已被复用给宿主的
+        # 无关进程组；此时不发组信号，残留成员只由 _signal_known 按身份逐个处理。
+        if root_alive or tracked_alive:
+            _signal_group(process.pid, signal.SIGTERM)
     if root_alive:
         _signal_pid(process.pid, signal.SIGTERM)
     _signal_known(known, signal.SIGTERM)

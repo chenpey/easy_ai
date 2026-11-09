@@ -45,6 +45,19 @@ def read(path: Path) -> str:
         return ""
 
 
+def section(text: str, heading: str, level: int) -> str:
+    """截取 `heading` 小节正文，到下一个同级或更高级标题为止。
+
+    规则文档里同时有多张表，按小节取范围才不会把别处的用例行当成矩阵行。
+    """
+    match = re.search(r"^%s[ \t]*$" % re.escape(heading), text, re.MULTILINE)
+    if match is None:
+        return ""
+    rest = text[match.end():]
+    end = re.search(r"^#{1,%d}[ \t]" % level, rest, re.MULTILINE)
+    return rest[: end.start()] if end else rest
+
+
 def ids(text: str, prefix: str) -> list[str]:
     return re.findall(r"^\| (%s-\d{2}) " % prefix, text, re.MULTILINE)
 
@@ -66,7 +79,11 @@ for prefix in ("TR", "NT", "BH"):
     elif len(found) != len(unique):
         errors.append("%s 在断言表里重复出现：%s" % (prefix, found))
 
-matrix_rows = re.findall(r"^\| ((?:TR|NT|BH)-\d{2}) ", records, re.MULTILINE)
+matrix_rows = re.findall(
+    r"^\| ((?:TR|NT|BH)-\d{2}) ",
+    section(records, "### 最近执行覆盖矩阵", 3),
+    re.MULTILINE,
+)
 matrix = set(matrix_rows)
 if not matrix_rows:
     errors.append("回归记录里找不到覆盖矩阵")
@@ -106,12 +123,12 @@ for name, text in (("README.md", readme), ("tests/runs/README.md", records)):
             )
 
 # 3. 标签：引用集合必须是标签索引里已定义的子集，且各前缀 01..N 连续
-legend = behavior.split("## 标签索引", 1)
+legend = section(behavior, "## 标签索引", 2)
 defined_labels: set[str] = set()
-if len(legend) != 2:
+if not legend:
     errors.append("behavior.md 缺少「标签索引」小节")
 else:
-    label_defs = re.findall(r"\*\*((?:RG|SV|EV)-\d{2}) ", legend[1].split("## 1.", 1)[0])
+    label_defs = re.findall(r"\*\*((?:RG|SV|EV)-\d{2}) ", legend)
     defined_labels = set(label_defs)
     if len(label_defs) != len(defined_labels):
         duplicates = sorted({label for label in label_defs if label_defs.count(label) > 1})

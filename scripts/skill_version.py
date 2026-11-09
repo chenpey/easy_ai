@@ -53,6 +53,20 @@ def split_child_line(line: str) -> tuple:
     return key, rest
 
 
+def strip_yaml_comment(raw: str) -> str:
+    """去掉行尾注释：只有引号外的「空白 + #」才开始注释。"""
+    quote = ""
+    for index, char in enumerate(raw):
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "#" and index and raw[index - 1] in " \t":
+            return raw[:index].rstrip()
+    return raw
+
+
 def unquote_value(raw: str) -> str:
     """Strip exactly one balanced quote pair and refuse any other quote usage."""
     value = raw.strip()
@@ -121,6 +135,9 @@ def version_without_yaml(frontmatter: str) -> str:
             if line[:1].isspace():
                 continue
             block_scalar = False
+        if line[:1] == "#":
+            # 顶层注释不声明键，与 YAML 一致；PyYAML 分支同样接受。
+            continue
         match = TOP_LEVEL_RE.match(line)
         if match:
             key, rest = match.group(1), match.group(2).strip()
@@ -145,6 +162,7 @@ def version_without_yaml(frontmatter: str) -> str:
             # Comments and sequence items do not declare mapping keys.
             continue
         key, raw_value = split_child_line(line)
+        raw_value = strip_yaml_comment(raw_value)
         if key != "version":
             continue
         if current_key != "metadata":

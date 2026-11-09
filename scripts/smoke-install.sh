@@ -43,10 +43,17 @@ assert_perm_755() {
 }
 
 assert_no_stage_residue() {
-  local leftovers=()
+  local leftovers=() list
+  list="$(mktemp "${TMPDIR:-/tmp}/smoke-residue.XXXXXX")"
+  # find 的退出状态不能在进程替换里取到；先落文件再判断，遍历失败不能当成“无残留”。
+  if ! find "$TMP_HOME" -name '.stage.*' -o -name '.stage_*' >"$list" 2>/dev/null; then
+    rm -f "$list"
+    fail "暂存残留检查失败：无法完整遍历 $TMP_HOME"
+  fi
   while IFS= read -r path; do
     leftovers+=("$path")
-  done < <(find "$TMP_HOME" -name '.stage.*' -o -name '.stage_*' 2>/dev/null || true)
+  done <"$list"
+  rm -f "$list"
   [ "${#leftovers[@]}" -eq 0 ] || fail "存在暂存目录残留：${leftovers[*]}"
   pass "无暂存目录残留"
 }

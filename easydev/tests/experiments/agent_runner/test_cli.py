@@ -150,7 +150,7 @@ PUBLIC_API = """from app.orders import get_order
 def handle_show_order(request, order_id):
     try:
         order = get_order(order_id, request["user_id"])
-    except PermissionError:
+    except (KeyError, PermissionError):
         return {"status": 403}
     if order is None:
         return {"status": 404}

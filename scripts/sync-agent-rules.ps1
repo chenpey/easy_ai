@@ -59,8 +59,11 @@ function Fail([string]$Message) {
 }
 
 function Get-LinkType([string]$Path) {
-    if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    return (Get-Item -LiteralPath $Path -Force).LinkType
+    # 悬空软链（目标已不存在）下 Test-Path 返回 $false，不能先拿它当存在性前置；
+    # 直接取项再读 LinkType，否则 -Apply 会把已存在的软链当成空位新建并崩溃。
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $null }
+    return $item.LinkType
 }
 
 function Test-IsFullyQualified([string]$Path) {
@@ -157,7 +160,7 @@ try {
                 Fail 'Unexpected AGY symlink target'
             }
         } else {
-            Fail 'Shared rule target must be a regular file'
+            Fail 'Unexpected AGY symlink target'
         }
     }
 

@@ -8,7 +8,7 @@ echo "=== 1. 已跟踪文件行尾空白检查（不依赖提交深度） ==="
 # 直接扫描已跟踪文本文件：浅克隆（fetch-depth=1）或干净工作区都不会退化为空检查。
 # 新增文件类型时同步补充扩展名，否则该类型不受门禁覆盖。
 # *.patch 等格式文件含语义化行尾空格，不纳入扫描。
-WS_PATHS=('*.md' '*.sh' '*.yml' '*.yaml' '*.json' '*.py' '*.ts' '*.svg' '*.txt')
+WS_PATHS=('*.md' '*.sh' '*.ps1' '*.yml' '*.yaml' '*.json' '*.py' '*.ts' '*.svg' '*.txt' '*.ini')
 ws_status=0
 ws_report="$(git grep -nI -E $'[ \t]+$' -- "${WS_PATHS[@]}")" || ws_status=$?
 if [ "$ws_status" -gt 1 ]; then
@@ -636,7 +636,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=72419
+MAX_TOTAL=72581
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

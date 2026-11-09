@@ -2,6 +2,21 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.10 更新说明（2026-11-09）
+
+复核外部全仓审计报告（34 条确定发现 + 10 条待验证风险）：确认并修复 15 项、按证据排除 15 项、降级并入待验证风险 2 项，另 2 项为已披露限制或未实施建议。流程档位、`d/3`、`r/5`、三次修复上限与模型 schema 均不变。
+
+- **进程树清理（确认 P1，2 项）**：`process_control.py` 的 `terminate_process` 把组信号收紧为「leader 仍存活且身份核对通过」或「等待期间已跟踪的后代仍存活且仍在原组」；两者都不成立时不再向可能已被回收的 PGID 发组信号，残留成员只由按身份核对的 `_signal_known` 逐个处理。`agent_runner/adapters/codex_cli.py` 与 `swebench/run.py` 把 `wait_for_process` 放进 `try`、`terminate_process` 放进 `finally`，等待期间的 `KeyboardInterrupt` 不再跳过清理。
+- **进程清理的残留限制（未关闭，需内核级边界）**：成员检查与发组信号之间仍有极小窗口（最后一个成员离组或退出后数值被复用）；等待阶段未观测到后代时，快照之后才 fork 的同组孙进程仍可能逃逸。两者都要靠内核成员边界才能同时保证（Linux cgroup v2、Windows 非 breakaway Job Object、macOS 容器或 VM 边界），当前实现选择「不向无法证明归属的 PGID 发信号」，并把清理可能不完整如实留在 `tests/experiments/process_control.py` 的注释与任务报告里。`agent_runner/adapters/codex_cli.py` 与 `swebench/run.py` 把 `wait_for_process` 放进 `try`、`terminate_process` 放进 `finally`，等待期间的 `KeyboardInterrupt` 不再跳过清理而泄漏孙进程。
+- **SWE-bench 评分执行（确认 P1）**：`swebench/run.py` 的 `grade_patch` 改用 `process_control.run_captured` 跑 pytest（独立会话、进程树回收、超时记 `returncode=-1`），超时不再以 `TimeoutExpired` 打断、孙进程不再逃逸；`tests/experiments/swebench/README.md` 补上 `--base-url`/`--model`/`--reasoning-effort` 的默认依赖与覆盖方式。
+- **固定补丁复验的黑盒验收（确认 P1）**：`public-contract-callers/acceptance.py` 新增 `rejects` 策略——三条 Web 身份行既不得抛未捕获异常，也不得用 `None`/空容器冒充拒绝，必须返回带 4xx `status` 的响应；三条请求身份行启用该策略，`solution.patch` 的 `handle_show_order` 同步改为捕获 `(KeyError, PermissionError)`，与 `verify.py` 的 `STRICT_API` 一致。证据：旧补丁在新验收下报 `missing request identity does not read order: unexpected KeyError: 'user_id'`，修正后复验 11/11 伪修复仍被拒绝。
+- **入口分流的安全豁免（确认 P2）**：`easythink/SKILL.md` 的 frontmatter description 给「目标明确的执行任务」排除项补上「且无自伤、急性医疗或现实人身危险信号」限定，并写明出现这些信号时即使夹带执行任务也先按安全总闸响应；宿主仅凭 description 路由时不再跳过正文最高优先级的 `## 安全总闸`。
+- **门禁脚本（确认 P2/P3）**：`check_think_rubric.py` 把覆盖矩阵与标签索引的提取限定在各自小节内（`### 最近执行覆盖矩阵`、`## 标签索引`），矩阵外的用例行不再制造重复行假阳性；`skill_version.py` 的降级解析器按 YAML 语义接受顶层注释与值行尾注释，与 PyYAML 分支结论一致；`models.py` 拒绝含首尾空白的 `model`；`check.sh` 的行尾空白扫描补入 `*.ps1` 与 `*.ini`；`smoke-install.sh` 的暂存残留检查先落文件再判断 `find` 退出状态，遍历失败不再被当成「无残留」。
+- **Windows 规则同步（确认 P2/P3）**：`sync-agent-rules.ps1` 的 `Get-LinkType` 不再以 `Test-Path` 作存在性前置（悬空软链下该调用返回 `$false`），悬空软链可被识别并按目标校验，`-Apply` 恢复幂等自愈；AGY 专有目标的软链拒绝文案不再误用共享规则名称。
+- **测试载体**：`version-gate` 新增顶层注释与值行尾注释两个用例（两个解析分支），`models-config` 新增 512 KiB 临界接受/拒绝、项目配置软链拒绝且不回退、`model` 首尾空白拒绝三项；`design-gate` 新增「单次审查转修复按目标路径记账」文档契约与 `B71`，确定性断言 197 → 198。
+- **流程口径**：`workflow.md` 的单次 review/audit 转授权修复记账不再一律「其余记 `r=1`」——转 quick 只自查、不记正式轮次；根因在设计且命中设计门控时先按设计环节记 `d=1` 并升版复审，施工后的完整初审另记 `r=1`；根因在实现则记 `r=1`。
+- **规则文档总量棘轮**：72419 → 72581 字节（+162），用于上述流程口径修正；`SKILL.md` + `references/*.md` 合计不得超过 72581 字节。
+
 ## 2.4.9 更新说明（2026-11-09）
 
 补上「审查覆盖」与「终审」两处收口动作，减少本应在 normal / full 循环内关闭、却逃逸到独立审计的问题；并把文档校准固定为交付收尾门禁，避免代码与文档漂移后仍需人工单独对齐。流程档位、审查轮次上限（`d/3`、`r/5`）、三次修复上限与模型 schema 均不变。

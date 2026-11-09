@@ -63,6 +63,8 @@ def _reject_unknown(value: Dict[str, Any], allowed: Iterable[str], path: str) ->
 def validate_model(value: Any, path: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(path, "model 必须是非空字符串")
+    if value != value.strip():
+        raise ConfigError(path, "model 不得含首尾空白")
     if value == "inherit":
         return
     provider, separator, name = value.partition("/")

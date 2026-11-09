@@ -128,6 +128,8 @@ check("非法 JSON 被拒绝", lambda: reject_text('{"developer": }', "JSON 无�
 check("未知顶层键被拒绝", lambda: reject_config({**BASE, "extra": 1}, "未知键"))
 check("缺必需角色被拒绝", lambda: reject_config({"developer": BASE["developer"]}, "缺少必需角色"))
 check("model 缺供应商被拒绝", lambda: reject_config(with_role("developer", model="gpt-6"), "完整 ID"))
+check("model 含首尾空白被拒绝",
+      lambda: reject_config(with_role("developer", model=" openai/gpt-6 "), "首尾空白"))
 check("reasoning_effort 越界被拒绝",
       lambda: reject_config(with_role("reviewer", reasoning_effort="turbo"), "不在允许集合内"))
 check("非推理模型的 off 档合法",
@@ -247,6 +249,27 @@ try:
           lambda: expect_error("超过大小上限", context={"models_file": str(LARGE)}))
 finally:
     models.os.fstat = real_fstat
+
+# 上限边界：恰好 512 KiB 可读，多一个字节即拒绝（契约是「不得超过」）。
+BASE_TEXT = json.dumps(BASE)
+PAD = models.MAX_CONFIG_BYTES - len(BASE_TEXT)
+EXACT = WORK / "exact-max.json"
+EXACT.write_text(BASE_TEXT + " " * PAD, encoding="utf-8")
+check("恰好 512 KiB 的配置可读取",
+      lambda: expect_selection("对话指定文件", BASE, context={"models_file": str(EXACT)}))
+OVER = WORK / "over-max.json"
+OVER.write_text(BASE_TEXT + " " * (PAD + 1), encoding="utf-8")
+check("超过 512 KiB 一个字节即拒绝",
+      lambda: expect_error("超过大小上限", context={"models_file": str(OVER)}))
+
+# 项目配置是软链：拒绝且不静默回退到内容不同的用户配置。
+# 用户配置写成合法真文件：若项目软链被当成「不存在」，选择会成功落到用户配置，这条就不成立。
+write(USER_CONFIG, OTHER)
+PROJECT_CONFIG.symlink_to(WORK / "real-user.json")
+check("项目配置是软链时拒绝且不回退用户配置",
+      lambda: expect_error("不能确认配置来源", project_root=str(PROJECT)))
+PROJECT_CONFIG.unlink()
+USER_CONFIG.unlink()
 
 if failures:
     print("FAIL: %d 项未通过：%s" % (len(failures), failures), file=sys.stderr)

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1160" viewBox="0 0 1440 1160" role="img" aria-labelledby="title desc">
-  <title id="title">EasyThink 0.5.0 全局思考框架全景</title>
+  <title id="title">EasyThink 0.5.1 全局思考框架全景</title>
   <desc id="desc">EasyThink 思考框架：安全总闸、启动分寸与后果分层、六大核心思考支点、三大追问视角（拆到约束、失败预演、后续影响）及多轮更新与行为底线。</desc>
   <style>
     text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
@@ -23,7 +23,7 @@
   <rect width="1440" height="1160" rx="24" fill="#f8fafc"/>
 
   <!-- Top Header -->
-  <text x="48" y="42" class="eyebrow">EASYTHINK 0.5.0 · 思考框架全景</text>
+  <text x="48" y="42" class="eyebrow">EASYTHINK 0.5.1 · 思考框架全景</text>
   <text x="48" y="80" class="heading">把模糊困扰变成可验证的判断</text>
   <text x="48" y="112" class="subtitle">六大核心支点 · 三大追问视角 · 三级安全响应 · 启动分寸与后果分层</text>
 

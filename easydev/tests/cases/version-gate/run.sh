@@ -63,6 +63,27 @@ metadata:
 ---
 YAML
 
+cat > "$FIXTURES/top-level-comment.md" <<'YAML'
+---
+# 顶层注释：不声明键，合法 YAML
+name: easydev
+description: >-
+  统一处理编码需求、功能实现与代码审查。
+metadata:
+  version: "0.14.5"
+---
+YAML
+
+cat > "$FIXTURES/value-comment.md" <<'YAML'
+---
+name: easydev
+description: >-
+  统一处理编码需求、功能实现与代码审查。
+metadata:
+  version: "0.14.5" # 行尾注释
+---
+YAML
+
 cat > "$FIXTURES/commented-block.md" <<'YAML'
 ---
 name: easydev
@@ -169,6 +190,9 @@ run_branch() {
   expect_version "$mode" valid.md 0.14.5
   expect_version "$mode" description-version.md 0.14.5
   expect_version "$mode" commented-block.md 0.14.5
+  # 顶层注释与值行尾注释都是合法 YAML：PyYAML 与降级解析器必须给同一结论。
+  expect_version "$mode" top-level-comment.md 0.14.5
+  expect_version "$mode" value-comment.md 0.14.5
   expect_rejected "$mode" duplicate-version.md "重复键"
   expect_rejected "$mode" misplaced-version.md "metadata"
   expect_rejected "$mode" description-only-version.md "metadata.version"

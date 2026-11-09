@@ -6,8 +6,8 @@
 
 | 名称 | 版本 | 说明 |
 | --- | --- | --- |
-| [EasyThink](easythink/README.md) | 0.5.0 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
-| [EasyDev](easydev/README.md) | 2.4.9 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
+| [EasyThink](easythink/README.md) | 0.5.1 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
+| [EasyDev](easydev/README.md) | 2.4.10 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
 
 - 技能按标准 `SKILL.md` 分发，安装与使用见对应目录的 README。
 - `agents/openai.yaml` 仅作为 OpenAI/Codex 界面的可选展示元数据，其他宿主可忽略。

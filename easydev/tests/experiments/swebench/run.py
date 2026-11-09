@@ -29,6 +29,7 @@ if str(EXPERIMENTS_ROOT) not in sys.path:
     sys.path.insert(0, str(EXPERIMENTS_ROOT))
 
 from process_control import (  # noqa: E402
+    run_captured,
     terminate_process,
     wait_for_process,
 )
@@ -563,10 +564,14 @@ def run_agent(
                 errors="replace",
                 start_new_session=os.name == "posix",
             )
-            returncode, tracked = wait_for_process(process, timeout)
-            if returncode is None:
-                timed_out = True
-            terminate_process(process, tracked=tracked)
+            tracked = {}
+            try:
+                returncode, tracked = wait_for_process(process, timeout)
+                if returncode is None:
+                    timed_out = True
+            finally:
+                # 等待期间的 KeyboardInterrupt 也必须走到清理，否则独立会话的孙进程逃逸。
+                terminate_process(process, tracked=tracked)
             returncode = process.wait(timeout=10)
     except Exception as error:  # noqa: BLE001 - recorded as experiment data
         returncode = -1
@@ -789,11 +794,12 @@ def grade_patch(
             "PYTHONPATH": task_pythonpath(task["instance_id"], workdir),
         }
     )
-    result = run_command(
-        pytest_command(venv, selected, junit),
-        workdir,
-        env=env,
-        timeout=timeout,
+    command = pytest_command(venv, selected, junit)
+    # 评分跑的是不可信测试代码：交给 run_captured 接管独立会话与进程树，
+    # 超时不再以 TimeoutExpired 打断整轮评测，孙进程也不会逃逸。
+    captured = run_captured(command, cwd=workdir, env=env, timeout=timeout)
+    result = subprocess.CompletedProcess(
+        command, captured["returncode"], captured["stdout"], captured["stderr"]
     )
     (out_dir / "pytest.stdout.log").write_text(result.stdout, encoding="utf-8")
     (out_dir / "pytest.stderr.log").write_text(result.stderr, encoding="utf-8")
