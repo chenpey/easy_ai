@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`2.4.10`
+当前版本：`2.4.11`
 
 EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（≤5000 字节），普通 quick 不加载完整编排，详细规则按需读取；主代理默认单写，full 依据配置与模型级委派。
 
@@ -61,7 +61,7 @@ EasyDev 的设计围绕三个核心问题展开：**如何让低风险任务零�
   - [workflow.md](references/workflow.md)：定义 `normal` 与 `full` 编排、三态风险分类、两本账（`d/3`、`r/5`）与尝试预算、1–6 片并行分片门控及任务账本 `ledger.md`。
   - [roles.md](references/roles.md)：子代理的唯一直达入口。被委派的 `developer`、`reviewer`、`designer` 子代理无需通读主控编排，直接跳转到各自章节履职。
 - **L2 专项细则层（按当前动作与高风险触发条件加载）**：
-  - [design.md](references/design.md)：高代价歧义的选项式澄清、独立设计环节 5 项触发门控、`design.md`（`v1 → vN`）施工闸与多方案（`C1/C2`）并发探索。
+  - [design.md](references/design.md)：高代价歧义的选项式澄清与按需深度追问、独立设计环节 5 项触发门控、`design.md`（`v1 → vN`）施工闸与多方案（`C1/C2`）并发探索。
   - [engineering.md](references/engineering.md)：最小充分实现 6 步序、代码质量判据（边界校验、直线式结构、禁逃生舱）、红绿测试纪律、排障与重构专项规范。
   - [review.md](references/review.md)：审查三问、轻/标准/深三档审查强度、证据纪律（P0–P3 必须给出具体触发输入/状态与失败路径）、不可信代码沙箱隔离与全仓 `audit` 分片规程。
 
@@ -156,7 +156,7 @@ EasyDev 的运行不是机械套用固定模板，而是由**主代理单写控�
 
 ## 架构与运作全景脑图
 
-![EasyDev 2.4.10 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
+![EasyDev 2.4.11 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
 
 ## 模型配置
 
