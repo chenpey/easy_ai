@@ -2,6 +2,16 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.13 更新说明（2026-11-16）
+
+完成全仓隐式状态机审计与实验套件边界收口，并补齐端到端回归测试；流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（73797 字节）均不变。
+
+- **事务与事件状态收口**：`shell.py` 嵌套 `analyze()` 不再局部吞掉 `_CandidateFailure`，由外层候选事务统一回退；`swebench/run.py`、`swebench/protocol.py` 与 `agent_runner/adapters/codex_cli.py` 在 `turn.started` 时复位 `turn_completed=False`；`swebench/analyze_events.py` 不再把无 `id` 的 `item.completed` 折叠去重。
+- **进程清理与守卫生命周期**：`process_control.py` 的 `SIGKILL` 阶段与 `SIGTERM` 对称检查组内存活后代，并为 `grace_seconds <= 0` 保留最小 `0.05s` 收割窗口；`agent_runner/runner.py` 守卫自检失败早退补齐 `"resolved": False`；`replay_read_guard.py` 预算探针改为原子写回 `policy.json` 并在 `try/finally` 内清理 `probe-home`。
+- **续跑清理与 Transcript 解析**：`swebench/run.py` 的 `run_one` 重试前清理旧 `result.json`、`invalid-result.json`、`agent.patch`、`grade/` 及 `last-message.txt`，`calibrate` 开头清理旧 `manifest.json`、`task-baselines/` 与 `gold/`（全部通过后再写 `manifest.json`），`lock_protected_paths` 恢复前检查 `path.exists()`；`transcripts.py` 拆分 `_iter_lines` 的超时/大小截断标记并用 `fstat` 复核读取期增长，重写 `_tail_latest_user` 避免二次方重扫与短读错位，修复 `codex_records` 同 ID 合并残留 `status="requested"` 及多轮 `cwd` 锁死。
+- **测试与文档**：`stubs/codex_stub.py` 新增 `invalid_events: "trailing_turn_started"`；`agent_runner/README.md` 校准 `prepare` 与 `run --overwrite` 说明；`test_cli.py`、`test_replay_read_guard.py` 与 `test_role_metric.py` 补齐对应端到端回归用例。
+- **规则文档总量棘轮**：73797 → 73797 字节（0）；`SKILL.md` + `references/*.md` 合计不得超过 73797 字节。
+
 ## 2.4.12 更新说明（2026-11-16）
 
 将可行性实验路径 `spike` 重命名为更直观通用的 `demo`（产物目录 `demo/`，仍标 `throwaway` 且不并入正式实现）；流程档位、`d/3`、`r/5`、三次修复上限与模型 schema 均不变。

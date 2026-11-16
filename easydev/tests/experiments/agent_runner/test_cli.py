@@ -1491,6 +1491,7 @@ class RunnerCliTest:
     def test_run_exits_cleanly_when_replay_guard_probe_fails(self) -> None:
         marker = self.root / "probe-fail-stub-marker.txt"
         fixture = self.stub_environment("b01-probe-fail", self.b01_plan(marker_file=str(marker)))
+        # 路径中的 ~ 会让探针的 outside_allowed 检查命中 target_unresolved，从而真实触发 probe 失败分支。
         fixture.out = fixture.base / "out~probe-fail"
         completed = self.run_scenario(fixture, "b01")
         assert completed.returncode == 1, completed.stderr + completed.stdout
