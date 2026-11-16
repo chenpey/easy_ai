@@ -2,6 +2,13 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.4.12 更新说明（2026-11-16）
+
+将可行性实验路径 `spike` 重命名为更直观通用的 `demo`（产物目录 `demo/`，仍标 `throwaway` 且不并入正式实现）；流程档位、`d/3`、`r/5`、三次修复上限与模型 schema 均不变。
+
+- **路径更名**：`SKILL.md`、`README.md`、`references/workflow.md`、`references/design.md`、`references/environment.md`、`assets/easydev-mindmap.svg` 与 `tests/behavior.md` 中的 `spike`/`spike/` 统一替换为 `demo`/`demo/`。
+- **规则文档总量棘轮**：73803 → 73797 字节（-6）；`SKILL.md` + `references/*.md` 合计不得超过 73797 字节。
+
 ## 2.4.11 更新说明（2026-11-16）
 
 在保持渐进式披露与 `SKILL.md`（4993 B）零膨胀的前提下，引入按需触发的「深度追问」需求澄清机制，并同步行为规约与文档契约门禁。流程档位、`d/3`、`r/5`、三次修复上限与模型 schema 均不变。
