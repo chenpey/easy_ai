@@ -426,6 +426,7 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
             "repeat": args.repeat,
             "behavior_result_protocol": BEHAVIOR_RESULT_PROTOCOL,
             "valid_invocation": False,
+            "resolved": False,
             "error": "replay_guard_unhealthy",
             "read_guard": read_guard,
             "changed_paths": [],

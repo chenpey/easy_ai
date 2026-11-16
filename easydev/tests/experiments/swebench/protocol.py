@@ -433,7 +433,10 @@ def events_match_result(result: Any, events_path: Path) -> bool:
             malformed += 1
             continue
         events += 1
-        if event.get("type") == "turn.completed":
+        event_type = event.get("type")
+        if event_type == "turn.started":
+            turn_completed = False
+        elif event_type == "turn.completed":
             turn_completed = True
     return bool(
         events == result.get("events")

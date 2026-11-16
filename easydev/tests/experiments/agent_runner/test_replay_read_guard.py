@@ -973,3 +973,11 @@ class DeployedGuardCommandTests:
         allowed = self.host_run(data)
         assert allowed["decision"] == "allow", allowed
         assert allowed["executed"].stdout == "ordinary data\n"
+
+    def test_nested_heredoc_candidate_failure_rolls_back_outer_command(self) -> None:
+        """外层 heredoc 事务内嵌套子分析触发 _CandidateFailure 时整次回退，不局部吞掉。"""
+        deep_wrapper = " ".join(["env"] * 10) + " echo ok"
+        command = f"cat <<EOF\n$({deep_wrapper})\nEOF"
+        result = self.host_run(command)
+        assert result["decision"] == "deny", result
+        assert result["executed"] is None

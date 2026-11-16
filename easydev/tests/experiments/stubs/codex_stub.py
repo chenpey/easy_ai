@@ -44,7 +44,8 @@ keys (all optional):
     Append a marker to ``<workdir>/.agents/skills/easydev/SKILL.md``.
 ``invalid_events``
     ``true``/``"malformed"`` appends one malformed line;
-    ``"missing_turn_completed"`` omits the ``turn.completed`` event.
+    ``"missing_turn_completed"`` omits the ``turn.completed`` event;
+    ``"trailing_turn_started"`` appends ``turn.started`` after ``turn.completed``.
 ``malformed_lines``
     Number of malformed lines to append (default 1 when enabled).
 ``exit_code``
@@ -232,6 +233,8 @@ def valid_events(plan: Dict[str, object]) -> List[Dict[str, object]]:
                 "usage": plan.get("usage") or {},
             }
         )
+    if plan.get("invalid_events") == "trailing_turn_started":
+        events.append({"type": "turn.started"})
     return events
 
 

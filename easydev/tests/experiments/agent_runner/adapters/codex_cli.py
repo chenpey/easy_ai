@@ -81,6 +81,8 @@ def parse_events(events_path: Path) -> Dict[str, Any]:
         item = event.get("item")
         usage_value = event.get("usage")
         event_count += 1
+        if event_type == "turn.started":
+            turn_completed = False
         if event_type == "turn.completed":
             turn_completed = True
             usage = {
@@ -156,6 +158,7 @@ def run_codex(
 
     started = time.time()
     timed_out = False
+    last_message_path.unlink(missing_ok=True)
     try:
         with events_path.open("w", encoding="utf-8") as events_file, stderr_path.open(
             "w", encoding="utf-8"

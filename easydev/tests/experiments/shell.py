@@ -4368,7 +4368,7 @@ def _analyze_tokens(
             inherited_data_stdin,
         )
     except _CandidateFailure:
-        if source_text is None or _LEGACY_DEPTH:
+        if previous_owner or source_text is None or _LEGACY_DEPTH:
             raise
         return _legacy_reanalyze(source_text, depth, limit, cwd, cwd_known, owns_evaluation)
     finally:

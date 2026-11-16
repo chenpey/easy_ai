@@ -1286,8 +1286,9 @@ def analyze_run(
             "file_change",
             "collab_tool_call",
         }:
-            if item_id not in seen_tool_items:
-                seen_tool_items.add(item_id)
+            if not item_id or item_id not in seen_tool_items:
+                if item_id:
+                    seen_tool_items.add(item_id)
                 attribution.observed_tool_calls += 1
 
         if item_type == "agent_message" and event_type == "item.completed":

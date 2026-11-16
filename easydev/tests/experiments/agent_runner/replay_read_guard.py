@@ -653,6 +653,23 @@ def _run_command(
     }
 
 
+def _write_policy_atomic(policy_path: str, content: str) -> None:
+    tmp_path = policy_path + ".probe-tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, policy_path)
+    finally:
+        if os.path.lexists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def _run_budget_case(command: str, policy_path: str, workspace: str) -> Dict[str, Any]:
     """临时收紧预算，验证预算/截止失败也被真实执行并拒绝。"""
     with open(policy_path, "r", encoding="utf-8") as handle:
@@ -661,8 +678,7 @@ def _run_budget_case(command: str, policy_path: str, workspace: str) -> Dict[str
         policy = json.loads(original)
         policy["max_entries"] = 1
         policy["deadline_ms"] = 1
-        with open(policy_path, "w", encoding="utf-8") as handle:
-            json.dump(policy, handle)
+        _write_policy_atomic(policy_path, json.dumps(policy))
         return _run_command(
             command,
             json.dumps(
@@ -675,8 +691,7 @@ def _run_budget_case(command: str, policy_path: str, workspace: str) -> Dict[str
             ),
         )
     finally:
-        with open(policy_path, "w", encoding="utf-8") as handle:
-            handle.write(original)
+        _write_policy_atomic(policy_path, original)
 
 
 def probe(policy_path: str, command: Optional[str] = None) -> Dict[str, Any]:
@@ -699,12 +714,12 @@ def probe(policy_path: str, command: Optional[str] = None) -> Dict[str, Any]:
         return {"ok": False, "error": "health_unreadable", "cases": {}}
     before_size = _health_size(health_path)
     probe_home = os.path.join(os.path.dirname(policy_path), "probe-home")
-    os.makedirs(probe_home, mode=0o700, exist_ok=True)
-    outside = os.path.join(probe_home, "sentinel.txt")
-    with open(outside, "w", encoding="utf-8") as handle:
-        handle.write("sentinel\n")
     cases: Dict[str, Any] = {}
     try:
+        os.makedirs(probe_home, mode=0o700, exist_ok=True)
+        outside = os.path.join(probe_home, "sentinel.txt")
+        with open(outside, "w", encoding="utf-8") as handle:
+            handle.write("sentinel\n")
         cases["allow"] = _run_command(
             command,
             json.dumps(
@@ -734,6 +749,7 @@ def probe(policy_path: str, command: Optional[str] = None) -> Dict[str, Any]:
         after = read_health(health_path) if health_path else []
         new_codes = after[len(before_codes) :]
         _truncate(health_path, before_size)
+        shutil.rmtree(probe_home, ignore_errors=True)
     expected_health = {"outside_allowed", "input_invalid"}
     budget_codes = {"budget_exceeded", "deadline_exceeded"}
     ok = (

@@ -455,6 +455,8 @@ def parse_events(events_path: Path) -> Dict[str, Any]:
             text = json.dumps(item, ensure_ascii=False).lower()
             if "easydev" in text:
                 easydev_mentions += 1
+        if event_type == "turn.started":
+            turn_completed = False
         if event_type == "turn.completed":
             turn_completed = True
             usage = {
@@ -549,6 +551,7 @@ def run_agent(
     ]
     started = time.time()
     timed_out = False
+    last_message_path.unlink(missing_ok=True)
     try:
         with events_path.open("w", encoding="utf-8") as events_file, stderr_path.open(
             "w", encoding="utf-8"
@@ -869,6 +872,9 @@ def baseline_status(
 def calibrate(args: argparse.Namespace) -> None:
     experiment = args.out
     experiment.mkdir(parents=True, exist_ok=True)
+    (experiment / "manifest.json").unlink(missing_ok=True)
+    shutil.rmtree(experiment / "task-baselines", ignore_errors=True)
+    shutil.rmtree(experiment / "gold", ignore_errors=True)
     install_experiment_assets(
         dataset=args.dataset,
         templates_source=args.templates,
@@ -895,9 +901,10 @@ def calibrate(args: argparse.Namespace) -> None:
         },
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
-    write_json(experiment / "manifest.json", manifest)
     failures = []
     for task_id, task in tasks.items():
+        (experiment / "task-baselines" / f"{task_id}.json").unlink(missing_ok=True)
+        (experiment / "gold" / f"{task_id}.json").unlink(missing_ok=True)
         template = args.templates / f"{task_id}.tar"
         venv = args.venvs / task_id
         base = baseline_status(
@@ -929,6 +936,7 @@ def calibrate(args: argparse.Namespace) -> None:
             failures.append(task_id)
     if failures:
         raise SystemExit(f"gold calibration failed: {', '.join(failures)}")
+    write_json(experiment / "manifest.json", manifest)
 
 
 def run_one(
@@ -957,6 +965,12 @@ def run_one(
             return existing
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    result_path.unlink(missing_ok=True)
+    (run_dir / "invalid-result.json").unlink(missing_ok=True)
+    (run_dir / "agent.patch").unlink(missing_ok=True)
+    grade_dir = run_dir / "grade"
+    if grade_dir.exists():
+        shutil.rmtree(grade_dir)
     workdir = run_dir / "repo"
     if workdir.exists():
         shutil.rmtree(workdir)
@@ -1066,6 +1080,23 @@ def run_one(
     return result
 
 
+def reject_symlinked_record(record_path: Path) -> None:
+    """Refuse a record path that is a symlink, dangling or not."""
+    # `os.path.lexists` also sees a dangling link, which `record_path.exists()`
+    # reports as absent; write_json would still replace the link with a file.
+    if os.path.lexists(record_path) and record_path.is_symlink():
+        raise RuntimeError(
+            f"refusing to use the protected mode record {record_path}: it is a "
+            f"symlink, and the record path must be a regular file. Writing the "
+            f"record replaces the link itself, so an interrupted run would "
+            f"leave the record outside the experiment directory and the next "
+            f"start could not restore the protected paths automatically. The "
+            f"link may be left over from an older run or placed from outside; "
+            f"delete it so the tool rebuilds the record, or restore the "
+            f"protected modes with chmod yourself and rerun."
+        )
+
+
 def restore_protected_modes(record_path: Path) -> None:
     """Reopen paths a previous interrupted run left locked at mode 0."""
     # Refuse a symlinked record before reading it: the target may list mode-0
@@ -1124,23 +1155,6 @@ def restore_protected_modes(record_path: Path) -> None:
         mode = modes[path]
         if path.exists() and (path.stat().st_mode & 0o777) == 0:
             path.chmod(mode)
-
-
-def reject_symlinked_record(record_path: Path) -> None:
-    """Refuse a record path that is a symlink, dangling or not."""
-    # `os.path.lexists` also sees a dangling link, which `record_path.exists()`
-    # reports as absent; write_json would still replace the link with a file.
-    if os.path.lexists(record_path) and record_path.is_symlink():
-        raise RuntimeError(
-            f"refusing to use the protected mode record {record_path}: it is a "
-            f"symlink, and the record path must be a regular file. Writing the "
-            f"record replaces the link itself, so an interrupted run would "
-            f"leave the record outside the experiment directory and the next "
-            f"start could not restore the protected paths automatically. The "
-            f"link may be left over from an older run or placed from outside; "
-            f"delete it so the tool rebuilds the record, or restore the "
-            f"protected modes with chmod yourself and rerun."
-        )
 
 
 def reject_record_inside_protected_paths(
@@ -1218,7 +1232,8 @@ def lock_protected_paths(paths: Iterable[Path], record_path: Path) -> Iterator[N
         yield
     finally:
         for path in sorted(original_modes, key=lambda entry: len(entry.parts)):
-            path.chmod(original_modes[path])
+            if path.exists():
+                path.chmod(original_modes[path])
     # Only a run that reached its end still needs the record; deleting here also
     # keeps a delete error from masking the failure that interrupted the run.
     record_path.unlink(missing_ok=True)

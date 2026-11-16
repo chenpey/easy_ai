@@ -70,6 +70,7 @@ def _iter_lines(
     except OSError:
         return
     chunks: List[bytes] = []
+    timed_out = False
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
@@ -79,6 +80,7 @@ def _iter_lines(
             total = 0
             while total <= MAX_TRANSCRIPT_BYTES:
                 if deadline is not None and time.monotonic() >= deadline:
+                    timed_out = total < os.fstat(handle.fileno()).st_size
                     break
                 chunk = handle.read(65536)
                 if not chunk:
@@ -91,10 +93,17 @@ def _iter_lines(
         if fd >= 0:
             os.close(fd)
     payload = b"".join(chunks)
-    truncated = len(payload) > MAX_TRANSCRIPT_BYTES
-    payload = payload[:MAX_TRANSCRIPT_BYTES]
+    size_truncated = len(payload) > MAX_TRANSCRIPT_BYTES
+    if size_truncated:
+        payload = payload[:MAX_TRANSCRIPT_BYTES]
+    truncated = size_truncated or timed_out
+    lines = payload.split(b"\n")
+    if truncated and lines and not payload.endswith(b"\n"):
+        # 截断/超时发生在 EOF 之前：末尾未到换行符的残片是读取上界切开的半行，
+        # 不是原文件里的畸形 JSON。
+        lines.pop()
     offset = 0
-    for number, raw in enumerate(payload.split(b"\n"), 1):
+    for number, raw in enumerate(lines, 1):
         line_offset = offset
         offset += len(raw) + 1
         if not raw.strip():
@@ -108,8 +117,10 @@ def _iter_lines(
             yield line_offset, number, value
         else:
             yield line_offset, number, None
-    if truncated:
-        yield 0, 0, None
+    if timed_out:
+        yield -2, 0, None
+    elif size_truncated:
+        yield -1, 0, None
 
 
 USER_TEXT_KEYS = ("prompt", "text", "content", "message")
@@ -154,21 +165,6 @@ def user_text_key(number: int, text: str) -> str:
     return "%d:%s" % (number, digest)
 
 
-def _tail_lines(data: bytes, base: int) -> Iterable[Tuple[int, bytes]]:
-    """把尾部字节切成 (起始偏移, 行) 并由新到旧产出；跳过可能被截断的首行。"""
-    lines = data.split(b"\n")
-    offsets: List[int] = []
-    position = base
-    for chunk in lines:
-        offsets.append(position)
-        position += len(chunk) + 1
-    for index in range(len(lines) - 1, -1, -1):
-        if index == 0 and base > 0:
-            # 文件未读完到头部时，data[0] 可能落在某行中间：不能当成完整记录。
-            break
-        yield offsets[index], lines[index]
-
-
 def _tail_latest_user(
     path: str, deadline: Optional[float] = None
 ) -> Tuple[Optional[Tuple[str, int]], int, bool]:
@@ -191,11 +187,53 @@ def _tail_latest_user(
         if not stat.S_ISREG(info.st_mode):
             return None, 0, False
         position = info.st_size
-        data = b""
-        base = position
+        carry = b""
         scanned = 0
         while True:
-            for offset, raw in _tail_lines(data, base):
+            if position <= 0:
+                # 已读到文件头：确实没有 user 记录。
+                return None, scanned, True
+            if deadline is not None and time.monotonic() >= deadline:
+                return None, scanned, False
+            if (info.st_size - position) >= MAX_TRANSCRIPT_BYTES:
+                return None, scanned, False
+            step = min(
+                TAIL_BLOCK_BYTES,
+                position,
+                MAX_TRANSCRIPT_BYTES - (info.st_size - position),
+            )
+            if step <= 0:
+                return None, scanned, False
+            position -= step
+            chunks: List[bytes] = []
+            remaining = step
+            offset_cursor = position
+            while remaining > 0:
+                try:
+                    os.lseek(fd, offset_cursor, os.SEEK_SET)
+                    part = os.read(fd, remaining)
+                except OSError:
+                    return None, scanned, False
+                if not part:
+                    return None, scanned, False
+                chunks.append(part)
+                remaining -= len(part)
+                offset_cursor += len(part)
+            data = b"".join(chunks) + carry
+            lines = data.split(b"\n")
+            if position > 0:
+                carry = lines[0]
+                scan_start = 1
+            else:
+                carry = b""
+                scan_start = 0
+            line_offset = position
+            offsets: List[int] = []
+            for chunk in lines:
+                offsets.append(line_offset)
+                line_offset += len(chunk) + 1
+            for index in range(len(lines) - 1, scan_start - 1, -1):
+                raw = lines[index]
                 if not raw.strip():
                     continue
                 scanned += 1
@@ -207,29 +245,7 @@ def _tail_latest_user(
                     continue
                 text = _user_text_from(value)
                 if text:
-                    return (text, offset), scanned, True
-            if base <= 0:
-                # 已读到文件头：确实没有 user 记录。
-                return None, scanned, True
-            if position <= 0:
-                return None, scanned, True
-            if deadline is not None and time.monotonic() >= deadline:
-                return None, scanned, False
-            if len(data) >= MAX_TRANSCRIPT_BYTES:
-                return None, scanned, False
-            step = min(TAIL_BLOCK_BYTES, position, MAX_TRANSCRIPT_BYTES - len(data))
-            if step <= 0:
-                return None, scanned, False
-            position -= step
-            try:
-                os.lseek(fd, position, os.SEEK_SET)
-                block = os.read(fd, step)
-            except OSError:
-                return None, scanned, False
-            if not block:
-                return None, scanned, False
-            data = block + data
-            base = position
+                    return (text, offsets[index]), scanned, True
     finally:
         os.close(fd)
 
@@ -602,14 +618,22 @@ def antigravity_records(
     records: List[ReadRecord] = []
     warnings: List[str] = []
     malformed = 0
+    truncated = False
+    timed_out = False
     explicit: Dict[str, bool] = {}
     entries: List[Tuple[int, Dict[str, Any]]] = []
     # 冲突后该 ID 在本轮抽取中终身排除（含其后重投记录），不允许复活。
     invalid_ids: set = set()
     observed_paths: Dict[str, frozenset] = {}
-    for offset, _number, entry in _iter_lines(path, deadline=deadline):
+    for offset, number, entry in _iter_lines(path, deadline=deadline):
         if entry is None:
-            malformed += 1
+            if number == 0:
+                if offset == -2:
+                    timed_out = True
+                else:
+                    truncated = True
+            else:
+                malformed += 1
             continue
         entries.append((offset, entry))
     # 先收集全部显式结果行（不限于 planner 行）：结果行要能确认先前已请求的读取。
@@ -629,13 +653,14 @@ def antigravity_records(
             for row in range(index + 1, stop)
             if entries[row][1].get("type") == "GENERIC"
         ]
+    caller_cwd = cwd
     for index, (offset, entry) in enumerate(entries):
         planner = _planner_of(entry)
         if planner is None:
             if entry.get("PLANNER_RESPONSE") is not None:
                 malformed += 1
             continue
-        if planner.get("cwd") and not cwd:
+        if caller_cwd is None and planner.get("cwd"):
             cwd = str(planner["cwd"])
         tool_calls = planner.get("tool_calls")
         if not isinstance(tool_calls, list):
@@ -712,6 +737,10 @@ def antigravity_records(
                     record["status"] = "requested"
                 record["offset"] = offset
                 records.append(record)
+    if timed_out:
+        warnings.append("transcript 读取超时，仅抽取截止前记录")
+    elif truncated:
+        warnings.append("transcript 超过 %d 字节上限，已截断" % MAX_TRANSCRIPT_BYTES)
     if malformed:
         warnings.append("跳过 %d 条无法解析的 Antigravity 记录" % malformed)
     return records, warnings
@@ -817,23 +846,31 @@ def codex_records(
     records: List[ReadRecord] = []
     warnings: List[str] = []
     malformed = 0
-    seen_completed: Dict[str, ReadRecord] = {}
+    truncated = False
+    timed_out = False
+    caller_cwd = cwd
     outcomes: Dict[str, bool] = {}
-    for offset, _number, entry in _iter_lines(path, deadline=deadline):
+    for offset, number, entry in _iter_lines(path, deadline=deadline):
         if entry is None:
-            malformed += 1
+            if number == 0:
+                if offset == -2:
+                    timed_out = True
+                else:
+                    truncated = True
+            else:
+                malformed += 1
             continue
         if entry.get("type") == "session_meta":
             payload = entry.get("payload")
             if isinstance(payload, dict):
-                if not cwd and isinstance(payload.get("cwd"), str):
+                if caller_cwd is None and isinstance(payload.get("cwd"), str):
                     cwd = payload["cwd"]
                 if not actor and isinstance(payload.get("agent_id"), str):
                     actor = payload["agent_id"]
             continue
         if entry.get("type") == "turn_context":
             payload = entry.get("payload")
-            if isinstance(payload, dict) and not cwd and isinstance(payload.get("cwd"), str):
+            if isinstance(payload, dict) and caller_cwd is None and isinstance(payload.get("cwd"), str):
                 cwd = payload["cwd"]
             continue
         if entry.get("type") == "response_item":
@@ -846,10 +883,11 @@ def codex_records(
                 name = payload.get("name")
                 call_id = payload.get("call_id") or payload.get("id")
                 identifier = call_id if isinstance(call_id, str) else None
+                prior_outcome = outcomes.get(identifier) if identifier else None
                 record = _codex_item_record(
                     str(name),
                     payload.get("arguments"),
-                    confirmed=bool(identifier and outcomes.get(identifier) is True),
+                    confirmed=bool(prior_outcome is True),
                     call_id=identifier,
                     cwd=cwd,
                     source=os.path.basename(path),
@@ -857,11 +895,9 @@ def codex_records(
                 )
                 if record is not None:
                     if not record["confirmed"]:
-                        record["status"] = "requested"
+                        record["status"] = "failed" if prior_outcome is False else "requested"
                     record["offset"] = offset
                     records.append(record)
-                    if identifier:
-                        seen_completed[identifier] = record
                 continue
             if kind == "function_call_output":
                 call_id = payload.get("call_id") or payload.get("id")
@@ -918,8 +954,6 @@ def codex_records(
                     if not record["confirmed"]:
                         record["status"] = "requested"
                     record["offset"] = offset
-                    if call_id:
-                        seen_completed[call_id] = record
                     records.append(record)
                 continue
             if item_type in {"tool_call", "function_call"}:
@@ -943,8 +977,6 @@ def codex_records(
                     if not record["confirmed"]:
                         record["status"] = "requested"
                     record["offset"] = offset
-                    if call_id:
-                        seen_completed[call_id] = record
                     records.append(record)
                 continue
             continue
@@ -971,9 +1003,16 @@ def codex_records(
         for extra in group[1:]:
             if extra.get("confirmed") and not merged.get("confirmed"):
                 merged.update(extra)
+                merged.pop("status", None)
+            elif not merged.get("confirmed") and extra.get("status") == "failed":
+                merged["status"] = "failed"
         ordered.append(merged)
     if conflicting:
         warnings.append("同一工具 ID 的读取目标发生变化，该 ID 的全部观测不计入")
+    if timed_out:
+        warnings.append("transcript 读取超时，仅抽取截止前记录")
+    elif truncated:
+        warnings.append("transcript 超过 %d 字节上限，已截断" % MAX_TRANSCRIPT_BYTES)
     if malformed:
         warnings.append("跳过 %d 条无法解析的 Codex 记录" % malformed)
     return ordered, warnings

@@ -543,6 +543,7 @@ class RunnerCliTest:
     def test_run_b01_rejects_incomplete_event_streams(self) -> None:
         cases = (
             ("missing turn.completed", {"invalid_events": "missing_turn_completed"}, "turn_completed"),
+            ("trailing turn.started", {"invalid_events": "trailing_turn_started"}, "turn_completed"),
             ("malformed line", {"invalid_events": "malformed"}, "malformed_event_lines"),
         )
         for label, overrides, field in cases:
@@ -1486,3 +1487,15 @@ class RunnerCliTest:
                 assert completed.returncode == 1, completed.stdout
                 result = self.result(fixture, "b67-review")
                 assert failed in self.failed_checks(result)
+
+    def test_run_exits_cleanly_when_replay_guard_probe_fails(self) -> None:
+        marker = self.root / "probe-fail-stub-marker.txt"
+        fixture = self.stub_environment("b01-probe-fail", self.b01_plan(marker_file=str(marker)))
+        fixture.out = fixture.base / "out~probe-fail"
+        completed = self.run_scenario(fixture, "b01")
+        assert completed.returncode == 1, completed.stderr + completed.stdout
+        result = self.result(fixture, "b01")
+        assert result["resolved"] is False
+        assert result["valid_invocation"] is False
+        assert result["error"] == "replay_guard_unhealthy"
+        assert not marker.exists()

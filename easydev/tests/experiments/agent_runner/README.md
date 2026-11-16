@@ -18,7 +18,7 @@ python3 tests/experiments/agent_runner/runner.py run \
   --model <host-model> --reasoning-effort high
 ```
 
-`--codex-bin`、`--codex-auth` 与 `--agent-timeout` 用于注入外部命令或测试替身。
+`--codex-bin`、`--codex-auth` 与 `--agent-timeout` 用于注入外部命令或测试替身。`prepare` 仅用于单独查看场景初始工作区；`run` 会自行初始化干净工作区，若目标运行目录已非空（例如先执行过同场景同轮次的 `prepare` 或 `run`），需显式传入 `--overwrite` 重建。
 
 ## 场景清单
 

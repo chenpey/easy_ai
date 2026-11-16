@@ -520,3 +520,128 @@ class RoleMetricTests:
         parsed = json.loads(buffer.getvalue())
         assert parsed[0]["references"] == ["planning.md"]
         assert parsed[0]["attribution_status"] == "requested"
+
+    def test_tail_latest_user_iter_lines_eof_and_multiturn_cwd(self) -> None:
+        import transcripts
+
+        # 1) _tail_latest_user 跨 64 KiB 块与 position==0 边界，偏移与 _iter_lines 一致。
+        first_user = json.dumps({"type": "user", "text": "first prompt"})
+        filler = json.dumps({"type": "assistant", "text": "x" * 1024})
+        tail_path = Path(self.tmp.name) / "tail.jsonl"
+        tail_path.write_text(
+            first_user + "\n" + (filler + "\n") * 80 + "\n\n",
+            encoding="utf-8",
+        )
+        turn = transcripts.latest_user_turn(str(tail_path))
+        assert turn.text == "first prompt"
+        assert turn.complete is True
+        assert turn.key == transcripts.user_text_key(0, "first prompt")
+        incomplete_turn = transcripts.latest_user_turn(str(tail_path), deadline=0.0)
+        assert incomplete_turn.complete is False
+
+        # 2) _iter_lines：空文件即使 deadline=0.0 已过期也应判达 EOF（不产 -2 超时哨兵）；
+        #    读取期间文件追加增长且 deadline 到期时产生 -2 超时哨兵；无尾换行文件保留末行。
+        empty = Path(self.tmp.name) / "empty.jsonl"
+        empty.write_text("", encoding="utf-8")
+        assert list(transcripts._iter_lines(str(empty), deadline=0.0)) == []
+
+        growing = Path(self.tmp.name) / "growing.jsonl"
+        growing.write_text(json.dumps({"type": "user", "text": "one"}) + "\n", encoding="utf-8")
+
+        class _GrowingDeadline:
+            def __init__(self, target: Path) -> None:
+                self.target = target
+                self.calls = 0
+
+            def __le__(self, _other: float) -> bool:
+                self.calls += 1
+                if self.calls == 1:
+                    return False
+                with self.target.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"type": "user", "text": "two"}) + "\n")
+                return True
+
+        grown_items = list(transcripts._iter_lines(str(growing), deadline=_GrowingDeadline(growing)))  # type: ignore[arg-type]
+        assert grown_items[-1] == (-2, 0, None)
+
+        no_nl = Path(self.tmp.name) / "no-nl.jsonl"
+        no_nl.write_text(json.dumps({"type": "user", "text": "last"}), encoding="utf-8")
+        items = list(transcripts._iter_lines(str(no_nl)))
+        assert [entry for _, _, entry in items] == [{"type": "user", "text": "last"}]
+
+        # 3) codex_records / antigravity_records 在未传 caller_cwd 时按轮次更新 cwd，传 caller_cwd 时保持覆盖；
+        #    且 codex_records 同 ID 合并清除 requested 状态、先果后因保留 failed 状态。
+        cwd_log = Path(self.tmp.name) / "cwd.jsonl"
+        cwd_log.write_text(
+            "\n".join(
+                [
+                    json.dumps({"type": "turn_context", "payload": {"cwd": "/repo/a"}}),
+                    json.dumps(
+                        {
+                            "type": "item.started",
+                            "item": {"id": "c1", "type": "tool_call", "name": "read", "arguments": {"path": "f1.py"}},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"id": "c1", "type": "tool_call", "name": "read", "arguments": {"path": "f1.py"}},
+                        }
+                    ),
+                    json.dumps({"type": "turn_context", "payload": {"cwd": "/repo/b"}}),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {"type": "function_call_output", "call_id": "c2", "output": "Error: failed"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "function_call",
+                                "name": "read",
+                                "arguments": json.dumps({"path": "f2.py"}),
+                                "call_id": "c2",
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        recs, _ = transcripts.codex_records(str(cwd_log))
+        assert [r["paths"] for r in recs] == [["/repo/a/f1.py"], ["/repo/b/f2.py"]]
+        assert recs[0]["confirmed"] is True and "status" not in recs[0]
+        assert recs[1]["confirmed"] is False and recs[1].get("status") == "failed"
+        fixed_recs, _ = transcripts.codex_records(str(cwd_log), cwd="/override")
+        assert [r["paths"] for r in fixed_recs] == [["/override/f1.py"], ["/override/f2.py"]]
+
+        ag_log = Path(self.tmp.name) / "ag-cwd.jsonl"
+        ag_log.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "PLANNER_RESPONSE",
+                            "cwd": "/ag/one",
+                            "tool_calls": [{"name": "read_file", "args": {"Path": "a.py"}}],
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "PLANNER_RESPONSE",
+                            "cwd": "/ag/two",
+                            "tool_calls": [{"name": "read_file", "args": {"Path": "b.py"}}],
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        ag_recs, _ = transcripts.antigravity_records(str(ag_log))
+        assert [r["paths"] for r in ag_recs] == [["/ag/one/a.py"], ["/ag/two/b.py"]]
+        ag_fixed, _ = transcripts.antigravity_records(str(ag_log), cwd="/ag/override")
+        assert [r["paths"] for r in ag_fixed] == [["/ag/override/a.py"], ["/ag/override/b.py"]]

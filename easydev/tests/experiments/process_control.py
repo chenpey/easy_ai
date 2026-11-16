@@ -298,15 +298,26 @@ def terminate_process(
         snapshot = _process_snapshot()
     except (OSError, RuntimeError):
         snapshot = {}
-    if (
-        snapshot
-        and root_identity
-        and _identity_alive(process.pid, root_identity, snapshot)
-    ) or (not snapshot and process.poll() is None):
+    root_alive_now = bool(
+        snapshot and root_identity and _identity_alive(process.pid, root_identity, snapshot)
+    ) or (not snapshot and process.poll() is None)
+    tracked_alive_now = False
+    if snapshot:
+        for pid, identity in known.items():
+            if not _identity_alive(pid, identity, snapshot):
+                continue
+            try:
+                if os.getpgid(pid) == process.pid:
+                    tracked_alive_now = True
+                    break
+            except (ProcessLookupError, PermissionError):
+                continue
+    if root_alive_now or tracked_alive_now:
         _signal_group(process.pid, signal.SIGKILL)
+    if root_alive_now:
         _signal_pid(process.pid, signal.SIGKILL)
     _signal_known(known, signal.SIGKILL)
-    if not _reap_leader(process, grace_seconds):
+    if not _reap_leader(process, max(grace_seconds, 0.05)):
         raise RuntimeError(
             f"process {process.pid} did not terminate after signals"
         )
@@ -322,7 +333,7 @@ def terminate_process(
     ]
     if not alive:
         return
-    kill_deadline = time.monotonic() + grace_seconds
+    kill_deadline = time.monotonic() + max(grace_seconds, 0.05)
     while time.monotonic() < kill_deadline:
         try:
             snapshot = _process_snapshot()

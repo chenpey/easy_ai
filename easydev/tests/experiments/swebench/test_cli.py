@@ -1976,3 +1976,103 @@ class SwebenchCliTest:
         assert baseline["statuses"][extra] == "PASSED"
         assert counter.read_text(encoding="utf-8").strip() == "2"
         assert (out / "gold" / f"{TASK['id']}.json").exists()
+
+    def test_turn_started_resets_completion_and_stale_artifacts_are_cleaned(self) -> None:
+        assets = self.make_assets("turn-started-and-cleanup")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("turn-started-stub")
+        plan = self.complete_plan()
+
+        # 1) 先正常跑一次取得协议合法的 result.json，再保留原 turn.completed 并在末尾追加 turn.started，
+        #    同时把 result.json 的 events +1（仍合法）；无复位会误判 completed 而跳过，有复位才重跑（running 1 jobs）。
+        first = self.run_command(
+            stub,
+            experiment,
+            plan=plan,
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert first.returncode == 0, first.stdout
+        assert "running 1 jobs" in first.stdout
+
+        run_dir = experiment / "runs" / TASK["id"] / "baseline" / "r1"
+        events_path = run_dir / "events.jsonl"
+        events_path.write_text(
+            events_path.read_text(encoding="utf-8") + json.dumps({"type": "turn.started"}) + "\n",
+            encoding="utf-8",
+        )
+        result_path = run_dir / "result.json"
+        stored = json.loads(result_path.read_text(encoding="utf-8"))
+        stored["events"] += 1
+        result_path.write_text(json.dumps(stored), encoding="utf-8")
+
+        second = self.run_command(
+            stub,
+            experiment,
+            plan=plan,
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert second.returncode == 0, second.stdout
+        assert "running 1 jobs" in second.stdout
+
+        # 2) 重跑遇到尾随 turn.started（exit 0 但第二轮未 complete）时，parse_events 必须复位
+        #    turn_completed=False，拒绝写 result.json 并清理旧 result.json。
+        events_path.write_text('{"type": "turn.started"}\n', encoding="utf-8")
+        trailing_plan = dict(plan)
+        trailing_plan["invalid_events"] = "trailing_turn_started"
+        bad_completed = self.run_command(
+            stub,
+            experiment,
+            plan=trailing_plan,
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert bad_completed.returncode != 0
+        assert not (run_dir / "result.json").exists()
+        assert not (run_dir / "agent.patch").exists()
+        assert not (run_dir / "grade").exists()
+        invalid_payload = json.loads(
+            (run_dir / "invalid-result.json").read_text(encoding="utf-8")
+        )
+        assert "turn.completed is missing" in invalid_payload["reason"]
+
+        # 3) calibrate 在写入前中断（损坏模板 tar）时，开头清理保证旧 manifest.json、
+        #    task-baselines/（含子集外任务）与 gold/ 均已被清理。
+        out = assets.root / "failed-calibrate"
+        (out / "task-baselines").mkdir(parents=True, exist_ok=True)
+        (out / "gold").mkdir(parents=True, exist_ok=True)
+        (out / "manifest.json").write_text(
+            json.dumps({"tasks": ["stale-task"]}), encoding="utf-8"
+        )
+        stale_baseline = out / "task-baselines" / f"{TASK['id']}.json"
+        stale_baseline.write_text(
+            json.dumps({"eligible_p2p": ["stale-p2p"], "excluded_p2p": [], "statuses": {}}),
+            encoding="utf-8",
+        )
+        other_baseline = out / "task-baselines" / "other-task.json"
+        other_baseline.write_text(json.dumps({"eligible_p2p": []}), encoding="utf-8")
+        stale_gold = out / "gold" / f"{TASK['id']}.json"
+        stale_gold.write_text(json.dumps({"f2p_pass": True, "p2p_regressions": []}), encoding="utf-8")
+        bad_templates = assets.root / "bad-templates"
+        bad_templates.mkdir(parents=True, exist_ok=True)
+        (bad_templates / f"{TASK['id']}.tar").write_text("not a tar\n", encoding="utf-8")
+        env = self.environment(stub, {}, {})
+        cal = self.cli(
+            [
+                "calibrate",
+                "--dataset",
+                assets.dataset,
+                "--templates",
+                bad_templates,
+                "--venvs",
+                assets.venvs,
+                "--tasks",
+                TASK["id"],
+                "--out",
+                out,
+            ],
+            env=env,
+        )
+        assert cal.returncode != 0
+        assert not (out / "manifest.json").exists()
+        assert not stale_baseline.exists()
+        assert not other_baseline.exists()
+        assert not stale_gold.exists()
