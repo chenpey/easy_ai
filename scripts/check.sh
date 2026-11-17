@@ -540,7 +540,7 @@ PY
 
 echo "=== 9. 边界与预算一致性检查 ==="
 # 两条门禁：① 全局规则与技能内的修复次数上限必须同值（各处手写，防漂移）；
-# ② 全局规则 AGENTS.md §5/§6 与 easydev（engineering.md / SKILL.md）必须引用并同步。
+# ② 全局规则 AGENTS.md §2/§5/§6 与 easydev（engineering.md / SKILL.md）必须引用并同步。
 python3 - <<'PY'
 import re, subprocess, sys
 
@@ -612,6 +612,9 @@ sync_pairs = [
     ("同一工作区上同套或范围重叠的测试/构建", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
     ("在跑或已通过未失效", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
     ("隔离工作树分片与性能对比多次采样不限", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
+    ("关闭无关 FD", agents_text, eng_text, "AGENTS.md §2 <-> engineering.md"),
+    ("</dev/null", agents_text, eng_text, "AGENTS.md §2 <-> engineering.md"),
+    ("硬超时", agents_text, eng_text, "AGENTS.md §2 <-> engineering.md"),
 ]
 for phrase, src, dst, label in sync_pairs:
     if phrase not in src or phrase not in dst:
@@ -647,7 +650,7 @@ if "改前不跑既有测试摸底；新写复现/红测与无 CI/旧记录的�
     errors.append("easydev/references/roles.md 缺少改前不跑既有测试摸底及条件例外约束")
 
 if not errors:
-    print(f"OK: 全局规则 AGENTS.md §5/§6 与 easydev 引用及 {len(sync_pairs)} 项核心口径同步")
+    print(f"OK: 全局规则 AGENTS.md §2/§5/§6 与 easydev 引用及 {len(sync_pairs)} 项核心口径同步")
 
 if errors:
     for err in errors:
@@ -659,7 +662,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=73796
+MAX_TOTAL=73970
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then
