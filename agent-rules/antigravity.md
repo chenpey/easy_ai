@@ -12,7 +12,7 @@ description: "Antigravity 宿主工具语义：并发与轮询、上下文读取
 - 每次模型调用都要重新支付首 token 延迟与完整上下文开销，纯工具轮占大头；不影响正确性的前提下减少往返。
 - 动手前先列清所需信息，把互相独立的读取与检查合并到单轮；有真实依赖时才顺序执行。写操作（`write_file`/`edit_file`）、同一文件的多处修改、依赖前一步结果的步骤一律串行；同一文件紧邻的修改合并为单次 `edit_file`。
 - `run_command` 每次调用都在独立的新 shell 会话中执行（`cd` 与环境变量不跨调用保留）；有上下文依赖的连续命令合并在同一条 `CommandLine` 中一次执行（如 `cd pkg && npm test`）。
-- 异步任务与子代理（`invoke_subagent`、`schedule`、异步 `run_command`）具备响应式唤醒：启动后系统会通知结果，**严禁轮询**（不循环调用 `manage_task`/`manage_subagents`，也不用 shell `sleep` 等待）。
+- 异步任务与子代理（`invoke_subagent`、`schedule`、异步 `run_command`）具备响应式唤醒：启动后系统会通知结果，**严禁轮询**（不循环调用 `manage_task`/`manage_subagents`，也不用 shell `sleep` 等待）；后台 `run_command` 尚在运行时须等唤醒通知，避免重复发起。
 
 ## 2. 上下文读取
 

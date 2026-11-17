@@ -164,8 +164,11 @@ groups = {
     "easydev": {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
         "README.md": ("easydev/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
+        "README.md mindmap alt": ("easydev/README.md", r"!\[EasyDev\s+([0-9]+\.[0-9]+\.[0-9]+)\s"),
         "SKILL.md": ("easydev/SKILL.md", None),
-        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明")
+        "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
+        "mindmap title": ("easydev/assets/easydev-mindmap.svg", r"<title[^>]*>EasyDev\s+([0-9]+\.[0-9]+\.[0-9]+)\s"),
+        "mindmap eyebrow": ("easydev/assets/easydev-mindmap.svg", r">EASYDEV\s+([0-9]+\.[0-9]+\.[0-9]+)\s"),
     }
 }
 
@@ -605,6 +608,10 @@ sync_pairs = [
     ("不新写 `unittest.TestCase`", agents_text, eng_text, "AGENTS.md §6 <-> engineering.md"),
     ("文档随改动校准", agents_text, eng_text, "AGENTS.md §5 <-> engineering.md"),
     ("纯文档与注释变更免跑代码检查", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
+    ("不为确认基线预跑既有测试", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
+    ("同一工作区上同套或范围重叠的测试/构建", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
+    ("在跑或已通过未失效", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
+    ("隔离工作树分片与性能对比多次采样不限", agents_text, eng_text, "AGENTS.md §1 <-> engineering.md"),
 ]
 for phrase, src, dst, label in sync_pairs:
     if phrase not in src or phrase not in dst:
@@ -622,6 +629,22 @@ if missing_doc_calibration:
 
 if "端到端测试" not in skill_text or "不写单测" not in skill_text:
     errors.append("easydev/SKILL.md quick 核心未同步端到端/不写单测约束")
+for needle in (
+    "不含测试结果",
+    "改前不跑既有测试/构建摸底",
+    "新写复现/红测与无 CI/旧记录的[纯重构](references/engineering.md#测试硬约束与选择)单次对照除外",
+    "同一工作区上同套或范围重叠的测试/构建在跑或已通过未失效时不重跑（隔离工作树分片与性能对比多次采样不限）",
+):
+    if needle not in skill_text:
+        errors.append(f"easydev/SKILL.md 缺少禁预跑/防重跑关键短语: {needle!r}")
+if "纯重构无 CI/旧记录时单次定向对照除外" not in agents_text:
+    errors.append("AGENTS.md §1 缺少纯重构单次定向对照例外")
+for needle in ("新写复现/红测与无 CI/旧记录的纯重构单次对照除外", "或无上述时在任务基线（提交及已保护的相关未提交改动）"):
+    if needle not in eng_text:
+        errors.append(f"easydev/references/engineering.md 缺少关键短语: {needle!r}")
+roles_text = read("easydev/references/roles.md")
+if "改前不跑既有测试摸底；新写复现/红测与无 CI/旧记录的纯重构单次对照除外" not in roles_text:
+    errors.append("easydev/references/roles.md 缺少改前不跑既有测试摸底及条件例外约束")
 
 if not errors:
     print(f"OK: 全局规则 AGENTS.md §5/§6 与 easydev 引用及 {len(sync_pairs)} 项核心口径同步")
@@ -636,7 +659,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=73797
+MAX_TOTAL=73796
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then
