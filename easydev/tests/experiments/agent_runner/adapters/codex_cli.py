@@ -186,9 +186,10 @@ def run_codex(
                 # 等待期间的 KeyboardInterrupt 也必须走到清理，否则独立会话的孙进程逃逸。
                 terminate_process(process, tracked=tracked)
             returncode = process.wait(timeout=10)
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         returncode = -1
-        stderr_path.write_text(f"{error}\n", encoding="utf-8")
+        with stderr_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{error}\n")
 
     parsed = parse_events(events_path)
     if last_message_path.exists():

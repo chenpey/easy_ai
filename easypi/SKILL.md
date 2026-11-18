@@ -4,7 +4,7 @@ description: >-
   当用户要求调用 easypi、或通过 Antigravity（agy）把开发任务分派给 Pi 走 easydev gate 模式完成设计审查与编码实现时使用。
   采用“agy 设计 → Pi 走 easydev gate 审设计并开发 → agy 开发终审”的闭环流程。
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
 ---
 
 # easypi
@@ -26,7 +26,7 @@ metadata:
 在调用方工作目录下用绝对路径调用 [run_pi.sh](scripts/run_pi.sh)，第二参数是 prompt 文件（内部执行 `pi -p --session-id ... </dev/null`）：
 
 ```bash
-bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>"
+bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>" </dev/null
 ```
 
 - **设计分歧处理**：Pi 停在施工闸前返回分歧时，agy 结合用户意见修订设计（升版）并同步 `prompt.md` 与设计路径，保持同一工作目录与 `--session-id` 再次调用；修订重审计入 `d/3`，累计 3 轮用尽即停并报用户。

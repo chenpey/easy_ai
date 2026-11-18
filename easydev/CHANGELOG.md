@@ -2,6 +2,14 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.10.1 更新说明（2026-11-18）
+
+全仓深度审计后的安全与稳定性小版本修复；`easydev` 流程档位、`d/3` 与 `r/5` 两本账及三次修复预算不变，规则文档总量上限维持 74708 字节（`SKILL.md` + `references/*.md` 合计不得超过 74708 字节，当前 74705 字节）。
+
+- **`agent-hooks/check_command.py` 安全守卫加固**：语句层增加 `&` 分隔符并豁免 `<&`/`>&`/`&>` 重定向；`_unwrap_prefixes` 解包 `do`/`then`/`else`/`elif`；分离 `sudo` 与 `nice -n` 带值选项（移除 `sudo -n` 误跳、补 `-D/-R/-T/-U`）及 `env`/`git` 带值选项；重写 heredoc 为引号感知扫描并保留未加引号正文中的替换评估；新增仅剥离引号外 `#` 注释的 helper；收紧 `scp` 敏感目录豁免、允许无空格 `ls</dev/null` 与 `bash -c --`。
+- **回放守卫与实验评测修复**：`replay_read_guard.py` 支持 `grep`/`find`/`ls` 的 `tool_input["cwd"]`、纳入 `shell`/`run_command`/`powershell`/`readfile`、`ls` 字符串 `flags`、传递 `cwd` 给 `shell.analyze`、`$HOME` 边界正则及 `read_stdin` 失败计数；`codex_cli.py` 捕获 `(OSError, RuntimeError)`；`role_metric.py` 修复 `--host pi --child-transcript` 提示及字段容错；`swebench/run.py` `baseline_status` 改用 `run_captured` 并校验正整数参数。
+- **规则与门禁同步**：`references/environment.md` 明确未命中 `windows` 时段时 `Selection.window` 为 `None`、沿用需传 `locked_window="default"`；`scripts/sync-agent-rules.sh` 友好报错损坏的 `hooks.json`；`scripts/check.sh` §4 链接检查剥离围栏代码块；`tests/cases/` 封闭子进程 stdin 并清理 `audit-overflow/verify.py` 空列表回退；`easythink/tests/behavior.md` 回归记录链接改指向 `runs/README.md`。
+
 ## 2.10.0 更新说明（2026-11-18）
 
 用按北京时间时段生效的 `windows` 角色局部覆盖取代模型级升级 `upgrades`，并随之精简相关规则措辞；`gate`/`full` 编排、`d/3` 与 `r/5` 两本账、三次修复预算不变。因删除升级链并压缩重复表述，规则文档总量上限由 `76158` 下调至 74708 字节（`SKILL.md` + `references/*.md` 合计不得超过 74708 字节）。

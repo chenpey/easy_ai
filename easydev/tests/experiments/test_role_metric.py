@@ -232,6 +232,35 @@ class RoleMetricTests:
         rows, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         assert (any(row["role"] == "unknown" for row in rows) is False)
 
+    def test_child_meta_usage_must_be_object(self) -> None:
+        """usage 不是对象时按缺省计数处理，不因 .get 崩溃。"""
+        write_child(
+            self.session,
+            "run-bad-usage",
+            "reviewer",
+            [{"path": "/repo/easydev/references/review.md"}],
+            {"agent": "reviewer", "model": "provider/model-c:high", "usage": "broken"},
+            parent=SESSION_A,
+        )
+        rows, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
+        broken = [row for row in rows if row["model"] == "provider/model-c:high"]
+        assert broken
+        assert broken[0]["tokens"] == {"input": None, "output": None, "cache_read": None}
+
+    def test_missing_output_tokens_render_as_dash(self) -> None:
+        """tokens 只有 input 时表格仍能渲染（此前读 tokens['output'] 会抛 KeyError）。"""
+        table = role_metric.format_table(
+            [
+                {
+                    "role": "reviewer",
+                    "source": "child.jsonl",
+                    "references": ["review.md"],
+                    "tokens": {"input": 5},
+                }
+            ]
+        )
+        assert "5in/-out" in table
+
     def test_json_output_is_machine_readable(self) -> None:
         parsed, _ = self.run_cli_json("--session-dir", str(self.session), "--session", SESSION_A)
         assert [row["role"] for row in parsed] == ["main", "reviewer"]
@@ -464,6 +493,15 @@ class RoleMetricTests:
         with contextlib.redirect_stderr(io.StringIO()):
             with pytest.raises(SystemExit):
                 role_metric.main(["--host", "codex"])
+
+    def test_child_transcript_without_host_transcript_uses_dedicated_hint(self) -> None:
+        """`--host pi --child-transcript` 无 `--transcript` 时命中专用提示。"""
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with pytest.raises(SystemExit):
+                role_metric.main(["--host", "pi", "--child-transcript", "child.jsonl"])
+        assert "--child-transcript 仅用于" in stderr.getvalue()
+        assert "必须提供" not in stderr.getvalue()
 
     def test_cli_role_map_labels_child_transcript(self) -> None:
         parent = Path(self.tmp.name) / "parent-map.jsonl"

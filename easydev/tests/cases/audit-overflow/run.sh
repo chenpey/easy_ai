@@ -5,4 +5,4 @@ export PYTHONDONTWRITEBYTECODE=1
 
 CASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$CASE_DIR"
-python3 verify.py
+python3 verify.py </dev/null

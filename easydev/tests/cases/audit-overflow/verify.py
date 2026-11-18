@@ -251,7 +251,7 @@ def expect_valid(
     report: dict,
     source_findings: list[dict] | None = None,
 ) -> None:
-    errors = audit_errors(report, source_findings or FIXTURE_FINDINGS)
+    errors = audit_errors(report, FIXTURE_FINDINGS if source_findings is None else source_findings)
     if errors:
         bad(label, "; ".join(errors))
     else:
@@ -264,7 +264,7 @@ def expect_invalid(
     fragment: str,
     source_findings: list[dict] | None = None,
 ) -> None:
-    errors = audit_errors(report, source_findings or FIXTURE_FINDINGS)
+    errors = audit_errors(report, FIXTURE_FINDINGS if source_findings is None else source_findings)
     if not errors:
         bad(label, "mutant was accepted")
     elif not any(fragment in error for error in errors):

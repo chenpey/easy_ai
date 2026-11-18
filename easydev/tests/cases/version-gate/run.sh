@@ -160,9 +160,9 @@ pass() {
 extract() {
   local mode="$1" fixture="$2"
   if [ "$mode" = "no-yaml" ]; then
-    PYTHONPATH="$TMP_DIR/no-yaml" python3 "$EXTRACTOR" "$FIXTURES/$fixture"
+    PYTHONPATH="$TMP_DIR/no-yaml" python3 "$EXTRACTOR" "$FIXTURES/$fixture" </dev/null
   else
-    python3 "$EXTRACTOR" "$FIXTURES/$fixture"
+    python3 "$EXTRACTOR" "$FIXTURES/$fixture" </dev/null
   fi
 }
 
@@ -204,7 +204,7 @@ run_branch() {
 
 run_branch no-yaml
 
-if python3 -c 'import yaml' >/dev/null 2>&1; then
+if python3 -c 'import yaml' </dev/null >/dev/null 2>&1; then
   run_branch yaml
 else
   echo "=== 版本提取：PyYAML 分支 ==="

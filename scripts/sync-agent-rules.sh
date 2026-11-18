@@ -196,7 +196,11 @@ if os.path.lexists(dst_path):
         print(f"Hooks target must be a regular file: {dst_path}", file=sys.stderr)
         sys.exit(1)
     with open(dst_path, "r", encoding="utf-8") as f:
-        dst_data = json.load(f)
+        try:
+            dst_data = json.load(f)
+        except json.JSONDecodeError as error:
+            print(f"Hooks target is not valid JSON: {dst_path}: {error}", file=sys.stderr)
+            sys.exit(1)
     if not isinstance(dst_data, dict):
         print(f"Hooks target must be a JSON object: {dst_path}", file=sys.stderr)
         sys.exit(1)

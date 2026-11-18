@@ -841,9 +841,11 @@ def baseline_status(
     nodeids = test_scope(task)
     junit = out_dir / "junit.xml"
     junit.unlink(missing_ok=True)
-    result = run_command(
-        pytest_command(venv, nodeids, junit),
-        workdir,
+    command = pytest_command(venv, nodeids, junit)
+    # 基线跑同样执行不可信测试代码：交给 run_captured 接管独立会话与进程树。
+    captured = run_captured(
+        command,
+        cwd=workdir,
         env={
             **os.environ,
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -851,6 +853,9 @@ def baseline_status(
             "PYTHONPATH": task_pythonpath(task["instance_id"], workdir),
         },
         timeout=timeout,
+    )
+    result = subprocess.CompletedProcess(
+        command, captured["returncode"], captured["stdout"], captured["stderr"]
     )
     (out_dir / "pytest.stdout.log").write_text(result.stdout, encoding="utf-8")
     (out_dir / "pytest.stderr.log").write_text(result.stderr, encoding="utf-8")
@@ -1783,6 +1788,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--experiment", type=Path, required=True)
     args = parser.parse_args(argv)
+    for option in ("repeats", "concurrency", "agent_timeout"):
+        value = getattr(args, option, None)
+        if value is not None and value < 1:
+            parser.error("--%s 必须 >= 1" % option.replace("_", "-"))
     for name, value in vars(args).items():
         if name == "codex_bin":
             binary = os.path.expanduser(str(value))

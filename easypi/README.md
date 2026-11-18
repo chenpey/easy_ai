@@ -1,6 +1,6 @@
 # easypi
 
-当前版本：`0.3.0`
+当前版本：`0.3.1`
 
 专用于 Antigravity（agy）向 `pi` 分派任务并走 `easydev` **`gate` 模式**完成闭环：**agy 设计 → Pi 走 `easydev gate` 审设计（无分歧后开发自验）→ agy 开发终审（无分歧后结束）**。
 
@@ -31,7 +31,7 @@ ln -sfn "$PWD/easypi" "$HOME/.gemini/config/skills/easypi"
 `scripts/run_pi.sh` 封装了非交互模式与 stdin 封闭（`</dev/null`），第二个参数是 prompt 文件（不内联到命令行，避免宿主钩子把设计正文里的反引号与 `$(...)` 当命令复核）；脚本自身不切换工作目录（`exec pi` 继承调用方 `cwd`）：
 
 ```bash
-bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>" --approve
+bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>" --approve </dev/null
 ```
 
 ## prompt 模板

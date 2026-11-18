@@ -16,9 +16,21 @@ SESSION_ID="$1"
 PROMPT_FILE="$2"
 shift 2
 
+if [ -z "$SESSION_ID" ]; then
+  echo "Error: session-id 不能为空" >&2
+  exit 2
+fi
+
 if [ ! -f "$PROMPT_FILE" ]; then
   echo "Error: prompt 文件不存在或不是普通文件: $PROMPT_FILE" >&2
   exit 2
 fi
 
-exec pi -p --session-id "$SESSION_ID" "$@" -- "$(cat "$PROMPT_FILE")" </dev/null
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then
+    echo "Error: 额外参数不得包含裸 --，否则会覆盖脚本自身的分隔符" >&2
+    exit 2
+  fi
+done
+
+exec pi -p --session-id "$SESSION_ID" "$@" -- "$(cat -- "$PROMPT_FILE")" </dev/null

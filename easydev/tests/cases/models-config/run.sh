@@ -339,7 +339,7 @@ write(CLI_PROJECT / ".easydev" / "models.json", WINDOWED)
 
 
 def expect_cli(expected_ok, expected_window, expected_config, *args):
-    proc = subprocess.run([sys.executable, os.environ["MODELS"], *args], capture_output=True, text=True)
+    proc = subprocess.run([sys.executable, os.environ["MODELS"], *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
     assert proc.returncode == (0 if expected_ok else 1), "退出码 %d：%s" % (proc.returncode, proc.stderr)
     payload = json.loads(proc.stdout)
     assert payload["ok"] is expected_ok, "ok=%r：%r" % (payload["ok"], payload["error"])

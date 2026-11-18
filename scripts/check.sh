@@ -304,7 +304,7 @@ link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 for f in files:
     with open(f, "r", encoding="utf-8") as fh:
-        content = fh.read()
+        content = strip_fenced_code(fh.read())
     base_dir = os.path.dirname(f)
     for text, url in link_pattern.findall(content):
         if url.startswith(("http://", "https://", "mailto:", "file://")):

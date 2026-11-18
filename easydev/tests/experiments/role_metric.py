@@ -216,7 +216,9 @@ def child_entries(session_dir: Path, session_id: Optional[str]) -> List[Dict[str
         if session_id is not None and meta.get("parentSessionId") != session_id:
             # 同一目录下可能有多次会话的产物；只统计本次选中的主会话。
             continue
-        usage = meta.get("usage") or {}
+        usage = meta.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
         entries.append(
             {
                 "role": meta.get("agent") or "unknown",
@@ -348,7 +350,7 @@ def format_table(rows: Iterable[Dict[str, Any]]) -> str:
         if tokens.get("input") is None:
             token_text = "-"
         else:
-            token_text = f"{tokens['input']}in/{tokens['output']}out"
+            token_text = f"{tokens['input']}in/{tokens.get('output', '-')}out"
         refs = ",".join(row["references"]) or "-"
         mat = ",".join(f"{k}({v})" for k, v in (row.get("matched_paths") or {}).items()) or "-"
         lines.append(
@@ -386,7 +388,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help="输出 JSON 数组")
     args = parser.parse_args(argv)
 
-    use_host_parser = args.host != "pi" or args.transcript is not None or args.child_transcript
+    use_host_parser = args.host != "pi" or args.transcript is not None
     if use_host_parser:
         if args.transcript is None:
             parser.error("--host 非 pi 时必须提供 --transcript")

@@ -136,6 +136,10 @@ FILE_OPERAND_CMDS = {
 
 PREFIX_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "nice", "time", "xargs"}
 XARGS_VALUE_FLAGS = ("-n", "-I", "-P", "-L", "-s", "-d", "-E", "-a")
+# `-n` 是 sudo 的布尔开关（非交互），不在带值集合里；`nice -n` 才带值。
+SUDO_VALUE_FLAGS = ("-u", "-g", "-h", "-p", "-r", "-t", "-C", "-D", "-R", "-T", "-U")
+ENV_VALUE_FLAGS = ("-u", "-C", "-S", "--unset", "--chdir")
+GIT_VALUE_OPTS = ("--git-dir", "--work-tree", "--namespace", "--super-prefix")
 # `git commit` options whose value is not a pathspec; the value must not trigger the worktree scan.
 COMMIT_VALUE_OPTS = (
     "-m",
@@ -156,28 +160,126 @@ SENSITIVE_DIR_RE = re.compile(
     r"|(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+|/home/[^/\s\"']+)/\.netrc\b"
 )
 
-STDIN_REDIRECTION_RE = re.compile(r"(?:^|\s)0?<(?:&-|\s*[^\s<(&>])|<<<?")
-HEREDOC_START_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
+# 允许紧贴命令词的无空格写法（`ls</dev/null`），但仍排除 `>&` / `&>` 这类输出重定向。
+STDIN_REDIRECTION_RE = re.compile(r"0?<(?:&-|\s*[^\s<(&>])|<<<?")
 SHORT_OPT_WITH_C_RE = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 
 
-def _strip_heredoc_bodies(cmd: str) -> str:
-    """Replace heredoc body lines with spaces so data lines aren't parsed as commands."""
+def _heredoc_starts(line: str) -> List[Tuple[str, bool]]:
+    """引号感知扫描一行的 heredoc 起点，返回 [(定界符, 定界符是否带引号)]。
+
+    单/双引号内的 `<<` 与引号外的 `#` 注释不是 heredoc 起点，因此 `echo "<<EOF"`
+    不会吞掉后续行；`<<<`（herestring）也不算。
+    """
+    found: List[Tuple[str, bool]] = []
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            j = line.find("'", i + 1)
+            i = n if j == -1 else j + 1
+            continue
+        if ch == '"':
+            i += 1
+            while i < n and line[i] != '"':
+                i += 2 if line[i] == "\\" else 1
+            i += 1
+            continue
+        if ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";|&"):
+            break
+        if line.startswith("<<", i) and not line.startswith("<<<", i):
+            j = i + 2
+            if j < n and line[j] == "-":
+                j += 1
+            while j < n and line[j] in " \t":
+                j += 1
+            if j < n and line[j] in "'\"":
+                quote = line[j]
+                k = line.find(quote, j + 1)
+                if k == -1:
+                    i = j
+                    continue
+                found.append((line[j + 1 : k], True))
+                i = k + 1
+                continue
+            m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", line[j:])
+            if m:
+                found.append((m.group(0), False))
+                i = j + len(m.group(0))
+                continue
+        i += 1
+    return found
+
+
+def _strip_heredoc_bodies(cmd: str) -> Tuple[str, List[str]]:
+    """移除 heredoc 正文，返回 (清理后的命令, 未加引号 heredoc 的正文)。
+
+    正文本身不是命令，全部不留在返回的命令里；未加引号定界符的正文仍会做
+    `$(...)` / 反引号替换，由调用方按隐藏命令评估，带引号定界符的正文直接丢弃。
+    """
     lines = cmd.splitlines()
     if len(lines) <= 1:
-        return cmd
+        return cmd, []
     out: List[str] = []
-    end_marker: Optional[str] = None
+    pending: List[Tuple[str, bool]] = []
+    bodies: List[str] = []
+    body: List[str] = []
     for line in lines:
-        if end_marker is not None:
-            if line.strip() == end_marker:
-                end_marker = None
+        if pending:
+            delimiter, quoted = pending[0]
+            if line.strip() == delimiter:
+                if not quoted:
+                    bodies.append("\n".join(body))
+                body = []
+                pending.pop(0)
+                continue
+            body.append(line)
             continue
         out.append(line)
-        m = HEREDOC_START_RE.search(line)
-        if m:
-            end_marker = m.group(1)
-    return "\n".join(out)
+        pending.extend(_heredoc_starts(line))
+    return "\n".join(out), bodies
+
+
+def _strip_comments(text: str) -> str:
+    """只剔除引号外的 `#` 注释；引号内容原样保留（替换仍在其中）。"""
+    result: List[str] = []
+    i = 0
+    n = len(text)
+    in_sq = False
+    in_dq = False
+    while i < n:
+        ch = text[i]
+        if in_sq:
+            result.append(ch)
+            if ch == "'":
+                in_sq = False
+            i += 1
+            continue
+        if in_dq:
+            result.append(ch)
+            if ch == "\\" and i + 1 < n:
+                result.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_dq = False
+            i += 1
+            continue
+        if ch == "'":
+            in_sq = True
+        elif ch == '"':
+            in_dq = True
+        elif ch == "#" and (i == 0 or text[i - 1].isspace() or text[i - 1] in ";|&"):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        result.append(ch)
+        i += 1
+    return "".join(result)
 
 
 def _strip_comments_and_quotes(text: str) -> str:
@@ -347,8 +449,8 @@ def _split_outside_quotes(text: str, seps: Tuple[str, ...]) -> List[str]:
             i += 1
             continue
 
-        # Do not treat `>&` / `2>&1` / `&>` as a statement separator.
-        if text[i : i + 2] in (">&", "&>"):
+        # Do not treat `2>&1` / `&>` / `3<&0` as a statement separator.
+        if text[i : i + 2] in ("<&", ">&", "&>"):
             buf.append(text[i : i + 2])
             i += 2
             continue
@@ -406,12 +508,21 @@ def _unwrap_prefixes(tokens: List[str]) -> Tuple[str, List[str], bool]:
         if base in PREFIX_WRAPPERS:
             i += 1
             while i < len(tokens) and tokens[i].startswith("-"):
-                if base in ("sudo", "nice") and tokens[i] in ("-u", "-g", "-n") and i + 1 < len(tokens):
+                value_flag = tokens[i].split("=", 1)[0]
+                if base == "sudo" and tokens[i] in SUDO_VALUE_FLAGS and i + 1 < len(tokens):
+                    i += 2
+                elif base == "nice" and tokens[i] == "-n" and i + 1 < len(tokens):
                     i += 2
                 elif base == "xargs" and tokens[i] in XARGS_VALUE_FLAGS and i + 1 < len(tokens):
                     i += 2
+                elif base == "env" and value_flag in ENV_VALUE_FLAGS:
+                    i += 1 if "=" in tokens[i] or i + 1 >= len(tokens) else 2
                 else:
                     i += 1
+            continue
+        if base in ("do", "then", "else", "elif"):
+            # 控制流关键字不是命令，真实命令在它后面。
+            i += 1
             continue
         return base, tokens[i + 1 :], has_timeout
     return "", [], has_timeout
@@ -439,6 +550,8 @@ def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
             target_cwd = os.path.join(target_cwd, args[i + 1]) if not os.path.isabs(args[i + 1]) else args[i + 1]
             i += 2
         elif args[i] == "-c" and i + 1 < len(args):
+            i += 2
+        elif args[i] in GIT_VALUE_OPTS and i + 1 < len(args):
             i += 2
         elif args[i].startswith("-"):
             i += 1
@@ -496,6 +609,8 @@ def _check_git_action(args: List[str], cwd: str) -> Tuple[Optional[str], Optiona
     i = 0
     while i < len(args):
         if args[i] in ("-C", "-c") and i + 1 < len(args):
+            i += 2
+        elif args[i] in GIT_VALUE_OPTS and i + 1 < len(args):
             i += 2
         elif args[i].startswith("-"):
             i += 1
@@ -592,8 +707,8 @@ def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) ->
     if secret_hit:
         return "deny", secret_hit
 
-    body_stripped = _strip_heredoc_bodies(stripped)
-    statements = _split_outside_quotes(body_stripped, ("&&", "||", ";", "\n"))
+    body_stripped, unquoted_heredoc_bodies = _strip_heredoc_bodies(stripped)
+    statements = _split_outside_quotes(body_stripped, ("&&", "||", "&", ";", "\n"))
 
     best_decision: Optional[str] = None
     best_reason: Optional[str] = None
@@ -605,13 +720,21 @@ def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) ->
         elif dec == "force_ask" and best_decision is None:
             best_decision, best_reason = "force_ask", reason
 
+    # 未加引号定界符的 heredoc 正文仍是数据，只有其中的替换会被执行。
+    for heredoc_body in unquoted_heredoc_bodies:
+        for inner in _iter_substitutions(heredoc_body):
+            sub_dec, sub_reason = evaluate_command(inner, cwd=cwd, host=host, check_stdin=False)
+            record(sub_dec, sub_reason)
+            if best_decision == "deny":
+                return best_decision, best_reason
+
     for stmt in statements:
         stmt_unquoted = _strip_comments_and_quotes(stmt).strip()
         if not stmt_unquoted:
             continue
 
         # Hidden commands: `$(...)` and backticks run before the outer command.
-        for inner in _iter_substitutions(_strip_single_quotes(stmt)):
+        for inner in _iter_substitutions(_strip_single_quotes(_strip_comments(stmt))):
             sub_dec, sub_reason = evaluate_command(inner, cwd=cwd, host=host, check_stdin=False)
             record(sub_dec, sub_reason)
             if best_decision == "deny":
@@ -633,8 +756,11 @@ def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) ->
                     None,
                 )
                 if c_idx is not None and c_idx + 1 < len(args):
+                    script = args[c_idx + 1]
+                    if script == "--" and c_idx + 2 < len(args):
+                        script = args[c_idx + 2]
                     sub_dec, sub_reason = evaluate_command(
-                        args[c_idx + 1],
+                        script,
                         cwd=cwd,
                         host=host,
                         check_stdin=check_stdin and not seg_has_stdin and seg_idx == 0,
@@ -667,8 +793,9 @@ def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) ->
                         "严禁悬空 stdin 等待输入。请重写命令后重试。",
                     )
 
-            # Sensitive credential directory check (allow `ssh -i` / `scp -i` / `ssh-add`).
-            if SENSITIVE_DIR_RE.search(seg) and not (base in ("ssh", "scp", "ssh-add", "ssh-keygen") and ("-i" in args or base != "ssh")):
+            # Sensitive credential directory check (allow `ssh -i` / `scp -i` / `ssh-add` / `ssh-keygen`).
+            key_command = (base in ("ssh", "scp") and "-i" in args) or base in ("ssh-add", "ssh-keygen")
+            if SENSITIVE_DIR_RE.search(seg) and not key_command:
                 record("force_ask", "命令涉及敏感凭据目录（如 `.ssh`/`.aws`/`.gnupg`），须由用户明确授权（§3）。")
 
             if base == "git":

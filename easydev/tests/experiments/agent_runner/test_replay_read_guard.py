@@ -255,7 +255,7 @@ class ReplayReadGuardTests:
             "读取型选项": "grep -f %s src/app.py" % patterns,
             "cd 目录切换": "cd %s; cat models.json" % self.operator,
             "通配符": "cat %s/*.json" % self.operator,
-            "未知 cd": "cd unknown-dir; cat sentinel.txt",
+            "变量 cd 目标": "cd $CD_TARGET; cat sentinel.txt",
         }
         for label, command in cases.items():
             with subtests.test(case=label):
@@ -522,6 +522,90 @@ class ReplayReadGuardTests:
         assert result["valid_invocation"]
         assert ".codex/hooks.json" not in result["changed_paths"]
         assert Path(result["read_guard"]["hooks"]).exists()
+
+    def structured(self, tool: str, **tool_input: object) -> dict:
+        return {
+            "hook_event_name": "PreToolUse",
+            "tool_name": tool,
+            "tool_input": tool_input,
+            "cwd": str(self.workspace),
+        }
+
+    def test_structured_tool_cwd_drives_relative_targets(self) -> None:
+        """DR-13：grep/find/ls 的 tool_input.cwd 参与目标解析，不被请求 cwd 掩盖。"""
+        outside = self.run_guard(
+            self.structured("grep", pattern="sentinel", path="sentinel.txt", cwd=str(self.outside))
+        )
+        assert self.decision(outside) == "deny", outside
+        assert self.health_codes()[-1] == "outside_allowed"
+        inside = self.run_guard(
+            self.structured("grep", pattern="print", path="app.py", cwd=str(self.workspace / "src"))
+        )
+        assert self.decision(inside) == "allow", inside
+        # 没有路径字段时，tool cwd 本身就是要核验的目标。
+        assert self.decision(self.run_guard(self.structured("ls", cwd=str(self.outside)))) == "deny"
+        assert self.decision(self.run_guard(self.structured("ls", cwd=str(self.workspace / "src")))) == "allow"
+        bad_cwd = self.run_guard(self.structured("grep", pattern="x", path="app.py", cwd=7))
+        assert self.decision(bad_cwd) == "deny", bad_cwd
+        assert self.health_codes()[-1] == "input_invalid"
+
+    def test_new_command_and_readfile_tools_are_guarded(self) -> None:
+        """DR-14：`shell`/`run_command`/`powershell` 与 `readfile` 同样纳管。"""
+        secret = str(self.outside / "sentinel.txt")
+        for tool in ("shell", "run_command", "powershell"):
+            with subtests.test(tool=tool):
+                assert self.decision(self.run_guard(self.structured(tool, command="cat " + secret))) == "deny"
+        assert self.decision(
+            self.run_guard(self.structured("readfile", path=str(self.workspace / "src" / "app.py")))
+        ) == "allow"
+        assert self.decision(self.run_guard(self.structured("readfile", path=secret))) == "deny"
+
+    def test_ls_follow_flag_given_as_string_is_rejected(self) -> None:
+        """DR-14：`flags` 以字符串给出时也必须识别 -L，非法类型 fail-closed。"""
+        follow = self.run_guard(self.structured("ls", path="src", flags="-L"))
+        assert self.decision(follow) == "deny", follow
+        assert self.health_codes()[-1] == "recursive_follow"
+        assert self.decision(self.run_guard(self.structured("ls", path="src", flags="-l"))) == "allow"
+        bad_flags = self.run_guard(self.structured("ls", path="src", flags=3))
+        assert self.decision(bad_flags) == "deny", bad_flags
+        assert self.health_codes()[-1] == "input_invalid"
+
+    def test_shell_analyze_receives_request_cwd(self) -> None:
+        """DR-15：允许根内的 `cd <子目录> && cat <文件>` 放行，跳回根外则拒绝。"""
+        assert self.decision(self.run_guard(self.bash("cd src && cat app.py"))) == "allow"
+        outside = self.run_guard(self.bash("cd %s && cat sentinel.txt" % self.outside))
+        assert self.decision(outside) == "deny", outside
+
+    def test_home_prefixed_variable_is_not_expanded(self) -> None:
+        """DR-16：`$HOME_extra` 不等于 `$HOME`，不得展开成允许根内路径。"""
+        fake_home = self.workspace / "fakehome"
+        fake_home.mkdir()
+        (fake_home / "x").write_text("inside\n", encoding="utf-8")
+        extra = self.workspace / "fakehome_extra"
+        extra.mkdir()
+        (extra / "x").write_text("inside\n", encoding="utf-8")
+        self.write_policy(real_home=str(fake_home))
+        value = self.run_guard(self.bash("cat $HOME_extra/x"))
+        assert self.decision(value) == "deny", value
+        assert self.health_codes()[-1] == "target_unresolved"
+        # 对照：`$HOME` 本身仍按 policy 展开。
+        assert self.decision(self.run_guard(self.bash("cat $HOME/x"))) == "allow"
+
+    def test_malformed_stdin_records_invocation(self) -> None:
+        """DR-17：stdin 解析失败也计入 invocations，否则“没触发”与“触发失败”无法区分。"""
+        invocations = str(self.health) + ".invocations"
+        before = guard.read_invocations(invocations)
+        completed = subprocess.run(
+            [sys.executable, str(AGENT_RUNNER_ROOT / "replay_read_guard.py"), "--policy", str(self.policy_path)],
+            input="{not-json",
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert self.decision(json.loads(completed.stdout)) == "deny"
+        assert guard.read_invocations(invocations) == before + 1
+        assert self.health_codes()[-1] == "input_invalid"
 
 
 class DeployedGuardCommandTests:

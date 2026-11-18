@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -68,7 +69,19 @@ DEFAULT_MAX_ENTRIES = 20000
 DEFAULT_DEADLINE_MS = 2000
 HOOK_NAME = "replay-read-guard"
 READ_PATH_FIELDS = ("path", "paths", "file_path", "filePath", "files", "Path", "absolute_path")
-STRUCTURED_READ_TOOLS = {"read", "read_file", "view_file", "view", "read_text_file", "grep", "find", "ls"}
+STRUCTURED_READ_TOOLS = {
+    "read",
+    "read_file",
+    "readfile",
+    "view_file",
+    "view",
+    "read_text_file",
+    "grep",
+    "find",
+    "ls",
+}
+COMMAND_READ_TOOLS = {"Bash", "bash", "exec_command", "shell", "run_command", "powershell"}
+CWD_SCOPED_TOOLS = {"grep", "find", "ls"}
 DIRECT_FOLLOW_FLAGS = {"rg --follow": "--follow", "find -L": "-L", "ls -L": "-L"}
 
 
@@ -227,9 +240,8 @@ def _expand(path: str, real_home: str) -> str:
     expanded = path
     if expanded == "~" or expanded.startswith("~/"):
         expanded = real_home + expanded[1:]
-    for token in ("${HOME}", "$HOME"):
-        expanded = expanded.replace(token, real_home)
-    return expanded
+    expanded = re.sub(r"\$HOME(?![A-Za-z0-9_])", lambda _match: real_home, expanded)
+    return expanded.replace("${HOME}", real_home)
 
 
 def _inside(path: str, roots: Iterable[str]) -> bool:
@@ -365,15 +377,17 @@ def _walk_without_follow(
             visit(root)
 
 
-def _targets_from_tool(tool: str, tool_input: Any) -> Tuple[List[Tuple[str, Optional[str]]], bool]:
+def _targets_from_tool(
+    tool: str, tool_input: Any, cwd: Optional[str] = None
+) -> Tuple[List[Tuple[str, Optional[str]]], bool]:
     """返回 (读取目标, 是否递归)；未知结构不是空目标。"""
     if not isinstance(tool_input, dict):
         raise GuardFailure("tool_input_missing", "工具参数不是对象，无法证明无越界读取")
-    if tool in {"Bash", "bash", "exec_command"}:
+    if tool in COMMAND_READ_TOOLS:
         command = tool_input.get("command")
         if not isinstance(command, str) or not command.strip():
             raise GuardFailure("tool_input_missing", "缺少命令，无法判定读取目标")
-        analysis = shell.analyze(command)
+        analysis = shell.analyze(command, cwd=cwd)
         if analysis.opaque or analysis.too_deep or analysis.read_unknown:
             raise GuardFailure("target_unresolved", "命令结构无法安全解析，读取目标不可证明")
         if analysis.stdin_program:
@@ -403,14 +417,28 @@ def _targets_from_tool(tool: str, tool_input: Any) -> Tuple[List[Tuple[str, Opti
                 for item in value:
                     if isinstance(item, str) and item:
                         plain.append(item)
-        if tool == "ls" and any(
-            isinstance(token, str) and token.startswith("-") and "L" in token
-            for token in tool_input.get("flags", []) or []
-        ):
-            raise GuardFailure("recursive_follow", "ls -L 不在本版放行范围")
+        if tool == "ls":
+            flags = tool_input.get("flags")
+            if isinstance(flags, str):
+                flags = [flags]
+            elif flags is None:
+                flags = []
+            elif not isinstance(flags, list):
+                raise GuardFailure("input_invalid", "ls 的 flags 不是字符串或数组，无法证明读取范围")
+            if any(
+                isinstance(token, str) and token.startswith("-") and "L" in token
+                for token in flags
+            ):
+                raise GuardFailure("recursive_follow", "ls -L 不在本版放行范围")
+        tool_cwd = tool_input.get("cwd")
+        if tool_cwd is not None and not isinstance(tool_cwd, str):
+            raise GuardFailure("input_invalid", "工具 cwd 类型错误，读取目标不可证明")
+        base = tool_cwd if tool in CWD_SCOPED_TOOLS and tool_cwd else None
         if not plain:
+            if base:
+                return [(base, None)], tool in CWD_SCOPED_TOOLS
             raise GuardFailure("target_unresolved", "结构化读取工具缺少路径字段")
-        return [(item, None) for item in plain], tool in {"grep", "find", "ls"}
+        return [(item, base) for item in plain], tool in CWD_SCOPED_TOOLS
     return [], False
 
 
@@ -422,7 +450,7 @@ def check_request(request: Dict[str, Any], policy: Dict[str, Any]) -> None:
     cwd = request.get("cwd") or request.get("working_directory")
     if cwd is not None and not isinstance(cwd, str):
         raise GuardFailure("input_invalid", "cwd 类型错误")
-    targets, recursive = _targets_from_tool(tool, tool_input)
+    targets, recursive = _targets_from_tool(tool, tool_input, cwd=cwd)
     if not targets:
         return
     started = time.monotonic()
@@ -487,6 +515,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         request = read_stdin(sys.stdin.buffer)
     except GuardFailure as failure:
         _record_health(policy, failure.code)
+        _record_invocation(policy, failure.code)
         print(json.dumps(_deny("%s: %s" % (HOOK_NAME, failure.message)), ensure_ascii=False))
         return 0
     decision, _code = handle(request, policy)

@@ -646,6 +646,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     subparsers.add_parser("list")
     args = parser.parse_args(argv)
+    for option in ("repeat", "agent_timeout"):
+        value = getattr(args, option, None)
+        if value is not None and value < 1:
+            parser.error("--%s 必须 >= 1" % option.replace("_", "-"))
     # Resolve against the caller's cwd before the adapter switches to workspace.
     for name in ("out", "skill_root", "case_root", "codex_bin", "codex_auth"):
         value = getattr(args, name, None)

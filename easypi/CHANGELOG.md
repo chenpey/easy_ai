@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 更新说明（2026-11-18）
+
+- `scripts/run_pi.sh` 校验非空 `SESSION_ID`、拒绝额外参数传入裸 `--` 并使用 `cat -- "$PROMPT_FILE"`。
+- `SKILL.md` 与 `README.md` 的 `run_pi.sh` 调用示例末尾补充 `</dev/null`，对齐宿主非交互前置钩子。
+
 ## 0.3.0 更新说明
 
 - 定位收敛为单一闭环：`agy` 设计 → `Pi` 走 `easydev` `gate` 模式审设计并开发 → `agy` 开发终审。
