@@ -2,6 +2,14 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.7.0 更新说明（2026-11-18）
+
+新增跨宿主通用的命令非交互硬拦截钩子（`agent-hooks/`）并纳入 `sync-agent-rules` 统一分发；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。
+
+- **公共校验核心**：新增 `agent-hooks/check_command.py`，统一拦截未显式封闭 stdin（如缺少 `</dev/null`）或调用交互式阻塞命令（`less`/`script`/`vim`/`read` 等）的工具调用，支持 Antigravity JSON 与退出码 `2` 两种契约。
+- **宿主适配器**：新增 `agent-hooks/antigravity/hooks.json`（`PreToolUse`）与 `agent-hooks/pi/enforce-noninteractive.ts`（`tool_call`），分别发布至 `~/.gemini/config/hooks.json` 与 `~/.pi/agent/extensions/enforce-noninteractive.ts`。
+- **同步脚本扩展**：`scripts/sync-agent-rules.sh` 支持一并校验和合并同步 `agent-hooks/`（`hooks.json` 按命名键合并，不覆盖用户既有钩子；Windows 版 `sync-agent-rules.ps1` 保持仅同步规则）。
+
 ## 2.6.0 更新说明（2026-11-18）
 
 收敛全局规则与 Antigravity 宿主规则的上下文防污染、信息展示与长会话切换约束；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。

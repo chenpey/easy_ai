@@ -28,6 +28,8 @@ esac
 targets=(
   "$HOME/.config/agent-rules/AGENTS.md"
   "$HOME/.gemini/config/rules/antigravity.md"
+  "$HOME/.config/agent-hooks/check_command.py"
+  "$HOME/.pi/agent/extensions/enforce-noninteractive.ts"
 )
 entries=(
   "$HOME/.pi/agent/AGENTS.md"
@@ -37,7 +39,11 @@ entries=(
 rel_paths=(
   "AGENTS.md"
   "agent-rules/antigravity.md"
+  "agent-hooks/check_command.py"
+  "agent-hooks/pi/enforce-noninteractive.ts"
 )
+HOOKS_REL_PATH="agent-hooks/antigravity/hooks.json"
+HOOKS_TARGET="$HOME/.gemini/config/hooks.json"
 
 apply_tmp=''
 remote_tmp_dir=''
@@ -65,26 +71,35 @@ download_file() {
 }
 
 use_local=true
-if [ -z "$SCRIPT_SOURCE" ] || [ -z "$ROOT_DIR" ] || [ ! -f "$ROOT_DIR/${rel_paths[0]}" ] || [ ! -f "$ROOT_DIR/${rel_paths[1]}" ]; then
+if [ -z "$SCRIPT_SOURCE" ] || [ -z "$ROOT_DIR" ] || [ ! -f "$ROOT_DIR/$HOOKS_REL_PATH" ]; then
   use_local=false
+else
+  for rel in "${rel_paths[@]}"; do
+    if [ ! -f "$ROOT_DIR/$rel" ]; then
+      use_local=false
+      break
+    fi
+  done
 fi
 
 sources=()
+HOOKS_SOURCE=""
 if [ "$use_local" = true ]; then
-  sources=(
-    "$ROOT_DIR/${rel_paths[0]}"
-    "$ROOT_DIR/${rel_paths[1]}"
-  )
+  for rel in "${rel_paths[@]}"; do
+    sources+=("$ROOT_DIR/$rel")
+  done
+  HOOKS_SOURCE="$ROOT_DIR/$HOOKS_REL_PATH"
 else
   remote_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/easy_ai_rules.XXXXXX")"
-  sources=(
-    "$remote_tmp_dir/AGENTS.md"
-    "$remote_tmp_dir/antigravity.md"
-  )
-  for i in 0 1; do
-    url="$RAW_BASE/${rel_paths[$i]}"
-    download_file "$url" "${sources[$i]}"
+  for rel in "${rel_paths[@]}"; do
+    src="$remote_tmp_dir/$rel"
+    mkdir -p "$(dirname "$src")"
+    download_file "$RAW_BASE/$rel" "$src"
+    sources+=("$src")
   done
+  HOOKS_SOURCE="$remote_tmp_dir/$HOOKS_REL_PATH"
+  mkdir -p "$(dirname "$HOOKS_SOURCE")"
+  download_file "$RAW_BASE/$HOOKS_REL_PATH" "$HOOKS_SOURCE"
 fi
 
 hash_sha256() {
@@ -125,7 +140,7 @@ else
   done
 fi
 
-for i in 0 1; do
+for i in "${!targets[@]}"; do
   test -f "${sources[$i]}"
   if [ -d "${targets[$i]}" ]; then
     echo "Target is a directory: ${targets[$i]}" >&2
@@ -150,19 +165,55 @@ if [ -L "${targets[1]}" ]; then
 fi
 
 if [ "$MODE" = "--apply" ]; then
-  for i in 0 1; do
+  for i in "${!targets[@]}"; do
     target_dir="$(dirname "${targets[$i]}")"
     mkdir -p "$target_dir"
     apply_tmp="$(mktemp "$target_dir/.agent-rule.XXXXXX")"
     cp "${sources[$i]}" "$apply_tmp"
     diff -q "${sources[$i]}" "$apply_tmp"
-    chmod 644 "$apply_tmp"
+    if [[ "${targets[$i]}" == *.py ]]; then
+      chmod 755 "$apply_tmp"
+    else
+      chmod 644 "$apply_tmp"
+    fi
     mv -f "$apply_tmp" "${targets[$i]}"
     apply_tmp=''
   done
+
+  hooks_dir="$(dirname "$HOOKS_TARGET")"
+  mkdir -p "$hooks_dir"
+  apply_tmp="$(mktemp "$hooks_dir/.agent-hooks.XXXXXX")"
+  python3 - "$HOOKS_SOURCE" "$HOOKS_TARGET" "$apply_tmp" <<'PY'
+import json, os, sys
+
+src_path, dst_path, tmp_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(src_path, "r", encoding="utf-8") as f:
+    src_data = json.load(f)
+
+dst_data = {}
+if os.path.lexists(dst_path):
+    if os.path.islink(dst_path) or not os.path.isfile(dst_path):
+        print(f"Hooks target must be a regular file: {dst_path}", file=sys.stderr)
+        sys.exit(1)
+    with open(dst_path, "r", encoding="utf-8") as f:
+        dst_data = json.load(f)
+    if not isinstance(dst_data, dict):
+        print(f"Hooks target must be a JSON object: {dst_path}", file=sys.stderr)
+        sys.exit(1)
+
+for key, val in src_data.items():
+    dst_data[key] = val
+
+with open(tmp_path, "w", encoding="utf-8") as f:
+    json.dump(dst_data, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
+  chmod 644 "$apply_tmp"
+  mv -f "$apply_tmp" "$HOOKS_TARGET"
+  apply_tmp=''
 fi
 
-for i in 0 1; do
+for i in "${!targets[@]}"; do
   if [ -L "${targets[$i]}" ]; then
     echo "Runtime rule must be a regular file: ${targets[$i]}" >&2
     exit 1
@@ -175,5 +226,25 @@ for i in 0 1; do
   diff -q "${sources[$i]}" "${targets[$i]}" || exit 1
 done
 
-hash_sha256 "${sources[@]}" "${targets[@]}"
+if [ -L "$HOOKS_TARGET" ] || [ ! -f "$HOOKS_TARGET" ]; then
+  echo "Missing or non-regular hooks target: $HOOKS_TARGET" >&2
+  exit 1
+fi
+python3 - "$HOOKS_SOURCE" "$HOOKS_TARGET" <<'PY'
+import json, sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    src_data = json.load(f)
+with open(sys.argv[2], "r", encoding="utf-8") as f:
+    dst_data = json.load(f)
+if not isinstance(dst_data, dict):
+    print(f"Hooks target must be a JSON object: {sys.argv[2]}", file=sys.stderr)
+    sys.exit(1)
+for key, val in src_data.items():
+    if dst_data.get(key) != val:
+        print(f"Hooks key mismatch ({key}) in {sys.argv[2]}", file=sys.stderr)
+        sys.exit(1)
+PY
+
+hash_sha256 "${sources[@]}" "$HOOKS_SOURCE" "${targets[@]}" "$HOOKS_TARGET"
 echo "Rule files match; harness loading has not been verified."

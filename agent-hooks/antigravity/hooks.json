@@ -1,0 +1,16 @@
+{
+  "enforce-noninteractive-stdin": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
