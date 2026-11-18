@@ -2,6 +2,13 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.8.0 更新说明（2026-11-18）
+
+扩展 `agent-hooks` 跨宿主硬守卫并纳入 `check.sh` 自动化门禁；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。
+
+- **命令与写入硬守卫扩展**：`agent-hooks/check_command.py` 改为按句/管道组首检测 stdin，并新增高危 Git/`rm -rf` 确认（`force_ask`）、写入与暂存区密钥扫描（`deny`）、网络命令硬超时、Antigravity `sleep` 禁令及敏感凭据目录确认（`force_ask`），异常与非法输入一律 fail-closed。
+- **宿主适配器与门禁**：`agent-hooks/antigravity/hooks.json` 增补写/改文件 matcher 并将超时调至 `10s`；`agent-hooks/pi/enforce-noninteractive.ts` 接入 `write`/`edit` 与 `ctx.ui.confirm`；`scripts/check.sh` 第 12 节纳入 `agent-hooks/test_check_command.py`（42 条用例）。
+
 ## 2.7.0 更新说明（2026-11-18）
 
 新增跨宿主通用的命令非交互硬拦截钩子（`agent-hooks/`）并纳入 `sync-agent-rules` 统一分发；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。

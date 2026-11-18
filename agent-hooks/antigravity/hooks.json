@@ -6,8 +6,48 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity",
-            "timeout": 5
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "write_to_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "timeout": 10
           }
         ]
       }

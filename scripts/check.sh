@@ -740,4 +740,12 @@ echo "=== 11. EasyThink 行为规约一致性 ==="
 # README 判据与 SKILL 同源、回归记录版本与 SKILL 版本一致。
 python3 scripts/check_think_rubric.py
 
+echo "=== 12. Agent Hooks 校验与 CLI 测试 ==="
+python3 -c 'import json; json.load(open("agent-hooks/antigravity/hooks.json", encoding="utf-8"))'
+PYTEST_BIN="python3"
+if [ -x ".venv/bin/python" ]; then
+  PYTEST_BIN=".venv/bin/python"
+fi
+"$PYTEST_BIN" -m pytest agent-hooks/test_check_command.py </dev/null
+
 echo "=== 全部自动化门禁检查通过 ==="

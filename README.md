@@ -7,7 +7,7 @@
 | 名称 | 版本 | 说明 |
 | --- | --- | --- |
 | [EasyThink](easythink/README.md) | 0.5.1 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
-| [EasyDev](easydev/README.md) | 2.7.0 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
+| [EasyDev](easydev/README.md) | 2.8.0 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
 
 - 技能按标准 `SKILL.md` 分发，安装与使用见对应目录的 README。
 - `agents/openai.yaml` 仅作为 OpenAI/Codex 界面的可选展示元数据，其他宿主可忽略。
@@ -18,7 +18,7 @@
 
 - `AGENTS.md`：通用工作规则，发布至 `~/.config/agent-rules/AGENTS.md`（Pi、Codex、Antigravity 软链共享）。
 - `agent-rules/antigravity.md`：Antigravity 专有适配规则，发布至 `~/.gemini/config/rules/antigravity.md`。
-- `agent-hooks/check_command.py`：跨宿主共享的非交互命令硬拦截校验脚本，发布至 `~/.config/agent-hooks/check_command.py`。
+- `agent-hooks/check_command.py`：跨宿主共享的命令与写入硬守卫（非交互 stdin 封闭、高危 Git/删除确认、密钥防写入与防提交、网络命令硬超时、`sleep` 禁令及敏感凭据目录确认），发布至 `~/.config/agent-hooks/check_command.py`。
 - `agent-hooks/antigravity/hooks.json` 与 `agent-hooks/pi/enforce-noninteractive.ts`：Antigravity（`~/.gemini/config/hooks.json`，按命名键合并）与 Pi（`~/.pi/agent/extensions/enforce-noninteractive.ts`）的前置拦截适配器，随 `sync-agent-rules.sh` 在 macOS/Linux 一并同步。
 
 ### 规则同步
