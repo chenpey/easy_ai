@@ -16,14 +16,13 @@ SPEC.loader.exec_module(gate)
 
 @pytest.mark.parametrize("designer", ["inherit", "host/designer"])
 @pytest.mark.parametrize(
-    "developer_non_inherit,in_upgrade_stage,expected",
-    [(False, False, False), (True, False, True), (False, True, True), (True, True, True)],
+    "developer_non_inherit,expected",
+    [(False, False), (True, True)],
 )
-def test_designer_does_not_force_developer(designer, developer_non_inherit, in_upgrade_stage, expected):
+def test_designer_does_not_force_developer(designer, developer_non_inherit, expected):
     result = gate.resolve_designer(
         model=designer,
         developer_non_inherit=developer_non_inherit,
-        in_upgrade_stage=in_upgrade_stage,
     )
     assert result["must_delegate_developer"] is expected
     assert result["gate"] == "closed"

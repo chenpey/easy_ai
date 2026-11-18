@@ -354,7 +354,7 @@ print("OK: 所有 README bash 代码块语法均合法")
 
 echo "=== 6. 模型配置内联示例校验（共享 validator） ==="
 # schema 与 scripts/models.py 共用同一 validator：这里只负责从 README 提取示例，
-# 再断言示例演示的跨供应商升级形状；不再复制一份字段规则。
+# 再断言示例同时演示跨供应商角色配置与 windows 时段切换；不复制字段规则。
 python3 - <<'PY'
 import json, re, sys
 
@@ -386,37 +386,19 @@ try:
 except models.ConfigError as exc:
     fail(f"easydev/README.md 内联示例不符合共享模型 schema: {exc}")
 
-# README 是唯一示例事实源，所以示例要演示它自己声明的形状：
-# 若配置了 upgrades 则演示跨供应商升级；若未配置 upgrades（全 inherit 默认配置）则校验 schema 合法。
-upgrades = block.get("upgrades", [])
-if upgrades:
-    developer_provider = provider_of(block["developer"]["model"])
-    reviewer_provider = provider_of(block["reviewer"]["model"])
-    if developer_provider is None or reviewer_provider is None:
-        fail("内联示例的基础角色应为具体供应商，不能用 inherit 演示跨供应商")
-    if developer_provider == reviewer_provider:
-        fail("内联示例的基础开发与审查角色应分属不同供应商")
-    # 逐级与**紧邻上一级**比较：基础级之后每一级都要各自保持跨供应商并真的换供应商，
-    # 这样多级示例不会只检查第一级而放过后面的退化。
-    previous_developer = developer_provider
-    previous_reviewer = reviewer_provider
-    for index, stage in enumerate(upgrades, 1):
-        stage_developer = provider_of(stage["developer"]["model"])
-        stage_reviewer = provider_of(stage["reviewer"]["model"])
-        # 文案同时给出零基下标（与数组一致）与从 1 起的级次，避免指错元素。
-        label = f"upgrades[{index - 1}]（第 {index} 级）"
-        if stage_developer is None or stage_reviewer is None:
-            fail(f"内联示例 {label} 应为具体供应商，不能用 inherit 演示")
-        if stage_developer == stage_reviewer:
-            fail(f"内联示例 {label} 的开发与审查应分属不同供应商")
-        if stage_developer == previous_developer and stage_reviewer == previous_reviewer:
-            fail(f"内联示例 {label} 未更换任何一个角色的供应商，无法演示跨供应商升级")
-        previous_developer = stage_developer
-        previous_reviewer = stage_reviewer
-
-    print("OK: easydev/README.md 内联示例符合共享模型 schema 与跨供应商升级示例")
-else:
-    print("OK: easydev/README.md 内联示例符合共享模型 schema（默认 inherit 配置）")
+# README 是唯一示例事实源：示例必须演示它自己声明的形状——跨供应商角色配置
+# 与 windows 时段切换，且不得再出现已移除的 upgrades 键。
+if "upgrades" in block:
+    fail("内联示例不应再包含已移除的 upgrades 键")
+developer_provider = provider_of(block["developer"]["model"])
+reviewer_provider = provider_of(block["reviewer"]["model"])
+if developer_provider is None or reviewer_provider is None:
+    fail("内联示例的开发与审查角色应为具体供应商，不能用 inherit 演示跨供应商")
+if developer_provider == reviewer_provider:
+    fail("内联示例的开发与审查角色应分属不同供应商")
+if not block.get("windows"):
+    fail("内联示例应演示 windows 时段切换（键为北京时间时段 HH:MM-HH:MM）")
+print("OK: easydev/README.md 内联示例符合共享模型 schema、跨供应商角色与 windows 时段示例")
 PY
 
 echo "=== 6b. Python 脚本与回放守卫静态检查 ==="
@@ -670,7 +652,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=76158
+MAX_TOTAL=74708
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

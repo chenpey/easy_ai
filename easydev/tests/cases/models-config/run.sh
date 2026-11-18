@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 模型配置用例：scripts/models.py 是 check.sh 与 environment.md 共用的唯一 schema/
 # validator 与来源选择实现。正例必须通过；重复键、非法 JSON、未知键、缺角色、
-# 非法 model/effort、upgrades 超限或相邻同值、无效文件静默回退、空覆盖都必须被拒绝。
-# 来源优先级固定为「对话指定文件 > 项目 > 用户 > 内置默认」，且文件之间不合并。
+# 非法 model/effort、未知键（含已移除的 upgrades）、无效文件静默回退、空覆盖、非法时段键
+# 都必须被拒绝。来源优先级固定为「对话指定文件 > 项目 > 用户 > 内置默认」，文件之间
+# 不合并；windows 按北京时间（或被 locked_window 锁定）左闭右开匹配首项并移除该键。
 set -euo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 
@@ -17,7 +18,9 @@ HOME="$TMP_DIR/home" MODELS="$ROOT_DIR/scripts/models.py" WORK="$TMP_DIR" python
 import importlib.util
 import json
 import os
+import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("models", os.environ["MODELS"])
@@ -98,11 +101,13 @@ def reject_overrides(value, needle):
     raise AssertionError("应被拒绝却通过")
 
 
-def expect_selection(expected_source, expected_config, **kwargs):
+def expect_selection(expected_source, expected_config, window=None, **kwargs):
     selection = models.select(**kwargs)
     assert selection.ok, "应成功，实际失败：%s" % selection.error
     assert selection.source == expected_source, "来源为 %s" % selection.source
+    assert selection.window == window, "命中/锁定时段为 %r" % selection.window
     assert selection.config == expected_config, "选中内容不符：%s" % selection.config
+    assert "windows" not in (selection.config or {}), "返回 config 不得保留 windows 键"
 
 
 def expect_error(needle, **kwargs):
@@ -114,15 +119,8 @@ def expect_error(needle, **kwargs):
 
 print("=== schema/validator ===")
 check("内置默认配置合法", lambda: accept_config(models.builtin_config()))
-check("合法基础配置与两项 upgrades", lambda: accept_config({
-    **BASE,
-    "upgrades": [
-        {"developer": {"model": "openai/gpt-6", "reasoning_effort": "max"},
-         "reviewer": {"model": "anthropic/claude-5", "reasoning_effort": "medium"}},
-        {"developer": {"model": "google/gemini-4", "reasoning_effort": "max"},
-         "reviewer": {"model": "xai/grok-5", "reasoning_effort": "high"}},
-    ],
-}))
+check("含 upgrades 键的配置被拒绝（模型级升级已移除）",
+      lambda: reject_config({**BASE, "upgrades": []}, "未知键"))
 check("重复键被拒绝", lambda: reject_text('{"developer": {}, "developer": {}}', "重复键"))
 check("非法 JSON 被拒绝", lambda: reject_text('{"developer": }', "JSON 无效"))
 check("未知顶层键被拒绝", lambda: reject_config({**BASE, "extra": 1}, "未知键"))
@@ -138,26 +136,6 @@ check("无宿主依据的 ultra 档被拒绝",
       lambda: reject_config(with_role("reviewer", reasoning_effort="ultra"), "不在允许集合内"))
 check("designer 缺字段被拒绝",
       lambda: reject_config({**BASE, "designer": {"model": "inherit"}}, "缺少必需字段"))
-check("upgrades 超两项被拒绝", lambda: reject_config({
-    **BASE,
-    "upgrades": [
-        {"developer": {"model": "a/b", "reasoning_effort": "low"}, "reviewer": BASE["reviewer"]},
-        {"developer": {"model": "a/c", "reasoning_effort": "low"}, "reviewer": BASE["reviewer"]},
-        {"developer": {"model": "a/d", "reasoning_effort": "low"}, "reviewer": BASE["reviewer"]},
-    ],
-}, "最多两项"))
-check("upgrades 相邻级完全相同被拒绝",
-      lambda: reject_config({**BASE, "upgrades": [BASE]}, "至少一个角色必须变化"))
-check("upgrades 缺 reviewer 被拒绝", lambda: reject_config({
-    **BASE,
-    "upgrades": [{"developer": {"model": "a/b", "reasoning_effort": "low"}}],
-}, "缺少必需角色"))
-check("upgrades 不得含 designer", lambda: reject_config({
-    **BASE,
-    "upgrades": [{"developer": {"model": "a/b", "reasoning_effort": "low"},
-                  "reviewer": BASE["reviewer"],
-                  "designer": {"model": "inherit", "reasoning_effort": "inherit"}}],
-}, "未知键"))
 check("role_overrides 空对象被拒绝", lambda: reject_overrides({}, "覆盖不能是空对象"))
 check("role_overrides 非对象被拒绝", lambda: reject_overrides(None, "必须是对象"))
 
@@ -270,6 +248,119 @@ check("项目配置是软链时拒绝且不回退用户配置",
       lambda: expect_error("不能确认配置来源", project_root=str(PROJECT)))
 PROJECT_CONFIG.unlink()
 USER_CONFIG.unlink()
+
+print("=== windows 时段覆盖与锁定 ===")
+BJT = timezone(timedelta(hours=8))
+DAY = {"developer": {"model": "openai/gpt-6", "reasoning_effort": "medium"}}
+NIGHT = {"reviewer": {"model": "xai/grok-5", "reasoning_effort": "low"}}
+WINDOWED = {**BASE, "windows": {"08:00-20:00": DAY, "20:00-08:00": NIGHT}}
+DAY_CONFIG = json.loads(json.dumps(BASE))
+DAY_CONFIG["developer"].update(DAY["developer"])
+NIGHT_CONFIG = json.loads(json.dumps(BASE))
+NIGHT_CONFIG["reviewer"].update(NIGHT["reviewer"])
+
+WIN_FILE = WORK / "windowed.json"
+write(WIN_FILE, WINDOWED)
+
+
+def resolve_at(hour, minute=0, tz=BJT):
+    """固定日期的时间点：tz 为 None 时给出 naive 时间。"""
+    moment = datetime(2026, 11, 18, hour, minute) if tz is None else datetime(2026, 11, 18, hour, minute, tzinfo=tz)
+    return {"context": {"models_file": str(WIN_FILE)}, "now": moment}
+
+
+check("windows 同日时段命中（左闭）", lambda: expect_selection(
+    "对话指定文件", DAY_CONFIG, window="08:00-20:00", **resolve_at(8, 0)))
+check("windows 同日时段右端开区间", lambda: expect_selection(
+    "对话指定文件", DAY_CONFIG, window="08:00-20:00", **resolve_at(19, 59)))
+check("windows 切到跨午夜时段", lambda: expect_selection(
+    "对话指定文件", NIGHT_CONFIG, window="20:00-08:00", **resolve_at(20, 0)))
+check("跨午夜时段覆盖同日深夜", lambda: expect_selection(
+    "对话指定文件", NIGHT_CONFIG, window="20:00-08:00", **resolve_at(23, 30)))
+check("跨午夜时段覆盖次日凌晨", lambda: expect_selection(
+    "对话指定文件", NIGHT_CONFIG, window="20:00-08:00", **resolve_at(0, 30)))
+check("跨午夜时段右端开区间", lambda: expect_selection(
+    "对话指定文件", NIGHT_CONFIG, window="20:00-08:00", **resolve_at(7, 59)))
+check("naive 时间按北京时间解释", lambda: expect_selection(
+    "对话指定文件", NIGHT_CONFIG, window="20:00-08:00", **resolve_at(20, 0, None)))
+check("aware 时间换算到北京时间", lambda: expect_selection(
+    "对话指定文件", NIGHT_CONFIG, window="20:00-08:00", **resolve_at(12, 0, timezone.utc)))
+
+NIGHT_ONLY = WORK / "night-only.json"
+write(NIGHT_ONLY, {**BASE, "windows": {"20:00-08:00": NIGHT}})
+check("未命中任何时段时保持顶层默认", lambda: expect_selection(
+    "对话指定文件", BASE, context={"models_file": str(NIGHT_ONLY)}, now=datetime(2026, 11, 18, 12, 0, tzinfo=BJT)))
+
+OVERLAP = WORK / "overlap.json"
+write(OVERLAP, {**BASE, "windows": {"08:00-20:00": DAY, "00:00-23:59": NIGHT}})
+check("重叠时段按顺序取首项", lambda: expect_selection(
+    "对话指定文件", DAY_CONFIG, window="08:00-20:00",
+    context={"models_file": str(OVERLAP)}, now=datetime(2026, 11, 18, 12, 0, tzinfo=BJT)))
+
+DESIGNER_FILE = WORK / "designer-window.json"
+write(DESIGNER_FILE, {**BASE, "windows": {"08:00-20:00": {"designer": {"model": "xai/grok-5", "reasoning_effort": "high"}}}})
+DESIGNER_CONFIG = json.loads(json.dumps(BASE))
+DESIGNER_CONFIG["designer"] = {"model": "xai/grok-5", "reasoning_effort": "high"}
+check("windows 可覆盖缺失的可选角色 designer", lambda: expect_selection(
+    "对话指定文件", DESIGNER_CONFIG, window="08:00-20:00",
+    context={"models_file": str(DESIGNER_FILE)}, now=datetime(2026, 11, 18, 9, 0, tzinfo=BJT)))
+
+check("locked_window 跨过切换时刻不切换", lambda: expect_selection(
+    "对话指定文件", DAY_CONFIG, window="08:00-20:00", locked_window="08:00-20:00", **resolve_at(22, 0)))
+check("locked_window=default 锁定顶层默认", lambda: expect_selection(
+    "对话指定文件", BASE, window=None, locked_window="default", **resolve_at(22, 0)))
+check("locked_window 键不存在时暂停分派", lambda: expect_error(
+    "锁定窗口", locked_window="22:00-23:00", **resolve_at(22, 0)))
+check("无 windows 时指定 locked_window 暂停分派", lambda: expect_error(
+    "锁定窗口", context={"models_file": str(WORK / "real-user.json")}, locked_window="08:00-20:00"))
+check("显式配置无效且给出 locked_window 时仍报配置错误", lambda: expect_error(
+    "配置无效", context={"models_file": str(invalid_project / ".easydev" / "models.json")},
+    locked_window="08:00-20:00"))
+
+check("windows 同日与跨午夜并存合法", lambda: accept_config(WINDOWED))
+check("windows 非对象被拒绝", lambda: reject_config({**BASE, "windows": []}, "必须是对象"))
+check("windows 空对象被拒绝", lambda: reject_config({**BASE, "windows": {}}, "非空对象"))
+check("windows 时段缺前导零被拒绝",
+      lambda: reject_config({**BASE, "windows": {"8:00-20:00": DAY}}, "HH:MM-HH:MM"))
+check("windows 小时越界被拒绝",
+      lambda: reject_config({**BASE, "windows": {"25:00-08:00": DAY}}, "HH:MM-HH:MM"))
+check("windows 起止相同被拒绝",
+      lambda: reject_config({**BASE, "windows": {"08:00-08:00": DAY}}, "起止时间不能相同"))
+check("windows 空角色覆盖被拒绝",
+      lambda: reject_config({**BASE, "windows": {"08:00-20:00": {}}}, "覆盖不能是空对象"))
+check("windows 未知角色被拒绝",
+      lambda: reject_config({**BASE, "windows": {"08:00-20:00": {"architect": {"model": "a/b"}}}}, "未知键"))
+check("windows 角色 model 非法被拒绝",
+      lambda: reject_config({**BASE, "windows": {"08:00-20:00": {"developer": {"model": "gpt-6"}}}}, "完整 ID"))
+
+print("=== CLI resolve ===")
+CLI_PROJECT = WORK / "cli-project"
+write(CLI_PROJECT / ".easydev" / "models.json", WINDOWED)
+
+
+def expect_cli(expected_ok, expected_window, expected_config, *args):
+    proc = subprocess.run([sys.executable, os.environ["MODELS"], *args], capture_output=True, text=True)
+    assert proc.returncode == (0 if expected_ok else 1), "退出码 %d：%s" % (proc.returncode, proc.stderr)
+    payload = json.loads(proc.stdout)
+    assert payload["ok"] is expected_ok, "ok=%r：%r" % (payload["ok"], payload["error"])
+    assert payload["window"] == expected_window, "window=%r" % payload["window"]
+    assert payload["config"] == expected_config, "config=%r" % payload["config"]
+    assert (payload["error"] is None) is expected_ok, "error=%r" % payload["error"]
+
+
+check("CLI resolve 按 --now 命中时段", lambda: expect_cli(
+    True, "20:00-08:00", NIGHT_CONFIG,
+    "resolve", "--project-root", str(CLI_PROJECT), "--now", "2026-11-18T20:00:00+08:00"))
+check("CLI resolve 按 --locked 锁定时段", lambda: expect_cli(
+    True, "08:00-20:00", DAY_CONFIG,
+    "resolve", "--project-root", str(CLI_PROJECT), "--now", "2026-11-18T22:00:00+08:00",
+    "--locked", "08:00-20:00"))
+check("CLI resolve --locked default 用顶层默认", lambda: expect_cli(
+    True, None, BASE,
+    "resolve", "--project-root", str(CLI_PROJECT), "--now", "2026-11-18T22:00:00+08:00",
+    "--locked", "default"))
+check("CLI resolve 非法 --now 报错", lambda: expect_cli(
+    False, None, None, "resolve", "--now", "2026-11-18T25:00:00+08:00"))
 
 if failures:
     print("FAIL: %d 项未通过：%s" % (len(failures), failures), file=sys.stderr)

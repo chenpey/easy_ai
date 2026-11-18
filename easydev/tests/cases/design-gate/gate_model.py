@@ -42,7 +42,6 @@ def resolve_designer(
     user_forbids_delegation: bool = False,
     context_isolated: bool = True,
     developer_non_inherit: bool = False,
-    in_upgrade_stage: bool = False,
 ) -> dict:
     """按 design.md「设计者」与「实例隔离」判定本次设计分派的形态。"""
     # 1) 配置了具体模型但不可用：暂停并报受阻，与有无委派能力无关。
@@ -75,16 +74,16 @@ def resolve_designer(
             "mode": DESIGNER_MAIN_AGENT,
             "counts_dr": True,
             "gate": "closed",
-            "must_delegate_developer": bool(developer_non_inherit or in_upgrade_stage),
+            "must_delegate_developer": bool(developer_non_inherit),
             "context_isolation": "isolated" if context_isolated else "limited",
-            "reason": "主代理设计；施工是否必须委派由 developer 配置与模型升级决定",
+            "reason": "主代理设计；施工是否必须委派由 developer 配置决定",
         }
     # 设计者身份不改变施工的强制委派条件；可选委派由宿主编排决定。
     return {
         "mode": DESIGNER_DELEGATED,
         "counts_dr": True,
         "gate": "closed",
-        "must_delegate_developer": bool(developer_non_inherit or in_upgrade_stage),
+        "must_delegate_developer": bool(developer_non_inherit),
         "context_isolation": "isolated" if context_isolated else "limited",
         "reason": "designer 为可用独立实例，主代理未参与设计",
     }

@@ -6,9 +6,13 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
 import stat
+import sys
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # 档位对齐宿主 thinking 集合（off 是非推理模型的唯一档位）；跨宿主映射在分派前核对，
@@ -17,9 +21,11 @@ EFFORTS = ("inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max")
 MAX_CONFIG_BYTES = 512 * 1024
 REQUIRED_ROLES = ("developer", "reviewer")
 OPTIONAL_ROLES = ("designer",)
-TOP_LEVEL_KEYS = REQUIRED_ROLES + OPTIONAL_ROLES + ("upgrades",)
+TOP_LEVEL_KEYS = REQUIRED_ROLES + OPTIONAL_ROLES + ("windows",)
 ROLE_KEYS = ("model", "reasoning_effort")
-MAX_UPGRADES = 2
+# 中国无夏令时，固定偏移即可，不引入第三方时区库。
+BEIJING = timezone(timedelta(hours=8))
+WINDOW_PATTERN = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])-([01][0-9]|2[0-3]):([0-5][0-9])$")
 
 
 class ConfigError(Exception):
@@ -99,8 +105,32 @@ def validate_role_partial(value: Any, path: str) -> None:
         validate_effort(role["reasoning_effort"], path + ".reasoning_effort")
 
 
-def _role_tuple(role: Dict[str, Any]) -> Tuple[Any, Any]:
-    return (role.get("model"), role.get("reasoning_effort"))
+def _window_minutes(key: str, path: str) -> Tuple[int, int]:
+    """时段键转为当天分钟数；格式或起止相同时按确定违规拒绝。"""
+    match = WINDOW_PATTERN.match(key)
+    if match is None:
+        raise ConfigError(path, "时段必须写成 HH:MM-HH:MM（24 小时制）")
+    start = int(match.group(1)) * 60 + int(match.group(2))
+    end = int(match.group(3)) * 60 + int(match.group(4))
+    if start == end:
+        raise ConfigError(path, "起止时间不能相同")
+    return start, end
+
+
+def validate_windows(value: Any) -> None:
+    """windows：键是北京时间时段（键顺序即匹配优先级），值是角色局部覆盖。"""
+    windows = _require_object(value, "$.windows")
+    if not windows:
+        raise ConfigError("$.windows", "必须是至少一个时段的非空对象")
+    for key, overrides in windows.items():
+        path = "$.windows." + key
+        _window_minutes(key, path)
+        entry = _require_object(overrides, path)
+        if not entry:
+            raise ConfigError(path, "覆盖不能是空对象")
+        _reject_unknown(entry, REQUIRED_ROLES + OPTIONAL_ROLES, path)
+        for role_name, fields in entry.items():
+            validate_role_partial(fields, path + "." + role_name)
 
 
 def validate_config(value: Any) -> None:
@@ -113,24 +143,8 @@ def validate_config(value: Any) -> None:
         validate_role(config[role_name], "$." + role_name)
     if "designer" in config:
         validate_role(config["designer"], "$.designer")
-    upgrades = config.get("upgrades", [])
-    if not isinstance(upgrades, list):
-        raise ConfigError("$.upgrades", "必须是数组")
-    if len(upgrades) > MAX_UPGRADES:
-        raise ConfigError("$.upgrades", "最多两项")
-    previous = {role: _role_tuple(config[role]) for role in REQUIRED_ROLES}
-    for index, item in enumerate(upgrades):
-        path = "$.upgrades[%d]" % index
-        entry = _require_object(item, path)
-        _reject_unknown(entry, REQUIRED_ROLES, path)
-        for role_name in REQUIRED_ROLES:
-            if role_name not in entry:
-                raise ConfigError(path + "." + role_name, "缺少必需角色")
-            validate_role(entry[role_name], path + "." + role_name)
-        current = {role: _role_tuple(entry[role]) for role in REQUIRED_ROLES}
-        if all(current[role] == previous[role] for role in REQUIRED_ROLES):
-            raise ConfigError(path, "与上一模型级完全相同，至少一个角色必须变化")
-        previous = current
+    if "windows" in config:
+        validate_windows(config["windows"])
 
 
 def validate_overrides(value: Any) -> Dict[str, Dict[str, Any]]:
@@ -157,14 +171,21 @@ def merge_overrides(config: Dict[str, Any], overrides: Dict[str, Dict[str, Any]]
 
 def builtin_config() -> Dict[str, Any]:
     role = {"model": "inherit", "reasoning_effort": "inherit"}
-    return {"developer": dict(role), "reviewer": dict(role), "designer": dict(role), "upgrades": []}
+    return {"developer": dict(role), "reviewer": dict(role), "designer": dict(role)}
 
 
 class Selection(object):
-    def __init__(self, config: Optional[Dict[str, Any]], source: str, error: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]],
+        source: str,
+        error: Optional[str] = None,
+        window: Optional[str] = None,
+    ) -> None:
         self.config = config
         self.source = source
         self.error = error
+        self.window = window
 
     @property
     def ok(self) -> bool:
@@ -233,8 +254,11 @@ def select(
     context: Optional[Dict[str, Any]] = None,
     project_root: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
+    now: Optional[datetime] = None,
+    locked_window: Optional[str] = None,
 ) -> Selection:
-    """按优先级选第一个存在的完整文件；文件之间不合并。"""
+    """按优先级选第一个存在的完整文件；文件之间不合并，但会按北京时间（或
+    locked_window）应用所选文件内的 windows 覆盖后再应用对话级覆盖。"""
     context = context or {}
     if "models_file" in context:
         # 显式给出即强制校验：空/非字符串是确定违规，不能静默回退到低优先级来源。
@@ -246,22 +270,81 @@ def select(
         selection = _read_config(explicit, "对话指定文件")
         if selection.config is None and selection.error is None:
             return Selection(None, "对话指定文件", "对话指定配置文件不存在；不能静默回退到低优先级来源")
-        return _apply_overrides(selection, context)
+        return _apply_window(selection, context, now, locked_window)
     if project_root:
         project_path = os.path.join(project_root, ".easydev", "models.json")
         project = _read_config(project_path, "项目配置")
         if project.error:
             return project
         if project.config is not None:
-            return _apply_overrides(project, context)
+            return _apply_window(project, context, now, locked_window)
     user_path = user_config_path(env)
     if user_path is not None:
         user = _read_config(user_path, "用户配置")
         if user.error:
             return user
         if user.config is not None:
-            return _apply_overrides(user, context)
-    selection = Selection(builtin_config(), "内置默认")
+            return _apply_window(user, context, now, locked_window)
+    return _apply_window(Selection(builtin_config(), "内置默认"), context, now, locked_window)
+
+
+def _beijing(now: Optional[datetime]) -> datetime:
+    """naive 时间视为北京时间，aware 时间换算到北京时间。"""
+    if now is None:
+        return datetime.now(BEIJING)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=BEIJING)
+    return now.astimezone(BEIJING)
+
+
+def _apply_window(
+    selection: Selection,
+    context: Dict[str, Any],
+    now: Optional[datetime],
+    locked_window: Optional[str],
+) -> Selection:
+    """应用选中文件的 windows 覆盖并移除该键；锁定窗口失效时报错，不静默回退。"""
+    if not selection.ok:
+        return selection
+    config = selection.config or {}
+    if "windows" in config:
+        windows = config["windows"]
+        window = None
+        if locked_window is not None:
+            if locked_window != "default":
+                if locked_window not in windows:
+                    return Selection(
+                        None,
+                        selection.source,
+                        "锁定窗口 %r 不在 %s 的 windows 中；按规则暂停分派" % (locked_window, selection.source),
+                    )
+                window = locked_window
+        else:
+            moment = _beijing(now)
+            minute_of_day = moment.hour * 60 + moment.minute
+            for key in windows:
+                start, end = _window_minutes(key, "$.windows." + key)
+                if start < end:
+                    hit = start <= minute_of_day < end
+                else:
+                    hit = minute_of_day >= start or minute_of_day < end
+                if hit:
+                    window = key
+                    break
+        if window is not None:
+            for role_name, fields in windows[window].items():
+                # 缺失的可选角色按 merge_overrides 的既有做法补 inherit 两字段。
+                config.setdefault(role_name, {"model": "inherit", "reasoning_effort": "inherit"})
+                config[role_name].update(fields)
+                validate_role(config[role_name], "$." + role_name)
+        del config["windows"]
+        selection.window = window
+    elif locked_window not in (None, "default"):
+        return Selection(
+            None,
+            selection.source,
+            "%s 没有 windows；锁定窗口 %r 无法应用，按规则暂停分派" % (selection.source, locked_window),
+        )
     return _apply_overrides(selection, context)
 
 
@@ -277,3 +360,35 @@ def _apply_overrides(selection: Selection, context: Dict[str, Any]) -> Selection
     except ConfigError as error:
         return Selection(None, selection.source, "role_overrides 无效（%s）" % error)
     return selection
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="models.py", description="解析按北京时间生效的模型配置")
+    commands = parser.add_subparsers(dest="command", required=True)
+    resolve = commands.add_parser("resolve", help="输出 JSON：生效来源、时段与配置")
+    resolve.add_argument("--locked", default=None, help="锁定时段键；default 锁定顶层默认配置")
+    resolve.add_argument("--project-root", default=None, help="项目根目录（读取 .easydev/models.json）")
+    resolve.add_argument("--now", default=None, help="ISO 8601 时间，用于确定性验证时间边界")
+    args = parser.parse_args(argv)
+    now = None
+    error = None
+    if args.now is not None:
+        try:
+            now = datetime.fromisoformat(args.now)
+        except ValueError:
+            error = "--now 不是合法 ISO 8601 时间；按规则暂停分派"
+    selection = Selection(None, "命令行参数", error) if error else select(
+        project_root=args.project_root, now=now, locked_window=args.locked
+    )
+    print(json.dumps({
+        "ok": selection.ok,
+        "source": selection.source,
+        "window": selection.window,
+        "config": selection.config,
+        "error": selection.error,
+    }, ensure_ascii=False, indent=2))
+    return 0 if selection.ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

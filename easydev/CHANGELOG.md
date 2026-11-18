@@ -2,6 +2,16 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.10.0 更新说明（2026-11-18）
+
+用按北京时间时段生效的 `windows` 角色局部覆盖取代模型级升级 `upgrades`，并随之精简相关规则措辞；`gate`/`full` 编排、`d/3` 与 `r/5` 两本账、三次修复预算不变。因删除升级链并压缩重复表述，规则文档总量上限由 `76158` 下调至 74708 字节（`SKILL.md` + `references/*.md` 合计不得超过 74708 字节）。
+
+- **移除 `upgrades` 模型级升级**（`scripts/models.py`、`references/workflow.md`、`references/environment.md`、`SKILL.md`、`references/roles.md`）：配置顶层只留 `developer` / `reviewer` / `designer`，旧 `upgrades` 键按未知键拒绝；`workflow.md` 的「升级与停止」改为「停止与受阻」，删去按模型级递进、升级时暂停并行写入与交接、末级用尽剩余尝试等条款；`full` 的委派判据由「模型级 0 且 `developer` 的模型与深度均为 `inherit`」简化为「`developer` 的模型与深度均为 `inherit`」；入口尝试预算、角色返回项与报告中的「模型级」表述同步删除。同一问题的三次修复预算、`d/3`、`r/5` 与交付报告口径不变。
+- **新增 `windows` 时段覆盖**（`scripts/models.py`、`references/environment.md`、`README.md`）：键为北京时间（`UTC+8`）的 `HH:MM-HH:MM`，左闭右开、支持跨午夜、按书写顺序命中首项，值为角色局部覆盖；命中后只改所列字段，`designer` 缺失时补 `inherit` 两字段，未命中则用顶层默认。开工或新对话开始时解析一次并锁定（`Selection.window`），对话结束前不中途切换；锁定键不在所选配置中、或该配置无 `windows` 时暂停分派，不静默回退。缺前导零、小时越界、起止相同、空对象、未知角色与越界档位在读取阶段拒绝。
+- **`models.py` 增加 `resolve` CLI**（`scripts/models.py`、`tests/cases/models-config/run.sh`）：输出生效来源、命中或锁定时段与最终配置 JSON；`--now` 注入 ISO 8601 时间供确定性验证时段边界，`--locked` 沿用锁定键，失败以退出码 `1` 返回原因。
+- **门禁与用例随契约更新**（`scripts/check.sh`、`tests/cases/models-config/run.sh`、`tests/cases/design-gate/`、`tests/behavior.md`、`tests/experiments/fold-eval.md`）：`check.sh` §6 改为要求 README 内联示例演示 `windows` 时段切换并禁止出现 `upgrades`；`models-config` 以时段命中、跨午夜、重叠取首项、`locked_window`、naive/aware 时间、非法键与 CLI 用例替换原 `upgrades` 用例；`design-gate` 去掉 `in_upgrade_stage` 分支与 B60 的升级级对照，确定性断言 204 → 203 项、宿主替身 12 → 11 组；`behavior.md` 的 B25/B25q/B58p/B60 与 `fold-eval.md` 任务集同步删除模型升级场景。
+- **文档瘦身与脑图同步**（`SKILL.md`、`references/*.md`、`assets/easydev-mindmap.svg`）：随升级链移除压缩重复表述；脑图第 05 张卡改为「角色隔离与模型配置」并改述时段锁定与交接要点；规则文档总量棘轮按实际值下调至 74708 字节。
+
 ## 2.9.0 更新说明（2026-11-18）
 
 新增 `gate` 模式（外部设计交接）与 `d/3` 审查实例约束；`full` 的角色隔离、档位、预算与既有流程不变。因新增 `gate` 编排规则（高风险排除、设计冻结与版本核对、`d/3` 记账、预算与升降级衔接）与 `SKILL.md` 的必要说明，规则文档总量上限由 `73970` 调整为 76158 字节（`SKILL.md` + `references/*.md` 合计不得超过 76158 字节）。

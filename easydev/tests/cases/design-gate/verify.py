@@ -742,7 +742,7 @@ def run_normal_cases() -> None:
 
 HOST_CASES = [
     (
-        "inherit + 有委派：主代理设计，模型级 0 可自行施工",
+        "inherit + 有委派：主代理设计，developer 为 inherit 可自行施工",
         dict(model="inherit"),
         dict(mode=DESIGNER_MAIN_AGENT, counts_dr=True, must_delegate_developer=False),
     ),
@@ -759,11 +759,6 @@ HOST_CASES = [
     (
         "具体模型可用 + developer 非 inherit：仍须委派（不得绕过配置）",
         dict(model="gpt-6.1-sol", developer_non_inherit=True),
-        dict(mode=DESIGNER_DELEGATED, must_delegate_developer=True),
-    ),
-    (
-        "具体模型可用 + 升级级：仍须委派",
-        dict(model="gpt-6.1-sol", in_upgrade_stage=True),
         dict(mode=DESIGNER_DELEGATED, must_delegate_developer=True),
     ),
     (
@@ -858,15 +853,15 @@ DOC_CONTRACT = [
         ["实施保持单写入者", "只读并行", "历史预算", "无复审机会的修复"],
     ),
     (
-        "full 委派条件区分模型级与交付阶段",
+        "full 委派条件按 developer 配置与交付阶段判定",
         "easydev/references/workflow.md",
         "## full 编排",
-        ["模型级 0", "模型与深度均为 `inherit`", "自上而下取第一条", "自查（非独立）"],
+        ["模型与深度均为 `inherit`", "自上而下取第一条", "自查（非独立）"],
     ),
     (
         "单次审查转修复按目标路径记账",
         "easydev/references/workflow.md",
-        "## 升级与停止",
+        "## 停止与受阻",
         [
             "原只读审查只作修复前证据，不占正式轮次",
             "转 quick 只自查、不记正式轮次",
@@ -888,7 +883,7 @@ DOC_CONTRACT = [
          "分片验证不替代最终完整检查", "主代理指定单一集成者", "逐片相对交接基线核对 diff",
          "验证依赖变化使相关证据失效", "停止可选流水线", "不得施工其下游",
          "所有相关写入者停写", "初次集成失败先取证", "同根因跨片共用问题预算",
-         "模型升级先暂停本任务全部并行写入", "记录实际并发证据", "须证明执行重叠",
+         "记录实际并发证据", "须证明执行重叠",
          "串行包装不得称并行"],
         {"forbidden": ["并行写入**（normal 与 full）", "默认在同一工作区写互不相交的路径",
                        "未放行默认串行", "评测通过并在账本记录放行依据后启用",
@@ -944,7 +939,7 @@ DOC_CONTRACT = [
         ["本例可取 4 片", "B58n 指定片数与内容自判", "指定 0、7 或非整数不启动该批分派",
          "B58w 并行写入与验证隔离", "full 满足门槛可并写，不要求先评测；normal 单写",
          "高风险默认串行", "失败或未验证片不得当完成片集成", "B58p 流水线失效与集成预算",
-         "全部并行写入", "B59 调度开销与真实声明", "串行包装不得称并行"],
+         "B59 调度开销与真实声明", "串行包装不得称并行"],
         {"forbidden": ["默认宽度不超过 3", "已获隔离评测授权", "无正式放行记录"], "scope": "section"},
     ),
     (
@@ -979,7 +974,7 @@ DOC_CONTRACT = [
         "B60 对照四遵守当前委派条件",
         "easydev/tests/behavior.md",
         "| B60 独立设计环节",
-        ["对照四", "模型级 0", "模型与深度均为 `inherit`", "主代理可继续施工"],
+        ["对照四", "模型与深度均为 `inherit`", "主代理可继续施工"],
         {"forbidden": ["对照四施工委派独立开发者实例"]},
     ),
     (
@@ -1034,7 +1029,7 @@ DOC_CONTRACT = [
         "SKILL.md 的 quick 核心内联尝试预算且不外链整份 workflow",
         "easydev/SKILL.md",
         "## quick 执行核心",
-        ["三次仍失败即停", "换实例、模型级或编号不重置"],
+        ["三次仍失败即停", "换实例或编号不重置"],
         {"forbidden": ["references/workflow.md#尝试预算"]},
     ),
     (
@@ -1228,7 +1223,7 @@ DOC_CONTRACT = [
         "### 来源优先级",
         ["外发安全门槛", "项目配置不授予新供应商外传权限",
          "分派外发代码前须暂停并披露供应商与模型", "取得授权后方可分派",
-         "不得静默外发", "仅读取配置或未触发的 upgrade 级不阻断"],
+         "不得静默外发", "仅读取配置不阻断"],
         {"forbidden": ["项目配置授予新供应商外传权限"]},
     ),
     (
@@ -1300,7 +1295,7 @@ DOC_CONTRACT = [
         "workflow full 角色用判定表给出写入者",
         "easydev/references/workflow.md",
         "| 条件 | 写入者与标注 |",
-        ["模型级 0", "实现=主代理", "自查（非独立）", "委派开发者"],
+        ["实现=主代理", "自查（非独立）", "委派开发者"],
     ),
     (
         "SKILL.md 高风险简写含并发与生产日志并链接边界表",
