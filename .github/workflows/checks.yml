@@ -17,6 +17,7 @@ jobs:
             working_directory: .
             command: bash scripts/check.sh
             install_pyyaml: true
+            install_pytest: true
             timeout_minutes: 5
           - name: 安装脚本冒烟测试
             working_directory: .
