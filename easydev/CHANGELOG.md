@@ -2,6 +2,15 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.9.0 更新说明（2026-11-18）
+
+新增 `gate` 模式（外部设计交接）与 `d/3` 审查实例约束；`full` 的角色隔离、档位、预算与既有流程不变。因新增 `gate` 编排规则（高风险排除、设计冻结与版本核对、`d/3` 记账、预算与升降级衔接）与 `SKILL.md` 的必要说明，规则文档总量上限由 `73970` 调整为 76158 字节（`SKILL.md` + `references/*.md` 合计不得超过 76158 字节）。
+
+- **新增 `gate` 模式**（`SKILL.md`、`references/workflow.md`）：外部设计交接先审设计，有分歧或必关项时停在施工闸前退回设计方，无分歧后开闸按设计开发并自验，跳过内部 `r/5` 交外部非实现者终审；修订重审计入 `d/3`，用尽即停。该模式的两处例外（`d/3` 由后续实现者执行、终审由外部设计方执行）与高风险排除写在 gate 节并在报告披露；`full` 的三方隔离不变。
+- **`d/3` 审查实例约束**（`references/design.md`）：设计审查明确由“未参与设计的独立实例”执行，防止设计自审（与既有 `roles.md` 第 37 行一致）。
+- **完成边界补 `gate` 待终审**（`references/engineering.md`）：交回外部终审前只算待终审态。
+- **`gate` 纳入全任务枚举与文档/契约同步**（`references/workflow.md`、`README.md`、`tests/cases/design-gate/`、`tests/experiments/swebench/analyze_events.py`）：三次修复预算、路径升降级（随风险升 `full`，不降级）；`SKILL.md` 入口与按需加载表同步 `gate`；`design-gate` 新增 5 条文档契约（契约 81 → 86 项、确定性断言 199 → 204 项）；`analyze_events.py` 路径归因纳入 `gate`。
+
 ## 2.8.1 更新说明（2026-11-18）
 
 修正 `agent-hooks` 硬守卫的绕过与误伤，并补齐写工具接线；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。

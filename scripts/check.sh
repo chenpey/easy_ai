@@ -25,7 +25,7 @@ echo "OK: 已跟踪文件与工作区均无行尾空白或冲突标记"
 
 echo "=== 2. SKILL.md 体量与 Frontmatter 校验 ==="
 # 体量上限包含 UTF-8 正文和 frontmatter，防止入口重新膨胀。
-for SKILL_NAME in easythink easydev; do
+for SKILL_NAME in easythink easydev easypi; do
   SKILL_FILE="$SKILL_NAME/SKILL.md"
   if [ ! -f "$SKILL_FILE" ]; then
     echo "Error: $SKILL_FILE 不存在" >&2
@@ -35,6 +35,7 @@ for SKILL_NAME in easythink easydev; do
   case "$SKILL_NAME" in
     easythink) MAX_SIZE=12288 ;;
     easydev) MAX_SIZE=5000 ;;
+    easypi) MAX_SIZE=5000 ;;
     *) MAX_SIZE=0 ;;
   esac
   if [ "$MAX_SIZE" -gt 0 ]; then
@@ -169,6 +170,12 @@ groups = {
         "CHANGELOG.md": ("easydev/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
         "mindmap title": ("easydev/assets/easydev-mindmap.svg", r"<title[^>]*>EasyDev\s+([0-9]+\.[0-9]+\.[0-9]+)\s"),
         "mindmap eyebrow": ("easydev/assets/easydev-mindmap.svg", r">EASYDEV\s+([0-9]+\.[0-9]+\.[0-9]+)\s"),
+    },
+    "easypi": {
+        "root README": ("README.md", r"\|\s*\[EasyPi\]\(easypi/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
+        "README.md": ("easypi/README.md", r"^当前版本：`([0-9]+\.[0-9]+\.[0-9]+)`"),
+        "SKILL.md": ("easypi/SKILL.md", None),
+        "CHANGELOG.md": ("easypi/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
     }
 }
 
@@ -290,7 +297,7 @@ files = [
     "easythink/references/safety.md",
     "easythink/references/examples.md",
     "easythink/tests/behavior.md"
-] + sorted(glob.glob("easythink/tests/runs/**/*.md", recursive=True)) + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True))
+] + sorted(glob.glob("easythink/tests/runs/**/*.md", recursive=True)) + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True)) + sorted(glob.glob("easypi/**/*.md", recursive=True))
 
 file_slugs = {f: extract_slugs(f) for f in files}
 link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -327,7 +334,7 @@ echo "=== 5. README bash 代码块语法检查 (bash -n) ==="
 python3 -c '
 import re, subprocess, sys
 
-for readme in ("README.md", "easythink/README.md", "easydev/README.md"):
+for readme in ("README.md", "easythink/README.md", "easydev/README.md", "easypi/README.md"):
     with open(readme, "r", encoding="utf-8") as f:
         content = f.read()
 
@@ -458,9 +465,10 @@ if errors:
 print("OK: 全部 Python 文件语法与编译期告警、回放守卫契约通过")
 PY
 
-echo "=== 7. 规则同步脚本语法检查 ==="
+echo "=== 7. 规则同步与辅助脚本语法检查 ==="
 bash -n scripts/sync-agent-rules.sh
-echo "OK: scripts/sync-agent-rules.sh 语法合法"
+bash -n easypi/scripts/run_pi.sh
+echo "OK: scripts/sync-agent-rules.sh 与 easypi/scripts/run_pi.sh 语法合法"
 if command -v pwsh >/dev/null 2>&1; then
   pwsh -NoProfile -Command '
     $errors = $null
@@ -662,7 +670,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=73970
+MAX_TOTAL=76158
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

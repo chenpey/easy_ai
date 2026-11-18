@@ -1200,7 +1200,7 @@ DOC_CONTRACT = [
         "入口把开工核实角色配置变成硬门",
         "easydev/SKILL.md",
         "## 全程约束",
-        ["除 quick 与单次只读审查外，开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
+        ["非 quick/单次只读审查开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
         {"forbidden": ["需要独立设计、独立审查或指定模型委派"]},
     ),
     (
@@ -1400,6 +1400,36 @@ DOC_CONTRACT = [
         ["quick`、局部明确改动与非交互环境不启用", "取代上文「格式」的单轮与题数限制", "未对齐前不写业务代码", "回放确认"],
         {"forbidden": ["回放冻结"]},
     ),
+    (
+        "gate 保持高风险排除与外部终审",
+        "easydev/references/workflow.md",
+        "## gate 模式",
+        ["高风险边界不适用本模式", "跳过内部 `r/5` 代码审查", "不称全闭环完成", "停写回报编排方"],
+    ),
+    (
+        "gate 设计审查先核对传入冻结版本",
+        "easydev/references/workflow.md",
+        "## gate 模式",
+        ["核对首行版本后只读审查", "落盘冻结为任务目录下的 `design.md`"],
+    ),
+    (
+        "gate 不按 models.json 另行委派角色",
+        "easydev/references/workflow.md",
+        "## gate 模式",
+        ["不按 `models.json` 另行委派"],
+    ),
+    (
+        "full 保持审查者与设计者、实现者三方隔离",
+        "easydev/references/roles.md",
+        "## 设计角色",
+        ["审查者绝对不得兼任设计者或实现者"],
+    ),
+    (
+        "设计审查须由未参与设计的实例执行",
+        "easydev/references/design.md",
+        "## 设计审查与建议通道",
+        ["未参与设计的独立实例"],
+    ),
 ]
 
 
@@ -1571,8 +1601,8 @@ def run_doc_contract_mechanism() -> None:
 
     def move_model_gate(text: str) -> str:
         clause = (
-            "除 quick 与单次只读审查外，开工先按 environment 核实角色配置；"
-            "未核实不得假定 inherit 自任设计或写入，任何分派都以核实值为准。"
+            "非 quick/单次只读审查开工先按 environment 核实角色配置；"
+            "未核实不得假定 inherit 自任设计或写入，分派以核实值为准。"
         )
         if clause not in text or "## 按需加载" not in text:
             raise RuleError("SKILL.md 的开工核实段与预期不符")

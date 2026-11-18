@@ -38,16 +38,16 @@ FILE_PATH_RE = re.compile(
 )
 DECLARED_PATH_RE = re.compile(
     r"(?:采用|使用|走|进入|分流|判定为|定为|路径\s*[：:]?\s*)"
-    r"\s*(?:easydev\s*)?[`*]*\s*(full-local|full-staged|full|normal|quick)\b",
+    r"\s*(?:easydev\s*)?[`*]*\s*(full-local|full-staged|full|normal|quick|gate)\b",
     re.IGNORECASE,
 )
 DECLARED_PATH_RE_2 = re.compile(
-    r"\b(full-local|full-staged|full|normal|quick)\s*(?:路径|流程)", re.IGNORECASE
+    r"\b(full-local|full-staged|full|normal|quick|gate)\s*(?:路径|流程)", re.IGNORECASE
 )
-ROUTE_TIER_PATTERN = r"(full-local|full-staged|full|normal|quick)"
+ROUTE_TIER_PATTERN = r"(full-local|full-staged|full|normal|quick|gate)"
 # 英文声明同样要认：非中文宿主写的是 "normal path" / "moved to the full route"。
 # `full path` 在文件语境里极常见（the full path of the file），所以裸「tier + path」
-# 只接受 normal/quick，full 必须带路由动词才计。
+# 只接受 normal/quick/gate，full 必须带路由动词才计。
 DECLARED_PATH_EN_RE = re.compile(
     r"(?:using|use|taking|take|took|going with|go with|chose|choose|choosing|"
     r"routed|route|switching to|switched to|switch to|moving to|moved to|"
@@ -56,7 +56,7 @@ DECLARED_PATH_EN_RE = re.compile(
     re.IGNORECASE,
 )
 DECLARED_PATH_EN_NOUN_RE = re.compile(
-    r"\b(full-local|full-staged|normal|quick)\s+(?:path|route|flow|track)\b",
+    r"\b(full-local|full-staged|normal|quick|gate)\s+(?:path|route|flow|track)\b",
     re.IGNORECASE,
 )
 # 英文否定要看更宽的窗口，中文用固定 5 字符的紧邻判断。
@@ -1318,7 +1318,7 @@ def analyze_run(
     attribution.upgraded_to_full = bool(
         attribution.declared_initial_path in {"quick", "normal"}
         and attribution.declared_final_path
-        not in {"quick", "normal", "full-local", "full-staged"}
+        not in {"quick", "normal", "full-local", "full-staged", "gate"}
         and (
             attribution.declared_final_path == "full"
             or has_positive_upgrade(combined_agent_text)
