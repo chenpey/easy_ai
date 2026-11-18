@@ -2,6 +2,16 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.8.1 更新说明（2026-11-18）
+
+修正 `agent-hooks` 硬守卫的绕过与误伤，并补齐写工具接线；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。
+
+- **stdin 判定改为按管道首段**：先前用整条语句的 `<` 重定向判定，尾段写 `</dev/null` 会让首段免检（`npm test 2>&1 | tee log </dev/null` 直接放行并可能挂死）；现只看首段自身的重定向，并仅对“位置参数即文件”的命令（`cat`/`head`/`wc`/`diff` 等）豁免后缀——带模式参数的 `grep`/`rg`/`sed`/`awk`/`jq` 与永不接受文件参数的 `tr` 不豁免。
+- **间接命令闭环**：命令替换 `$(...)`（括号深度配对）与反引号内容递归检查，双引号内的 `'` 不再吞掉后续替换；`xargs` 纳入前缀剥离（含 `-I {}` / `-I{}` / `-n 1`）；`bash -lc`/`sh -ec` 等合并短选项按内联脚本处理，且外层段已封闭 stdin 时不再要求内层重复写 `</dev/null`。
+- **误判收敛**：引号内的 `<` 不再当作 stdin 重定向；`git commit` 跳过 `-m`/`-F`/`-c` 等带值选项与重定向 token，不再因消息体或 `</dev/null` 误扫未暂存区；`git diff` 解码改为 `errors="replace"`，暂存区含非 UTF-8 文件时不再以“Hook 执行异常”阻断提交。
+- **写工具接线**：`hooks.json` 与 `evaluate_payload` 补 `multi_replace_file_content`，与已解析的 `ReplacementChunks` 对齐。
+- **文档校准**：2.7.0 条目中 `read` 的措辞改为“含未封闭的 `read`”；README 的门禁命令注明需已安装 pytest。
+
 ## 2.8.0 更新说明（2026-11-18）
 
 扩展 `agent-hooks` 跨宿主硬守卫并纳入 `check.sh` 自动化门禁；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。
@@ -13,7 +23,7 @@
 
 新增跨宿主通用的命令非交互硬拦截钩子（`agent-hooks/`）并纳入 `sync-agent-rules` 统一分发；`easydev` 流程档位、`d/3`、`r/5`、三次修复上限与规则文档总量（`SKILL.md` + `references/*.md` 合计不得超过 73970 字节）均不变。
 
-- **公共校验核心**：新增 `agent-hooks/check_command.py`，统一拦截未显式封闭 stdin（如缺少 `</dev/null`）或调用交互式阻塞命令（`less`/`script`/`vim`/`read` 等）的工具调用，支持 Antigravity JSON 与退出码 `2` 两种契约。
+- **公共校验核心**：新增 `agent-hooks/check_command.py`，统一拦截未显式封闭 stdin（如缺少 `</dev/null`，含未封闭的 `read`）或调用交互式阻塞命令（`less`/`script`/`vim` 等）的工具调用，支持 Antigravity JSON 与退出码 `2` 两种契约。
 - **宿主适配器**：新增 `agent-hooks/antigravity/hooks.json`（`PreToolUse`）与 `agent-hooks/pi/enforce-noninteractive.ts`（`tool_call`），分别发布至 `~/.gemini/config/hooks.json` 与 `~/.pi/agent/extensions/enforce-noninteractive.ts`。
 - **同步脚本扩展**：`scripts/sync-agent-rules.sh` 支持一并校验和合并同步 `agent-hooks/`（`hooks.json` 按命名键合并，不覆盖用户既有钩子；Windows 版 `sync-agent-rules.ps1` 保持仅同步规则）。
 

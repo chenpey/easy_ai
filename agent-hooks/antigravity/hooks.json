@@ -50,6 +50,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

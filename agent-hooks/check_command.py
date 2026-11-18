@@ -87,9 +87,69 @@ NO_STDIN_CMDS = {
     "printenv",
     "sleep",
     "kill",
+    "find",
+    "stat",
+    "du",
+    "df",
+    "ps",
+    "lsof",
+    "tree",
+    "for",
+    "while",
+    "until",
+    "if",
+    "case",
+    "do",
+    "then",
+    "else",
+    "elif",
+    "fi",
+    "done",
+    "esac",
 }
 
-PREFIX_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "nice", "time"}
+# 这些命令的每个位置参数都是输入文件；带模式/表达式的 grep/sed/awk/jq/rg 不在此列。
+FILE_OPERAND_CMDS = {
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "uniq",
+    "cut",
+    "diff",
+    "comm",
+    "paste",
+    "nl",
+    "od",
+    "xxd",
+    "base64",
+    "shasum",
+    "sha256sum",
+    "md5sum",
+    "iconv",
+    "strings",
+    "column",
+    "fold",
+    "file",
+}
+
+PREFIX_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "nice", "time", "xargs"}
+XARGS_VALUE_FLAGS = ("-n", "-I", "-P", "-L", "-s", "-d", "-E", "-a")
+# `git commit` options whose value is not a pathspec; the value must not trigger the worktree scan.
+COMMIT_VALUE_OPTS = (
+    "-m",
+    "-F",
+    "-c",
+    "-C",
+    "-u",
+    "--message",
+    "--file",
+    "--author",
+    "--date",
+    "--cleanup",
+    "--pathspec-from-file",
+)
 
 SENSITIVE_DIR_RE = re.compile(
     r"(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+|/home/[^/\s\"']+)/\.(?:ssh|aws|gnupg|netrc|docker|kube|config/gh)(?:/|\b|\s|$)"
@@ -98,6 +158,7 @@ SENSITIVE_DIR_RE = re.compile(
 
 STDIN_REDIRECTION_RE = re.compile(r"(?:^|\s)0?<(?:&-|\s*[^\s<(&>])|<<<?")
 HEREDOC_START_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
+SHORT_OPT_WITH_C_RE = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 
 
 def _strip_heredoc_bodies(cmd: str) -> str:
@@ -156,6 +217,95 @@ def _strip_comments_and_quotes(text: str) -> str:
             result.append(ch)
             i += 1
     return "".join(result)
+
+
+def _strip_single_quotes(text: str) -> str:
+    """Blank single-quoted spans so `$(...)` / backticks inside them are not treated as commands."""
+    out: List[str] = []
+    i = 0
+    n = len(text)
+    in_dq = False
+    while i < n:
+        ch = text[i]
+        if in_dq:
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i : i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                in_dq = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_dq = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch != "'":
+            out.append(ch)
+            i += 1
+            continue
+        i += 1
+        while i < n and text[i] != "'":
+            i += 1
+        i += 1
+        out.append(" ")
+    return "".join(out)
+
+
+def _mask_quotes(text: str) -> str:
+    """Replace quoted literals with `Q` so redirections inside them are not counted."""
+    return QUOTED_STR_RE.sub("Q", text)
+
+
+def _iter_substitutions(text: str) -> List[str]:
+    """Yield inner scripts of `$(...)` (parenthesis-balanced) and backticks."""
+    found: List[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith("$(", i):
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                j += 1
+            inner = text[i + 2 : j - 1] if depth == 0 else text[i + 2 : j]
+            if inner.strip():
+                found.append(inner)
+            i = j
+            continue
+        if text[i] == "`":
+            j = text.find("`", i + 1)
+            if j == -1:
+                break
+            inner = text[i + 1 : j]
+            if inner.strip():
+                found.append(inner)
+            i = j + 1
+            continue
+        i += 1
+    return found
+
+
+def _has_path_arg(args: List[str], cwd: str) -> bool:
+    """True when some non-flag argument names an existing path, i.e. input comes from a file."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if re.fullmatch(r"\d*[<>]+", arg):
+            i += 1  # 重定向目标不是输入文件
+            continue
+        if re.match(r"^\d*[<>]", arg) or arg.startswith("-"):
+            continue
+        if os.path.exists(arg if os.path.isabs(arg) else os.path.join(cwd, arg)):
+            return True
+    return False
 
 
 def _split_outside_quotes(text: str, seps: Tuple[str, ...]) -> List[str]:
@@ -258,6 +408,8 @@ def _unwrap_prefixes(tokens: List[str]) -> Tuple[str, List[str], bool]:
             while i < len(tokens) and tokens[i].startswith("-"):
                 if base in ("sudo", "nice") and tokens[i] in ("-u", "-g", "-n") and i + 1 < len(tokens):
                     i += 2
+                elif base == "xargs" and tokens[i] in XARGS_VALUE_FLAGS and i + 1 < len(tokens):
+                    i += 2
                 else:
                     i += 1
             continue
@@ -295,12 +447,38 @@ def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
 
     # `commit` subcommand args follow `commit`.
     commit_args = args[i + 1 :] if i < len(args) and args[i] == "commit" else []
+    has_all = False
+    has_path = False
+    j = 0
+    while j < len(commit_args):
+        arg = commit_args[j]
+        if arg in COMMIT_VALUE_OPTS:
+            j += 2
+            continue
+        if re.fullmatch(r"\d*[<>]+", arg):
+            j += 2
+            continue
+        if re.match(r"^\d*[<>]", arg):
+            j += 1
+            continue
+        if arg.startswith("-") and not arg.startswith("--"):
+            if "a" in arg[1:]:
+                has_all = True
+            if any(c in arg[1:] for c in "mFcCu"):
+                j += 2
+                continue
+        elif arg == "--all":
+            has_all = True
+        elif not arg.startswith("-"):
+            has_path = True
+        j += 1
+
     diff_cmds = [["git", "-C", target_cwd, "diff", "--cached"]]
-    if any(a in ("-a", "--all") or (not a.startswith("-") and a) for a in commit_args):
+    if has_all or has_path:
         diff_cmds.append(["git", "-C", target_cwd, "diff"])
 
     for dcmd in diff_cmds:
-        proc = subprocess.run(dcmd, capture_output=True, text=True, timeout=4, check=False)
+        proc = subprocess.run(dcmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=4, check=False)
         if proc.returncode == 0 and proc.stdout:
             added = "\n".join(
                 line[1:]
@@ -400,8 +578,12 @@ def _check_network_timeout(cmd: str, args: List[str], has_timeout_wrapper: bool)
     return None
 
 
-def evaluate_command(cmd: str, cwd: str, host: str) -> Tuple[Optional[str], Optional[str]]:
-    """Evaluate shell command; returns (decision, reason) where decision is deny | force_ask | None."""
+def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) -> Tuple[Optional[str], Optional[str]]:
+    """Evaluate shell command; returns (decision, reason) where decision is deny | force_ask | None.
+
+    `check_stdin=False` is used for commands whose stdin is the shell's own (command substitution),
+    where the outer `</dev/null` does not apply; only deny / force_ask rules are enforced there.
+    """
     stripped = cmd.strip()
     if not stripped:
         return None, None
@@ -427,20 +609,36 @@ def evaluate_command(cmd: str, cwd: str, host: str) -> Tuple[Optional[str], Opti
         stmt_unquoted = _strip_comments_and_quotes(stmt).strip()
         if not stmt_unquoted:
             continue
+
+        # Hidden commands: `$(...)` and backticks run before the outer command.
+        for inner in _iter_substitutions(_strip_single_quotes(stmt)):
+            sub_dec, sub_reason = evaluate_command(inner, cwd=cwd, host=host, check_stdin=False)
+            record(sub_dec, sub_reason)
+            if best_decision == "deny":
+                return best_decision, best_reason
+
         pipe_segments = _split_outside_quotes(stmt, ("|",))
-        stmt_has_stdin = bool(STDIN_REDIRECTION_RE.search(stmt))
 
         for seg_idx, seg in enumerate(pipe_segments):
             tokens = _tokenize(seg)
             base, args, has_timeout = _unwrap_prefixes(tokens)
             if not base:
                 continue
+            seg_has_stdin = bool(STDIN_REDIRECTION_RE.search(_mask_quotes(seg)))
 
-            # Recursively check `sh -c` / `bash -c` / `zsh -c` inner script.
-            if base in ("sh", "bash", "zsh") and "-c" in args:
-                c_idx = args.index("-c")
-                if c_idx + 1 < len(args):
-                    sub_dec, sub_reason = evaluate_command(args[c_idx + 1], cwd=cwd, host=host)
+            # Recursively check `sh -c` / `bash -lc` / `zsh -ec` inner script.
+            if base in ("sh", "bash", "zsh"):
+                c_idx = next(
+                    (k for k, a in enumerate(args) if SHORT_OPT_WITH_C_RE.fullmatch(a)),
+                    None,
+                )
+                if c_idx is not None and c_idx + 1 < len(args):
+                    sub_dec, sub_reason = evaluate_command(
+                        args[c_idx + 1],
+                        cwd=cwd,
+                        host=host,
+                        check_stdin=check_stdin and not seg_has_stdin and seg_idx == 0,
+                    )
                     record(sub_dec, sub_reason)
                     if best_decision == "deny":
                         return best_decision, best_reason
@@ -458,13 +656,16 @@ def evaluate_command(cmd: str, cwd: str, host: str) -> Tuple[Optional[str], Opti
             if timeout_err:
                 return "deny", timeout_err
 
-            # Stdin check applies only to the head of each pipeline.
-            if seg_idx == 0 and not stmt_has_stdin and base not in NO_STDIN_CMDS:
-                return (
-                    "deny",
-                    "无前置数据输入的命令必须显式封闭 stdin（例如在命令末尾加 `</dev/null`），"
-                    "严禁悬空 stdin 等待输入。请重写命令后重试。",
-                )
+            # Stdin check applies only to the head of each pipeline, using that segment's own redirects.
+            if check_stdin and seg_idx == 0 and base not in NO_STDIN_CMDS:
+                if not seg_has_stdin and not (
+                    base in FILE_OPERAND_CMDS and _has_path_arg(args, cwd)
+                ):
+                    return (
+                        "deny",
+                        "无前置数据输入的命令必须显式封闭 stdin（例如在命令末尾加 `</dev/null`），"
+                        "严禁悬空 stdin 等待输入。请重写命令后重试。",
+                    )
 
             # Sensitive credential directory check (allow `ssh -i` / `scp -i` / `ssh-add`).
             if SENSITIVE_DIR_RE.search(seg) and not (base in ("ssh", "scp", "ssh-add", "ssh-keygen") and ("-i" in args or base != "ssh")):
@@ -536,7 +737,15 @@ def evaluate_payload(payload: dict, host: str) -> Tuple[Optional[str], Optional[
     ).lower()
     cwd = str(payload.get("cwd") or os.getcwd())
 
-    if tool_name in ("write_file", "edit_file", "write_to_file", "replace_file_content", "write", "edit"):
+    if tool_name in (
+        "write_file",
+        "edit_file",
+        "write_to_file",
+        "replace_file_content",
+        "multi_replace_file_content",
+        "write",
+        "edit",
+    ):
         path, texts = _extract_write_texts(payload)
         hit = scan_secrets(texts, f"写入内容（{os.path.basename(path)}）")
         if hit:
