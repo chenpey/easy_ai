@@ -11,10 +11,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # 显式模板：macOS 裸 `mktemp -d` 不使用 TMPDIR，受限沙箱里会被拒绝。
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/models-config.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
-mkdir -p "$TMP_DIR/home/.config/easydev"
+mkdir -p "$TMP_DIR/home/.config/easydev" "$TMP_DIR/appdata/easydev"
 
-# HOME 指向临时目录，用户配置路径由此隔离；用例不会读到真实 ~/.config/easydev。
-HOME="$TMP_DIR/home" MODELS="$ROOT_DIR/scripts/models.py" WORK="$TMP_DIR" python3 - <<'PY'
+# HOME 与 APPDATA 都指向临时目录：Windows 下 models.py 优先读 %APPDATA%，不隔离会读真实用户配置。
+HOME="$TMP_DIR/home" APPDATA="$TMP_DIR/appdata" MODELS="$ROOT_DIR/scripts/models.py" WORK="$TMP_DIR" python3 - <<'PY'
 import importlib.util
 import json
 import os
@@ -29,7 +29,13 @@ spec.loader.exec_module(models)
 
 WORK = Path(os.environ["WORK"])
 HOME = Path(os.environ["HOME"])
-USER_CONFIG = HOME / ".config" / "easydev" / "models.json"
+APPDATA = Path(os.environ["APPDATA"])
+# 与 models.user_config_path 同一分支：Windows 读 %APPDATA%/easydev/models.json。
+USER_CONFIG = (
+    APPDATA / "easydev" / "models.json"
+    if os.name == "nt"
+    else HOME / ".config" / "easydev" / "models.json"
+)
 PROJECT = WORK / "project"
 PROJECT_CONFIG = PROJECT / ".easydev" / "models.json"
 PROJECT.mkdir()
@@ -179,6 +185,17 @@ check("role_overrides 只覆盖给定字段",
 check("role_overrides 为空对象时暂停分派",
       lambda: expect_error("空对象", context={"role_overrides": {}}, project_root=str(PROJECT)))
 
+print("=== 不可信仓库隔离 ===")
+write(PROJECT_CONFIG, BASE)
+write(USER_CONFIG, OTHER)
+check("trust_project=False 跳过项目配置并回退用户配置",
+      lambda: expect_selection("用户配置", OTHER, project_root=str(PROJECT), trust_project=False))
+PROJECT_CONFIG.write_text('{"developer": }', encoding="utf-8")
+check("trust_project=False 时非法项目配置不阻断",
+      lambda: expect_selection("用户配置", OTHER, project_root=str(PROJECT), trust_project=False))
+PROJECT_CONFIG.unlink()
+USER_CONFIG.unlink()
+
 write(WORK / "real-user.json", OTHER)
 USER_CONFIG.symlink_to(WORK / "real-user.json")
 check("用户配置是软链时拒绝当作配置文件",
@@ -186,6 +203,15 @@ check("用户配置是软链时拒绝当作配置文件",
 USER_CONFIG.unlink()
 
 print("=== 读取契约边界（审计确认缺陷的回归） ===")
+def expect_user_config_path(env, expected):
+    actual = models.user_config_path(env)
+    assert actual == expected, "得到 %r，预期 %r" % (actual, expected)
+
+
+if os.name == "nt":
+    check("Windows 用 %APPDATA%/easydev/models.json 作为用户配置",
+          lambda: expect_user_config_path(
+              {"APPDATA": str(APPDATA)}, str(APPDATA / "easydev" / "models.json")))
 ALT_HOME = WORK / "alt-home"
 write(ALT_HOME / ".config" / "easydev" / "models.json", OTHER)
 if os.name != "nt":
@@ -361,6 +387,10 @@ check("CLI resolve --locked default 用顶层默认", lambda: expect_cli(
     "--locked", "default"))
 check("CLI resolve 非法 --now 报错", lambda: expect_cli(
     False, None, None, "resolve", "--now", "2026-11-18T25:00:00+08:00"))
+write(USER_CONFIG, OTHER)
+check("CLI resolve --untrusted 跳过项目配置", lambda: expect_cli(
+    True, None, OTHER, "resolve", "--project-root", str(CLI_PROJECT), "--untrusted"))
+USER_CONFIG.unlink()
 
 if failures:
     print("FAIL: %d 项未通过：%s" % (len(failures), failures), file=sys.stderr)

@@ -418,6 +418,47 @@ class ReplayReadGuardTests:
         assert not result["valid_invocation"]
         assert completed.returncode == 1, completed.stdout
 
+    def test_runner_keeps_sample_valid_when_guard_blocks_unprovable_read(self) -> None:
+        """无法证明读取边界的命令被拒不代表越界：样本仍有效，只记 blocked。"""
+        completed, result = self.run_runner(
+            "blocked-read",
+            {
+                "events": 3,
+                "agent_messages": [
+                    "采用 quick，这是单文件文案修改。",
+                    "已完成按钮修改。\n审查状态：自查",
+                ],
+                "commands": ["sed '' src/ui.py"],
+                "mutations": [{"path": "src/ui.py", "content": 'BUTTON_LABEL = "保存"\n'}],
+            },
+        )
+        assert result, completed.stderr + completed.stdout
+        assert "target_unresolved" in result["read_guard"]["health"]
+        assert result["read_guard"]["blocked"] == ["target_unresolved"]
+        assert result["read_guard"]["violations"] == []
+        assert result["valid_invocation"]
+        assert completed.returncode == 0, completed.stdout
+
+    def test_runner_invalid_when_guard_reports_recursive_follow(self) -> None:
+        completed, result = self.run_runner(
+            "recursive-follow",
+            {
+                "events": 3,
+                "agent_messages": [
+                    "采用 quick，这是单文件文案修改。",
+                    "已完成按钮修改。\n审查状态：自查",
+                ],
+                "commands": ["rg -nL PATTERN ."],
+                "mutations": [{"path": "src/ui.py", "content": 'BUTTON_LABEL = "保存"\n'}],
+            },
+        )
+        assert result, completed.stderr + completed.stdout
+        assert "recursive_follow" in result["read_guard"]["health"]
+        assert "recursive_follow" in result["read_guard"]["violations"]
+        assert result["read_guard"]["blocked"] == []
+        assert not result["valid_invocation"]
+        assert completed.returncode == 1, completed.stdout
+
     def test_runner_invalid_when_guard_health_fails(self) -> None:
         outside = Path(self.tmp.name) / "operator-secret.txt"
         outside.write_text("secret\n", encoding="utf-8")
@@ -606,6 +647,266 @@ class ReplayReadGuardTests:
         assert self.decision(json.loads(completed.stdout)) == "deny"
         assert guard.read_invocations(invocations) == before + 1
         assert self.health_codes()[-1] == "input_invalid"
+
+    def test_symlink_parent_escape_is_denied(self) -> None:
+        """`link-dir/..` 必须按内核语义解析：先解引用软链，再折叠 `..`。"""
+        escape = self.workspace / "link-dir" / ".." / "outside" / "sentinel.txt"
+        for tool, tool_input in (
+            ("read_file", {"path": str(escape)}),
+            ("read", {"path": str(escape)}),
+            ("Bash", {"command": "cat link-dir/../outside/sentinel.txt"}),
+        ):
+            with subtests.test(tool=tool):
+                result = self.run_guard(
+                    {
+                        "hook_event_name": "PreToolUse",
+                        "tool_name": tool,
+                        "tool_input": tool_input,
+                        "cwd": str(self.workspace),
+                    }
+                )
+                assert self.decision(result) == "deny", result
+        # 对照：`..` 回到允许根内时仍按真实目标放行。
+        assert self.decision(self.run_guard(self.bash("cat src/../patterns.txt"))) == "allow"
+
+    def test_wrapper_and_cd_cwd_do_not_fold_symlinks_lexically(self) -> None:
+        """`env -C`/`cd -P` 的物理 cwd 不能被词法 normpath 折叠回允许根内。"""
+        commands = (
+            "env -C link-dir/.. cat outside/sentinel.txt",
+            "cd link-dir && env -C .. cat outside/sentinel.txt",
+            "cd -P link-dir/.. && cat outside/sentinel.txt",
+            "sudo -D %s cat sentinel.txt" % self.outside,
+            "env -C %s cat outside/sentinel.txt" % (self.workspace / "link-dir" / ".."),
+            "sudo -D %s cat sentinel.txt" % (self.workspace / "link-dir" / ".."),
+        )
+        for command in commands:
+            with subtests.test(command=command):
+                result = self.run_guard(self.bash(command))
+                assert self.decision(result) == "deny", (command, result)
+        assert self.decision(self.run_guard(self.bash("env -C src cat app.py"))) == "allow"
+
+    def test_unmodeled_read_commands_are_not_silently_allowed(self) -> None:
+        """解释器与 sed/dd/ln/tar/git 读取类子命令不能当“无读取目标”放行。"""
+        sentinel = self.outside / "sentinel.txt"
+        commands = (
+            "sed '' %s" % sentinel,
+            "dd if=%s" % sentinel,
+            "ln %s local-link" % sentinel,
+            "git diff --no-index /dev/null %s" % sentinel,
+            "git -C %s status" % self.outside,
+            "GIT_DIR=%s git log" % self.outside,
+            "tar -cf bundle.tar %s" % sentinel,
+            "python3 -c 'print(open(\"%s\" + \"\").read())'" % sentinel,
+            "python3 %s -c 1" % (self.outside / "evil.py"),
+            "python3 -c 'import os;os.system(\"cat %s\")'" % sentinel,
+            "python3 -c 'import shutil;shutil.copy(\"%s\", \"x\")'" % sentinel,
+            "python3 -c 'import pathlib;print(*pathlib.Path(\"%s\").iterdir())'" % self.outside,
+            "python3 -c 'import sys;sys.path.insert(0,\"%s\")'" % self.outside,
+            "python3 -c'import os; os.system(\"cat %s\")'" % sentinel,
+            "python3 -uc 'import os; os.system(\"cat %s\")'" % sentinel,
+            "python3 %s" % (self.outside / "evil.py"),
+            "python3 -W ignore %s" % (self.outside / "evil.py"),
+            "python3 -m timeit -s 'import os' 1",
+            "python3 -m pytest %s" % self.outside,
+            "python3 -m pytest --rootdir=%s" % self.outside,
+            "python3 %s -m x" % (self.outside / "evil.py"),
+            "pytest %s" % self.outside,
+            "pytest -c%s/pytest.ini" % self.outside,
+            "pytest --rootdir=%s" % self.outside,
+            "make -C%s" % self.outside,
+            "make --eval='cat %s'" % sentinel,
+            "git apply %s" % (self.outside / "p.patch"),
+            "git diff /dev/null %s" % sentinel,
+            "env GIT_DIR=%s git log" % self.outside,
+            "git --config-env=core.fsmonitor=X status",
+            "git config --list --global",
+            "git fetch %s" % self.outside,
+            "git archive --remote=file://%s HEAD" % self.outside,
+            "git rebase -x 'cat %s' HEAD~1" % sentinel,
+            "env -S 'cat %s' echo hi" % sentinel,
+            "exec -a echo cat %s" % sentinel,
+            "PYTHONPATH=%s python3 -m pytest" % self.outside,
+            "RIPGREP_CONFIG_PATH=%s rg p ." % sentinel,
+            "grep --file=%s %s" % (self.workspace / "patterns.txt", sentinel),
+            "grep -e PATTERN -T %s" % sentinel,
+            "find -P %s" % self.outside,
+            "find . -okdir cat %s \\;" % sentinel,
+            "file -f%s" % sentinel,
+            "wc --files0-from=%s" % sentinel,
+        )
+        for command in commands:
+            with subtests.test(command=command):
+                # 在干净子目录执行：避免工作区外链让默认 `.` 枚举把断言变成假通过。
+                result = self.run_guard(self.bash(command, self.workspace / "src"))
+                assert self.decision(result) == "deny", (command, result)
+        for command in (
+            "echo hi",
+            "git status",
+            "git diff HEAD",
+            "git log -1",
+            "mkdir src/new",
+            "python3 src/app.py",
+        ):
+            with subtests.test(command=command):
+                assert self.decision(self.run_guard(self.bash(command))) == "allow", command
+
+    def test_round_four_bypasses_are_denied(self) -> None:
+        """搜索单字母模式、sudo 粘连选项、解释器/构建/git 消息与组合选项、make 变量赋值与间接文件清单。"""
+        sentinel = self.outside / "sentinel.txt"
+        commands = (
+            # 单字母搜索模式不能把后续路径当选项值吞掉。
+            "grep e %s" % sentinel,
+            "rg e %s" % sentinel,
+            "grep f %s" % sentinel,
+            # 继承 cwd 含软链 + `..`；sudo 粘连 -D/-R 与未知选项。
+            "env -C link-dir/.. sh -c 'cd . && cat outside/sentinel.txt'",
+            "sudo -D%s cat sentinel.txt" % self.outside,
+            "sudo -nD%s cat sentinel.txt" % self.outside,
+            "sudo -R %s cat %s" % (self.outside, self.workspace / "src" / "app.py"),
+            "sudo --chroot=%s cat %s" % (self.outside, self.workspace / "src" / "app.py"),
+            "sudo -R%s cat %s" % (self.outside, self.workspace / "src" / "app.py"),
+            "sudo -i cat .config/easydev/models.json",
+            "sudo -s cat .config/easydev/models.json",
+            # 解释器：脚本之后的 `-m` 不是模块入口；`python3 -` 从 stdin 读程序。
+            "python3 %s -m pytest" % (self.outside / "evil.py"),
+            "python3 %s -m unittest" % (self.outside / "evil.py"),
+            "printf 'print(1)\\n' | python3 - src/app.py",
+            "printf 'print(1)\\n' | python3 -i src/app.py",
+            # 解释器模块与选项。
+            "python3 -m unittest discover -s%s" % self.outside,
+            "python3 -m pytest -o testpaths=%s" % self.outside,
+            "python3 -uW ignore %s" % (self.outside / "evil.py"),
+            "python3 --check-hash-based-pycs default %s" % (self.outside / "evil.py"),
+            # git 执行型选项与不再安全声明的子命令。
+            "git rebase -x'cat %s' HEAD~1" % sentinel,
+            "git rebase -ix 'cat %s' HEAD~1" % sentinel,
+            "git rebase -fx 'cat %s' HEAD~1" % sentinel,
+            "git grep -O'cat %s' PATTERN src/app.py" % sentinel,
+            "git grep -FO'cat %s' PATTERN src/app.py" % sentinel,
+            "git grep -if%s PATTERN src/app.py" % sentinel,
+            "git grep --file %s src" % sentinel,
+            "git diff -pO%s" % (self.outside / "orderfile"),
+            "git log -iO%s" % (self.outside / "orderfile"),
+            "git push --receive-pack='cat %s' . HEAD" % sentinel,
+            "git remote show %s" % self.outside,
+            "git init --separate-git-dir=%s" % self.outside,
+            # 消息/模板文件选项不能只按路径操作数放行。
+            "git commit --allow-empty -F %s" % sentinel,
+            "git commit -t %s" % sentinel,
+            "git commit -sF %s" % sentinel,
+            "git tag -F %s v1" % sentinel,
+            "git tag -sF %s v1" % sentinel,
+            "git merge -F %s" % sentinel,
+            # 构建/测试工具的组合短选项与复合配置。
+            "make -sC%s" % self.outside,
+            "make -sf%s/Makefile" % self.outside,
+            "pytest -qc%s/pytest.ini" % self.outside,
+            "make -E'$(info $(shell cat %s))'" % sentinel,
+            "pytest -o 'addopts=-v %s'" % (self.outside / "test.py"),
+            "make 'MAKEFLAGS=-C%s'" % self.outside,
+            # 赋值不含 `/` 也能执行命令：必须由 `$`/`:=`/`!=` 分支拒绝。
+            "make 'X:=$(shell cat $(HOME))'",
+            "make 'X!=id'",
+            # exec 组合短选项与敏感环境变量。
+            "exec -ca echo cat %s" % sentinel,
+            "exec -la echo cat %s" % sentinel,
+            "EDITOR='cat %s' git commit" % sentinel,
+            "PATH=%s/bin cat src/app.py" % self.outside,
+            "HOME=%s git status" % self.outside,
+            "XDG_CONFIG_HOME=%s git status" % self.outside,
+            "MAGIC=%s file src/app.py" % sentinel,
+            # 间接文件清单与 find 前置选项。
+            "file -bf%s" % sentinel,
+            "printf '%s\\n' | file -f -" % sentinel,
+            "printf '%s\\0' | wc --files0-from=-" % sentinel,
+            "find -x %s" % self.outside,
+            "find -s %s" % self.outside,
+            "find -d %s" % self.outside,
+            "find -f %s" % self.outside,
+            "find . -files0-from %s" % sentinel,
+            "find -P -P -L .",
+        )
+        for command in commands:
+            with subtests.test(command=command):
+                result = self.run_guard(self.bash(command, self.workspace / "src"))
+                assert self.decision(result) == "deny", (command, result)
+        # `-U` 不吃后继参数；`--` 之后不再按选项消费。
+        for command in (
+            "git diff -U %s src/app.py" % sentinel,
+            "git diff -- -S %s" % sentinel,
+            "git grep -- -e link-file",
+        ):
+            with subtests.test(command=command):
+                result = self.run_guard(self.bash(command, self.workspace))
+                assert self.decision(result) == "deny", (command, result)
+        # 仓库内纯修订表达式与合法解释器/测试选项不得被误拒。
+        for command in (
+            "git diff HEAD~1",
+            "git show HEAD~1:src/../src/app.py",
+            "git log HEAD@{1}",
+            "cd src && python3 -m pytest -q .",
+            "rg --color=always print src",
+            "ls --color src",
+            "find -P -P src -maxdepth 1",
+            "git rebase -f HEAD~1",
+            "git cherry-pick -x HEAD~1",
+            "git diff main",
+            "git diff -O patterns.txt",
+            "git commit -mfix",
+            "git grep 'def.*foo' src/app.py",
+            "git grep -e 'test_a[1]' src/app.py",
+            "git grep --regexp 'test_a[1]' src/app.py",
+            "git grep --file patterns.txt src",
+            "git grep -e link-file src/app.py",
+            "git log -S 'a[0]'",
+            "git log -U -1",
+            "cd src && make X=1",
+            "cd src && python3 -m pytest -q -k 'test_a[1]' .",
+            "cd src && make -k test",
+        ):
+            with subtests.test(command=command):
+                assert self.decision(self.run_guard(self.bash(command))) == "allow", command
+
+    def test_wrapper_and_env_reads_are_unresolved(self) -> None:
+        """未知 sudo 选项与 CDPATH 前置赋值必须按读取目标不可证明拒绝。"""
+        sentinel = self.outside / "sentinel.txt"
+        for command in (
+            "sudo --some-unknown-option echo cat %s" % sentinel,
+            "CDPATH=%s cd outside && cat sentinel.txt" % self.outside.parent,
+        ):
+            with subtests.test(command=command):
+                result = self.run_guard(self.bash(command, self.workspace / "src"))
+                assert self.decision(result) == "deny", (command, result)
+                assert self.health_codes()[-1] == "target_unresolved", result
+
+    def test_git_apply_and_am_operands_are_always_paths(self) -> None:
+        """`git apply link-file` 的单段软链操作数也必须按真实路径校验。"""
+        for command in ("git apply link-file", "git am link-file", "git diff link-file", "git show link-file"):
+            with subtests.test(command=command):
+                result = self.run_guard(self.bash(command, self.workspace))
+                assert self.decision(result) == "deny", (command, result)
+
+    def test_search_option_values_and_terminator_are_checked(self) -> None:
+        """`ls -t <外部>` 与 `grep -- -e <外部>` 不能把路径当选项值吞掉。"""
+        sentinel = self.outside / "sentinel.txt"
+        commands = (
+            "ls -t %s" % self.outside,
+            "ls -lt %s" % self.outside,
+            "tree -L 2 %s" % self.outside,
+            "grep -- -e %s" % sentinel,
+            "rg -- -e %s" % sentinel,
+            "rg --ignore-file %s PATTERN ." % sentinel,
+            "rg --ignore-file=%s PATTERN ." % sentinel,
+            "rg --pre 'cat %s' PATTERN ." % sentinel,
+            "rg -nL PATTERN .",
+        )
+        for command in commands:
+            with subtests.test(command=command):
+                result = self.run_guard(self.bash(command, self.workspace / "src"))
+                assert self.decision(result) == "deny", (command, result)
+        for command in ("ls -t src", "ls -A src", "grep -- PATTERN src", "grep -rn PATTERN src", "rg --hidden PATTERN src"):
+            with subtests.test(command=command):
+                assert self.decision(self.run_guard(self.bash(command))) == "allow", command
 
 
 class DeployedGuardCommandTests:
@@ -892,10 +1193,12 @@ class DeployedGuardCommandTests:
         result = self.host_run("python3 -c '%s'" % code)
         assert result["decision"] == "deny", result
         assert result["executed"] is None
+        # `-c` 代码不可静态证明（别名导入/转义路径/未列标准库），即使字面量在
+        # 允许根内也按策略拒绝；脚本入口才按读取目标建模。
         inside_code = 'from pathlib import Path; print(Path("patterns.txt").read_text())'
         inside = self.host_run("python3 -c '%s'" % inside_code)
-        assert inside["decision"] == "allow", inside
-        assert "workspace-patterns" in inside["executed"].stdout
+        assert inside["decision"] == "deny", inside
+        assert inside["executed"] is None
 
     def test_symlink_loop_and_dangling_are_denied(self) -> None:
         loop = self.workspace / "loop"

@@ -626,6 +626,11 @@ class AnalyzeEventsCliTest:
                 1,
             ),
             (
+                "new roles.md reviewer handoff naming the normal path",
+                "角色：reviewer\n按 normal 路径参考 roles.md#审查角色 做只读审查。",
+                1,
+            ),
+            (
                 "new roles.md reviewer handoff mentioning developer change",
                 "角色：reviewer\n按 references/roles.md#审查角色 审查。开发角色提交的改动在 git diff 中。",
                 1,
@@ -682,6 +687,56 @@ class AnalyzeEventsCliTest:
                 "不要读取 references/roles.md#开发角色；按 references/roles.md#审查角色 做只读审查。",
                 1,
             ),
+            (
+                "explicit reviewer role without a review action",
+                "角色：reviewer\n先读 references/roles.md#审查角色。",
+                1,
+            ),
+            (
+                "explicit reviewer role only",
+                "角色：reviewer\n请处理本次交接。",
+                1,
+            ),
+            (
+                "negated roles reviewer anchor",
+                "不要读取 roles.md#审查角色；直接实施开发。",
+                0,
+            ),
+            (
+                "roles reviewer anchor mentioned as reference",
+                "仅参考 references/roles.md#审查角色 目录说明。",
+                0,
+            ),
+            (
+                "negated review handoff",
+                "这不是审查交接，也不要做独立审查。",
+                0,
+            ),
+            (
+                "bare roles.md reviewer anchor with leading negation",
+                "不要按 roles.md#审查角色 进行审查",
+                0,
+            ),
+            (
+                "negated bare roles.md reviewer anchor before developer action",
+                "不要读取 roles.md#审查角色；开发角色完成修改后等待独立审查。",
+                0,
+            ),
+            (
+                "negated bare roles.md reviewer anchor with path verb",
+                "并非按 roles.md#审查角色；开发角色完成修改后等待独立审查。",
+                0,
+            ),
+            (
+                "negated bare roles.md developer anchor with path verb",
+                "角色：reviewer\n并非按 roles.md#开发角色；按 roles.md#审查角色 做只读审查。",
+                1,
+            ),
+            (
+                "english negated reviewer handoff",
+                "This is not a reviewer handoff.",
+                0,
+            ),
         )
         experiment = self.root / "reviewer-prompt-intent"
         for index, (label, prompt, _expected) in enumerate(cases):
@@ -736,6 +791,10 @@ class AnalyzeEventsCliTest:
                 command(4, "cat dataset.json", exit_code=1),
                 command(5, "cat solution.patch", exit_code=1),
                 command(6, "rg -n owner app"),
+                command(7, "cat /tmp/easydev-workspace/app/ledger.py"),
+                command(8, "rg -n owner /tmp/easydev-workspace/app"),
+                command(9, "command env FOO=1 cat app/handler.py"),
+                command(10, "command -p cat app/service.py"),
                 turn(),
             ],
         )
@@ -743,6 +802,12 @@ class AnalyzeEventsCliTest:
         assert "app/orders.py" in run["file_access"]
         assert "app/admin.py" in run["file_access"]
         assert "app/" in run["file_access"]
+        # 绝对 POSIX 路径必须能被识别（B01 违规加载与 B16 读取归因共用同一正则）。
+        assert "/tmp/easydev-workspace/app/ledger.py" in run["file_access"]
+        assert "/tmp/easydev-workspace/app/" in run["file_access"]
+        # `command` 包装之后的读取目标不能被丢掉。
+        assert "app/handler.py" in run["file_access"]
+        assert "app/service.py" in run["file_access"]
         assert "HEAD:app/orders.py" not in run["file_access"]
         assert "dataset.json" in run["benchmark_metadata_access"]
         assert "solution.patch" in run["benchmark_metadata_access"]

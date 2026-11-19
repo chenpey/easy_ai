@@ -15,6 +15,7 @@ suppressed).  Findings are read from the machine-checkable block only.
 from __future__ import annotations
 
 from pathlib import Path
+import posixpath
 
 from .b16 import parse_findings, resolve_location
 from .b67 import FIXTURE_FILES
@@ -82,6 +83,18 @@ def prepare(workspace: Path, case_root: Path) -> None:
     write_files(workspace, files)
 
 
+def _norm_location(location: str, workspace: Path) -> str:
+    """`位置` 的路径段按 POSIX 规范化；工作区内绝对路径归约为相对路径。"""
+    path = location.replace("\\", "/").split(":", 1)[0]
+    absolute = Path(path).expanduser()
+    if absolute.is_absolute():
+        try:
+            path = str(absolute.resolve().relative_to(workspace.resolve()))
+        except ValueError:
+            pass
+    return posixpath.normpath(path)
+
+
 def evaluate(
     workspace: Path,
     changed_paths: list,
@@ -91,12 +104,12 @@ def evaluate(
     entries, problems = parse_findings(final_message)
     severities = [entry["severity"] for entry in entries]
     costly = [
-        entry for entry in entries if entry["location"].replace("\\", "/").startswith(COSTLY)
+        entry for entry in entries if _norm_location(entry["location"], workspace) == COSTLY
     ]
     style_only = [
         entry
         for entry in entries
-        if entry["location"].replace("\\", "/").startswith(STYLE_ONLY)
+        if _norm_location(entry["location"], workspace) == STYLE_ONLY
     ]
     module_access = getattr(observed, "module_access", {})
     checks = [

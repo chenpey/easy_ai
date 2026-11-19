@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 更新说明（2026-11-19）
+
+- `scripts/run_pi.sh` 加固：额外参数改为白名单（`--model`/`--thinking`/`--approve`，取值非空白且不以 `-` 开头），新增 `EASYPI_TIMEOUT` 硬超时（默认 900 秒，超时以 124 退出），正常退出也清理同组残留子进程（1 秒后强杀），并把创建子进程窗口纳入信号屏蔽与同一 `try/finally`，避免竞态泄漏整组进程。
+- `full` 协同分支补齐基线与只读物理校验：开工记录 `git rev-parse HEAD` 并把任务相关脏/未跟踪文件首次原内容存入 `baseline/`；每次只读 `run_pi.sh` 调用都核对 `git status --ignored`、`git diff --binary HEAD`、未跟踪/忽略文件与 scratch 产物的 SHA-256；`designer` 配置非 `inherit` 时不得由 `agy` 静默顶替，`d/3` 用尽或受阻时停写报用户。
+- 同步 `SKILL.md` / `README.md` / `references/full.md`：设计审查保留 `[建议]` 通道，开发者禁止 `git add` 以保持索引干净，终审与报告改用 `git diff HEAD` 并补文档校准与遗留项，`--model` 按 `gate`/`full` 语义处理。
+
 ## 0.4.0 更新说明（2026-11-19）
 
 - 新增 **`full` 协同分支**（[references/full.md](references/full.md)）：支持开局直接指定或从 `gate` 经用户批准升级到 `full` 协同，保留 `agy ↔ Pi`（会话 A 原 `--session-id`）开发协同，按 `easydev` 模型组配置（`models.json`）解析 `developer` / `reviewer` 模型与深度（配置无效、`inherit` 或不可用时不静默回退，暂停交用户指定），由 `agy` 在外层调起全新 `--session-id` 的独立只读 `Pi` 实例补齐 `d/3`、`r/5` 盲审（含发现逐条核实与 P0/P1 排除复核）及终审两阶段闭环，并继承既有预算。

@@ -65,10 +65,9 @@ def hidden_workspace_changes(observed: object, captured_paths: Iterable[str]) ->
 def entered_full(observed: object) -> bool:
     initial = getattr(observed, "declared_initial_path", None)
     final = getattr(observed, "declared_final_path", None)
-    if final in {"quick", "full-local", "full-staged"}:
-        return False
-    if final == "full":
-        return True
+    if final is not None:
+        # 终态只要不是 full（含 quick/normal/gate/full-local/full-staged）就不算进入 full。
+        return final == "full"
     return bool(
         initial == "full"
         or getattr(observed, "upgraded_to_full", False)

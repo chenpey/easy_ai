@@ -2131,3 +2131,26 @@ class SwebenchCliTest:
         assert not stale_baseline.exists()
         assert not other_baseline.exists()
         assert not stale_gold.exists()
+
+    def test_calibrate_validates_required_args_before_deleting_assets(self) -> None:
+        out = self.root / "calibrate-args"
+        (out / "task-baselines").mkdir(parents=True)
+        (out / "gold").mkdir()
+        (out / "manifest.json").write_text('{"kind": "keep"}', encoding="utf-8")
+        completed = self.cli(["calibrate", "--out", out], env=os.environ.copy())
+        assert completed.returncode != 0
+        # 缺 --dataset/--templates/--venvs 时必须在清理前拒绝，不能毁掉既有校准资产。
+        assert (out / "manifest.json").read_text(encoding="utf-8") == '{"kind": "keep"}'
+        assert (out / "task-baselines").is_dir()
+        assert (out / "gold").is_dir()
+
+    def test_report_shows_run_model_not_calibrate_default(self) -> None:
+        assets, experiment, stub = self.valid_experiment("report-model")
+        self.write_manifest(experiment, [TASK])
+        completed = self.summarize(experiment)
+        assert completed.returncode == 0, completed.stdout
+        report = (experiment / "report.md").read_text(encoding="utf-8")
+        # manifest 的 "stub" 只是校准默认值；实际运行用的是 run 的模型。
+        assert "opencode-go/deepseek-v4.1-flash" in report, report
+        assert "校准清单默认值" in report, report
+        assert "- 模型：`stub`" not in report, report

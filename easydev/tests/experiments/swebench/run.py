@@ -498,7 +498,9 @@ def codex_env(workdir: Path, venv: Path, run_dir: Path) -> Dict[str, str]:
     if not auth.exists():
         raise RuntimeError(f"missing Codex auth file: {auth}")
     auth_link = codex_home / "auth.json"
-    if not auth_link.exists():
+    if os.path.islink(auth_link):
+        auth_link.unlink()
+    if not os.path.lexists(auth_link):
         auth_link.symlink_to(auth)
 
     env = os.environ.copy()
@@ -573,7 +575,7 @@ def run_agent(
             )
             tracked = {}
             try:
-                returncode, tracked = wait_for_process(process, timeout)
+                returncode, _ = wait_for_process(process, timeout, tracked=tracked)
                 if returncode is None:
                     timed_out = True
             finally:
@@ -878,6 +880,9 @@ def baseline_status(
 
 
 def calibrate(args: argparse.Namespace) -> None:
+    # 先校验参数再清旧资产：否则缺参数会在删掉既有校准产物之后才崩溃。
+    if not args.dataset or not args.templates or not args.venvs:
+        raise SystemExit("calibrate requires --dataset, --templates and --venvs")
     experiment = args.out
     experiment.mkdir(parents=True, exist_ok=True)
     (experiment / "manifest.json").unlink(missing_ok=True)
@@ -1080,6 +1085,8 @@ def run_one(
         "tool_calls": agent["tool_calls"],
         "usage": agent.get("usage", {}),
         "easydev_mentions": agent.get("easydev_mentions", 0),
+        "model": args.model,
+        "reasoning_effort": args.reasoning_effort,
         "final_message": agent.get("final_message", ""),
         "patch_chars": len(patch),
         "excluded_test_paths": captured["excluded_test_paths"],
@@ -1544,14 +1551,40 @@ def markdown_report(experiment: Path, results: Sequence[Dict[str, Any]]) -> str:
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest_task_count = len(manifest.get("tasks", []))
+        # 本次运行的模型/深度以 run 结果为准：manifest 只是 calibrate 时的默认值，
+        # run 可用 --model/--reasoning-effort 覆盖，直接读 manifest 会错报。
+        run_models = sorted(
+            {str(result["model"]) for result in results if result.get("model")}
+        )
+        run_efforts = sorted(
+            {
+                str(result["reasoning_effort"])
+                for result in results
+                if result.get("reasoning_effort")
+            }
+        )
+        models = run_models or [str(manifest.get("model") or "未知")]
+        efforts = run_efforts or [str(manifest.get("reasoning_effort") or "未知")]
         lines.extend(
             [
-                f"- 模型：`{manifest.get('model')}`",
-                f"- 推理深度：`{manifest.get('reasoning_effort')}`",
+                f"- 模型：`{', '.join(models)}`",
+                f"- 推理深度：`{', '.join(efforts)}`",
                 f"- 任务数：{task_count}",
                 f"- 重复次数：{max((result['repeat'] for result in results), default=0)}",
             ]
         )
+        if (
+            manifest.get("model")
+            and manifest.get("reasoning_effort")
+            and (
+                manifest.get("model") not in models
+                or manifest.get("reasoning_effort") not in efforts
+            )
+        ):
+            lines.append(
+                "- 校准清单默认值：`%s` / `%s`（本次运行已覆盖）"
+                % (manifest.get("model"), manifest.get("reasoning_effort"))
+            )
         if manifest_task_count != task_count:
             lines.append(f"- 校准清单：{manifest_task_count} 个任务")
         lines.append("")
@@ -1743,10 +1776,14 @@ def install_experiment_assets(
         if not venv.exists():
             raise SystemExit(f"missing venv: {venv}")
         target_template = experiment / "templates" / f"{task_id}.tar"
-        if not target_template.exists():
+        if os.path.islink(target_template):
+            target_template.unlink()
+        if not os.path.lexists(target_template):
             target_template.symlink_to(template)
         target_venv = experiment / "venvs" / task_id
-        if not target_venv.exists():
+        if os.path.islink(target_venv):
+            target_venv.unlink()
+        if not os.path.lexists(target_venv):
             target_venv.symlink_to(venv)
 
 

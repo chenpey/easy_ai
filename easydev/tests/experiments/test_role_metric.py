@@ -7,6 +7,7 @@ import pytest
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -699,3 +700,245 @@ class RoleMetricTests:
         assert [r["paths"] for r in ag_recs] == [["/ag/one/a.py"], ["/ag/two/b.py"]]
         ag_fixed, _ = transcripts.antigravity_records(str(ag_log), cwd="/ag/override")
         assert [r["paths"] for r in ag_fixed] == [["/ag/override/a.py"], ["/ag/override/b.py"]]
+
+    def test_pi_host_rejects_transcript_flag(self) -> None:
+        with pytest.raises(SystemExit):
+            role_metric.main(
+                ["--host", "pi", "--transcript", str(Path(self.tmp.name) / "x.jsonl")]
+            )
+
+    def test_write_path_only_is_not_a_visible_read(self) -> None:
+        session = "33333333-4444-4555-8666-777777777777"
+        write_main_session(
+            self.session,
+            session,
+            [("write", {"path": "/repo/easydev/references/written.md", "content": "x"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo"
+        )
+        assert rows[0]["visible_reads"] is False
+        assert rows[0]["references"] == []
+
+    def test_pure_bash_read_is_a_visible_read(self) -> None:
+        session = "44444444-5555-4666-8777-888888888888"
+        write_main_session(
+            self.session,
+            session,
+            [("bash", {"command": "cat src/app.py", "cwd": "/repo"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo"
+        )
+        assert rows[0]["visible_reads"] is True
+
+    def test_grep_pattern_is_not_counted_as_a_read(self) -> None:
+        session = "55555555-6666-4777-8888-999999999999"
+        write_main_session(
+            self.session,
+            session,
+            [("grep", {"pattern": "references/routing.md", "path": "src"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo"
+        )
+        assert rows[0]["references"] == []
+
+    def test_query_equal_to_cwd_does_not_match_everything(self) -> None:
+        session = "66666666-7777-4888-8999-aaaaaaaaaaaa"
+        write_main_session(
+            self.session,
+            session,
+            [("read", {"path": "src/app.py"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir",
+            str(self.session),
+            "--session",
+            session,
+            "--cwd",
+            "/repo",
+            "--path",
+            "/repo",
+        )
+        assert "matched_paths" not in rows[0]
+
+    def test_short_read_body_error_word_is_still_confirmed(self) -> None:
+        transcript = Path(self.tmp.name) / "short-read.jsonl"
+        events = [
+            {
+                "PLANNER_RESPONSE": {
+                    "type": "PLANNER_RESPONSE",
+                    "cwd": "/repo",
+                    "tool_calls": [{"name": "read_file", "args": {"Path": "/repo/src/short.py"}}],
+                }
+            },
+            {
+                "type": "GENERIC",
+                "status": "DONE",
+                "content": "Showing lines 1-2 of 2\n1: error: failed to load\n2: return None",
+            },
+        ]
+        transcript.write_text(
+            "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+        )
+        rows, _ = self.run_cli_json(
+            "--host", "antigravity", "--transcript", str(transcript), "--cwd", "/repo"
+        )
+        assert rows[0]["attribution_status"] == "confirmed"
+
+    def test_non_json_read_payload_falls_back_to_path_keys(self) -> None:
+        rows = role_metric.summarize(
+            [("read", 'path: "src/app.py"')], [], Path("/repo")
+        )
+        assert rows["visible_reads"] is True
+
+    def test_nested_args_payload_is_unwrapped(self) -> None:
+        # 行为锁：旧实现按整个 payload 文本匹配也能命中，故本用例不构成修复前必红证据。
+        rows = role_metric.summarize(
+            [("read", '{"args": {"path": "easydev/references/routing.md"}}')],
+            [],
+            Path("/repo"),
+        )
+        assert rows["visible_reads"] is True
+        assert rows["references"] == ["routing.md"]
+
+
+    def test_cd_inside_command_keeps_effective_directory(self) -> None:
+        session = "77777777-8888-4999-8aaa-bbbbbbbbbbbb"
+        write_main_session(
+            self.session,
+            session,
+            [("bash", {"command": "cd easydev && cat references/workflow.md", "cwd": "/repo"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir",
+            str(self.session),
+            "--session",
+            session,
+            "--cwd",
+            "/repo",
+            "--path",
+            "/repo/easydev/references/workflow.md",
+        )
+        assert rows[0]["matched_paths"] == {"/repo/easydev/references/workflow.md": 1}
+
+    def test_tilde_read_path_is_expanded(self) -> None:
+        session = "88888888-9999-4aaa-8bbb-cccccccccccc"
+        write_main_session(
+            self.session,
+            session,
+            [("read", {"path": "~/src/app.py"})],
+        )
+        expanded = os.path.expanduser("~/src/app.py")
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", expanded,
+        )
+        assert rows[0]["matched_paths"] == {expanded: 1}
+
+    def test_non_json_payload_does_not_double_count_file_path(self) -> None:
+        rows = role_metric.summarize(
+            [("read", 'file_path: "src/app.py"')], ["src/app.py"], Path("/repo")
+        )
+        assert rows.get("matched_paths") == {"src/app.py": 1}
+
+    def test_path_dot_is_not_a_substring_match(self) -> None:
+        session = "99999999-aaaa-4bbb-8ccc-dddddddddddd"
+        write_main_session(
+            self.session,
+            session,
+            [("read", {"path": "src/app.py"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", ".",
+        )
+        assert "matched_paths" not in rows[0]
+
+    def test_path_dot_does_not_match_absolute_reads_outside_workspace(self) -> None:
+        session = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        write_main_session(
+            self.session,
+            session,
+            [
+                ("read", {"path": "/repo2/src/app.py"}),
+                ("read", {"path": "/srv/other/src/app.py"}),
+            ],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", ".",
+        )
+        assert rows[0]["visible_reads"] is True
+        assert "matched_paths" not in rows[0]
+        matched, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", "/repo2/src/app.py",
+        )
+        # 对照：同样的绝对读取在具体路径下能命中，说明上面是 `.` 泛匹配被修掉而不是读取丢了。
+        assert matched[0]["matched_paths"] == {"/repo2/src/app.py": 1}
+
+    def test_tilde_query_matches_expanded_read(self) -> None:
+        session = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+        write_main_session(
+            self.session,
+            session,
+            [("read", {"path": "~/src/app.py"})],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", "~/src/app.py",
+        )
+        assert rows[0]["matched_paths"] == {"~/src/app.py": 1}
+
+    def test_path_with_spaces_matches_exact_read(self) -> None:
+        # 行为锁：带空格的 `--path` 值本来就是单个 argv，本条防 argv 合并与子串越界回退。
+        session = "cccccccc-dddd-4eee-8fff-000000000000"
+        write_main_session(
+            self.session,
+            session,
+            [
+                ("read", {"path": "/tmp/space dir/src/app.py"}),
+                ("read", {"path": "/tmp/space dirX/src/app.py"}),
+            ],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", "/tmp/space dir/src/app.py",
+        )
+        assert rows[0]["matched_paths"] == {"/tmp/space dir/src/app.py": 1}
+
+    def test_prefix_sibling_directory_is_not_matched(self) -> None:
+        """`--path /repo` 不得把 `/repo2/…` 的同前缀读取计入。"""
+        session = "dddddddd-eeee-4fff-8000-111111111111"
+        write_main_session(
+            self.session,
+            session,
+            [
+                ("read", {"path": "/repo/src/app.py"}),
+                ("read", {"path": "/repo2/src/app.py"}),
+            ],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", "/repo",
+        )
+        assert rows[0]["matched_paths"] == {"/repo": 1}
+        sibling, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo",
+            "--path", "/repo2",
+        )
+        assert sibling[0]["matched_paths"] == {"/repo2": 1}
+
+    def test_non_json_payload_expands_tilde_read_path(self) -> None:
+        expanded = os.path.expanduser("~/src/app.py")
+        rows = role_metric.summarize([("read", 'path: "~/src/app.py"')], [expanded], Path("/repo"))
+        assert rows.get("matched_paths") == {expanded: 1}
+
+    def test_non_json_payload_requires_paired_quote_around_key(self) -> None:
+        rows = role_metric.summarize(
+            [("read", "\"path': \"src/app.py\"")], ["src/app.py"], Path("/repo")
+        )
+        assert rows["visible_reads"] is False
+        assert "matched_paths" not in rows

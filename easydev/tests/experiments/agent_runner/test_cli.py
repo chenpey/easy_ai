@@ -642,6 +642,24 @@ class RunnerCliTest:
                     assert name in self.failed_checks(result)
 
     # -- b61 normal review loop ------------------------------------------
+    def test_run_b02_rejects_downgrade_to_normal_or_gate(self) -> None:
+        # 高风险任务从 full 降回 normal/gate 不得再算“已进入 full”。
+        for final in ("normal", "gate"):
+            with subtests.test(final=final):
+                fixture = self.stub_environment(
+                    "b02-downgrade-" + final,
+                    {
+                        "agent_messages": ["采用 full。", "最终采用 %s。" % final],
+                        "reviewer": True,
+                        "reviewer_report": "未发现确定缺陷。",
+                        "mutations": [{"path": "src/access.py", "content": B02_SOLUTION}],
+                    },
+                )
+                completed = self.run_scenario(fixture, "b02")
+                assert completed.returncode == 1
+                result = self.result(fixture, "b02")
+                assert "route is full or upgraded to full" in self.failed_checks(result)
+
     def b61_plan(self, **overrides: object) -> dict:
         plan = {
             "agent_messages": [
@@ -1501,6 +1519,17 @@ class RunnerCliTest:
             (
                 "style only",
                 {"agent_messages": [style_report]},
+                "review does not report pure style",
+            ),
+            (
+                "style only with relative prefix",
+                {
+                    "agent_messages": [
+                        "```easydev-findings\n"
+                        + B67_STYLE_FINDING.replace("位置=src/export.py", "位置=./src/export.py")
+                        + "\n```"
+                    ]
+                },
                 "review does not report pure style",
             ),
             (

@@ -32,7 +32,7 @@ MODULE_RE = re.compile(
     r"(?P<path>(?:[^\s\"'`]+/)?(?:SKILL\.md|references/(?:[A-Za-z0-9_.*-]+/)*[A-Za-z0-9_.*-]+\.md))"
 )
 FILE_PATH_RE = re.compile(
-    r"(?<![\w./-])(?P<path>(?:\./)?(?:[A-Za-z0-9_.-]+/)*"
+    r"(?<![\w./-])(?P<path>(?:\./|/)?(?:[A-Za-z0-9_.-]+/)*"
     r"[A-Za-z0-9_.*-]+\.(?:py|js|jsx|ts|tsx|go|rs|java|rb|php|sh|md|json|toml|yaml|yml|patch|diff))"
     r"(?=$|[\s\"'`;&|),])"
 )
@@ -172,21 +172,22 @@ DEVELOPER_HANDOFF_MARKERS = EXPLICIT_DEVELOPER_MARKERS + (
     "developer role",
 )
 DEVELOPER_PATH_NEGATION_PREFIX_RE = re.compile(
-    r"(?:不要|不得|禁止|无需|不必|不能|不|不再|没有|未|"
-    r"do\s+not|don't|without|never|no)"
+    r"(?:不要|不得|禁止|无需|不必|不能|并非|不属于|不|不再|没有|未|"
+    r"\bdo\s+not\b|\bdon't\b|\bwithout\b|\bnever\b|\bno\b)"
     r"[^，,。；;！!？?\n]{0,32}$",
     re.IGNORECASE,
 )
 REVIEWER_ROLE_NEGATION_RE = re.compile(
-    r"(?:不要|不得|禁止|无需|不必|不能|不|不再|没有|未|"
-    r"do\s+not|don't|without|never|no)"
+    r"(?:不要|不得|禁止|无需|不必|不能|并非|不属于|不|不再|没有|未|"
+    r"\bdo\s+not\b|\bdon't\b|\bwithout\b|\bnever\b|\bno\b)"
     r"(?:(?!roles\.md|reviewer-role\.md)[^，,。；;！!？?\n]){0,32}"
-    r"(?:references/reviewer-role\.md|references/roles\.md(?!(?:#|%23)(?:开发角色|developer)))",
+    r"(?:references/reviewer-role\.md|(?:references/)?roles\.md(?!(?:#|%23)(?:开发角色|developer)))",
     re.IGNORECASE,
 )
+# 英文否定词必须带词边界：`normal` 里的 `no` 不是否定。
 NEGATED_REVIEW_PREFIX_RE = re.compile(
-    r"(?:不要|不得|禁止|无需|不必|不能|不|不再|没有|未|"
-    r"do\s+not|don't|without|never|no)\s*"
+    r"(?:不要|不得|禁止|无需|不必|不能|不是|并非|不属于|不|不再|没有|未|"
+    r"\bdo\s+not\b|\bdon't\b|\bnot\b|\bwithout\b|\bnever\b|\bno\b)\s*"
     r"(?:(?:做|进行|执行|开展|承担|使用|发起|"
     r"perform|do|conduct)\s*)?"
     r"(?:(?:任何|一次|这个|本次|当前|一个|"
@@ -505,6 +506,10 @@ def _strip_command_prefix(tokens: List[str]) -> List[str]:
         command = _command_name(result[0])
         if command == "command":
             result.pop(0)
+            # `command` 自身的选项（-p/-v/-V）与 `--` 不是被执行命令。
+            while result and result[0] in {"-p", "-v", "-V", "--"}:
+                result.pop(0)
+            continue
         if result and result[0] == "--":
             result.pop(0)
             continue
@@ -969,10 +974,27 @@ def is_reviewer_prompt(prompt: str) -> bool:
     if has_unnegated_developer_reference():
         return False
 
-    has_explicit_reviewer = any(marker in text for marker in REVIEWER_IDENTITY_MARKERS) or any(
-        anchor in text for anchor in REVIEWER_ROLE_ANCHORS
+    def negated(offset: int) -> bool:
+        return bool(
+            NEGATED_REVIEW_PREFIX_RE.search(text[clause_start(offset):offset])
+        )
+
+    has_reviewer_identity = any(
+        not negated(match.start())
+        for marker in REVIEWER_IDENTITY_MARKERS
+        for match in re.finditer(re.escape(marker), text)
     )
-    if not has_explicit_reviewer and any(
+
+    def has_reviewer_anchor() -> bool:
+        # 锚点看所在从句的前缀是否构成路径否定（`并非按 roles.md#审查角色`）。
+        for anchor in REVIEWER_ROLE_ANCHORS:
+            for match in re.finditer(re.escape(anchor), text):
+                clause = text[clause_start(match.start()):match.end()]
+                if not REVIEWER_ROLE_NEGATION_RE.search(clause):
+                    return True
+        return False
+
+    if not (has_reviewer_identity or has_reviewer_anchor()) and any(
         marker in text for marker in ("开发角色", "developer role", "设计角色", "designer role")
     ):
         return False
@@ -980,10 +1002,10 @@ def is_reviewer_prompt(prompt: str) -> bool:
     if REVIEWER_ROLE_NEGATION_RE.search(text):
         return False
 
-    def negated(offset: int) -> bool:
-        return bool(
-            NEGATED_REVIEW_PREFIX_RE.search(text[clause_start(offset):offset])
-        )
+    if has_reviewer_identity:
+        # 标准交接的 `角色：reviewer` 本身就是审查意图，不能因为没写复核动作而漏计；
+        # 裸锚点（`roles.md#审查角色`）仍须配合非否定审查动作才算。
+        return True
 
     for marker in REVIEW_PROMPT_MARKERS:
         for match in re.finditer(re.escape(marker), text):

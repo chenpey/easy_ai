@@ -46,6 +46,8 @@ python3 tests/experiments/agent_runner/runner.py run \
 
 `result.json` 基于 `behavior-v1` 协议生成；只有 reviewer 状态为 `completed` 且带回有效内容才计为审查完成。
 
+回放只读守卫的结果分两类：`read_guard.violations` 非空（可证明的越界读或守卫自身失败）才作废样本；`read_guard.blocked` 表示命令因读取边界不可证明而被策略性拒绝（命令未执行、无数据流出），样本仍有效，但判读场景时应把它当作“被拦截的尝试”而非“未尝试”。
+
 ## 离线自测
 
 ```bash
@@ -59,3 +61,6 @@ python3 -m pytest tests/experiments/agent_runner -v
 - 仅提供 Codex CLI 适配层，断网要求依赖宿主沙箱能力。
 - reviewer 完成与报告为行为证据，不替代最终任务语义的独立验收。
 - 文件访问与元数据审计基于命令文本分析，非操作系统层只读挂载。
+- `read_guard.blocked` 只说明命令被守卫拦截，不证明模型未尝试读取；依赖读取证据的场景需要单独核对被拦截的命令。
+- 守卫对无法证明读取边界的写法一律拦截（记为 `blocked`）：如 `cd ..`/`cd -P`、未列名的搜索长选项、`python3 -m unittest discover -s <目录>`；需要时改用显式路径或已建模的写法（如 `git diff HEAD~1`）。`git diff ..` 这类把 `..` 当路径的写法会按真实路径校验，在根目录可能记为 `violations`、在子目录下可能放行，不宜当作已建模的修订表达式。
+- 写入型选项（`pytest --junitxml/--log-file/--basetemp` 等）当前仍按读取目标校验，越界会归入 `violations`（而非 `blocked`），归因也会计为一次读取；方向保守，不放大权限。

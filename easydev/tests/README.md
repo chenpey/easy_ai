@@ -14,7 +14,7 @@ bash tests/cases/design-gate/run.sh
 bash tests/cases/audit-overflow/run.sh
 bash tests/cases/models-config/run.sh
 
-# 单元与行为回归套件（需 pytest）
+# 确定性与行为回归套件（需 pytest）
 python3 -m pytest tests/experiments/test_role_metric.py tests/experiments/test_design_gate.py -v
 python3 -m pytest tests/experiments/agent_runner -v
 python3 -m pytest tests/experiments/swebench -v
@@ -61,8 +61,17 @@ tests/
     ├── README.md
     ├── process_control.py             # 进程树与超时清理
     ├── role_metric.py                 # 按角色统计 usage 与读取
+    ├── shell.py                       # 命令读写目标静态分析（回放守卫共用）
+    ├── transcripts.py                 # 宿主 transcript 读取记录抽取
+    ├── test_design_gate.py            # 设计门控与预算状态机回归
+    ├── test_role_metric.py            # 角色计量回归
+    ├── fold-eval.md                   # 角色调整与并行收益观测口径
     ├── stubs/                         # Codex CLI 与 pytest 替身
     ├── agent_runner/                  # 单宿主行为 Runner
+    ├── b67-replay/                    # B67 回放产物
+    ├── behavior-replay/               # 行为场景回放产物
+    ├── review-ablation/               # 审查消融实验产物
+    ├── routing-replay/                # 路由回放产物
     └── swebench/                      # SWE-bench 小样本运行与事件归因
 ```
 

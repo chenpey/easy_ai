@@ -460,6 +460,222 @@ echo "=== 7. 规则同步与辅助脚本语法检查 ==="
 bash -n scripts/sync-agent-rules.sh
 bash -n easypi/scripts/run_pi.sh
 echo "OK: scripts/sync-agent-rules.sh 与 easypi/scripts/run_pi.sh 语法合法"
+
+# 7b. run_pi.sh 的硬超时、正常退出清理与参数守卫：桩 pi 忽略 SIGTERM 并派生 sleep 子进程，
+# 超时必须 SIGKILL 整组并以 124 退出；外部 SIGTERM 也必须整组清理并以 143 退出；
+# 桩正常退出时其忽略 TERM 的后台子进程也必须由 wrapper 在退出路径清掉（不靠 wrapper 退出码兜底）；
+# 响应 SIGTERM 的桩（plain）必须靠 SIGTERM 立即收口，不得因僵尸组长占组而空等满宽限期。
+RUNPI_TMP="$(mktemp -d "${TMPDIR:-/tmp}/run-pi-check.XXXXXX")"
+runpi_bg=""
+
+# 等待 PID 文件里记录的进程全部消失，上限 1s（SIGKILL 投递有延迟，单次 kill -0 会抖）。
+runpi_wait_gone() {
+  for _ in {1..50}; do
+    runpi_alive=0
+    while read -r runpi_pid; do
+      if [ -n "$runpi_pid" ] && kill -0 "$runpi_pid" 2>/dev/null; then
+        runpi_alive=1
+      fi
+    done < "$1"
+    [ "$runpi_alive" -eq 0 ] && return 0
+    sleep 0.02
+  done
+  return 1
+}
+
+# 中断或早退时：先按 PID 文件清桩进程组（其子进程在独立会话里，wrapper 死后就没人管），
+# 再停 wrapper，最后删临时目录。
+runpi_cleanup() {
+  trap - EXIT INT TERM
+  local pid_file stub_pid recorded
+  for pid_file in "$RUNPI_TMP/pid" "$RUNPI_TMP/sig-pid" "$RUNPI_TMP/exit-pid" "$RUNPI_TMP/pass-pid" \
+    "$RUNPI_TMP/plain-pid"; do
+    [ -f "$pid_file" ] || continue
+    stub_pid="$(head -n 1 "$pid_file")"
+    if [ -n "$stub_pid" ]; then
+      kill -KILL -- "-$stub_pid" >/dev/null 2>&1 || true
+    fi
+    while read -r recorded; do
+      if [ -n "$recorded" ]; then
+        kill -KILL "$recorded" >/dev/null 2>&1 || true
+      fi
+    done < "$pid_file"
+  done
+  if [ -n "$runpi_bg" ]; then
+    kill -TERM "$runpi_bg" >/dev/null 2>&1 || true
+    wait "$runpi_bg" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$RUNPI_TMP"
+}
+trap runpi_cleanup EXIT
+trap 'runpi_cleanup; exit 130' INT
+trap 'runpi_cleanup; exit 143' TERM
+mkdir -p "$RUNPI_TMP/bin"
+cat > "$RUNPI_TMP/bin/pi" <<'RUNPI_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$STUB_PID_FILE"
+# 记录 wrapper 实际透传的参数（一行一个），用于验证白名单参数不是被守卫吞掉。
+if [ -n "${STUB_ARGV_FILE:-}" ]; then
+  printf '%s\n' "$@" > "$STUB_ARGV_FILE"
+fi
+if [ "${STUB_MODE:-hang}" = plain ]; then
+  # 响应 SIGTERM 的桩：不装 trap '' TERM，wrapper 的 SIGTERM 就能收口整组。
+  exec sleep 30
+fi
+trap '' TERM
+sleep 30 &
+printf '%s\n' "$!" >> "$STUB_PID_FILE"
+if [ "${STUB_MODE:-hang}" = exit ]; then
+  exit 0
+fi
+wait
+RUNPI_STUB
+chmod +x "$RUNPI_TMP/bin/pi"
+printf 'prompt\n' > "$RUNPI_TMP/prompt.txt"
+runpi_ok=1
+runpi_code=0
+STUB_PID_FILE="$RUNPI_TMP/pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=2 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/out.log" 2>&1 </dev/null || runpi_code=$?
+if [ "$runpi_code" -ne 124 ]; then
+  echo "Error: run_pi.sh 未按硬超时以 124 退出（exit=${runpi_code}）" >&2
+  runpi_ok=0
+fi
+if [ ! -f "$RUNPI_TMP/pid" ] || [ "$(wc -l < "$RUNPI_TMP/pid")" -lt 2 ]; then
+  echo "Error: 桩 pi 未记录 pi 与子进程 PID，无法证明整组清理" >&2
+  runpi_ok=0
+elif ! runpi_wait_gone "$RUNPI_TMP/pid"; then
+  echo "Error: run_pi.sh 超时后仍有进程存活（1s 内未消失）" >&2
+  runpi_ok=0
+fi
+# 响应 SIGTERM 的桩：SIGTERM 后必须立刻收口，不得因未回收的僵尸组长把整组探测成存活而空等 5s 宽限期。
+# 旧实现此处耗满 5s 多（SECONDS 整数秒，新实现约 1s，取 3s 为界仍可判别）。
+runpi_plain_code=0
+runpi_plain_start=$SECONDS
+STUB_MODE=plain STUB_PID_FILE="$RUNPI_TMP/plain-pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=1 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/plain.log" 2>&1 </dev/null || runpi_plain_code=$?
+runpi_plain_elapsed=$((SECONDS - runpi_plain_start))
+if [ "$runpi_plain_code" -ne 124 ]; then
+  echo "Error: run_pi.sh 响应 SIGTERM 的桩未按硬超时以 124 退出（exit=${runpi_plain_code}）" >&2
+  runpi_ok=0
+fi
+if [ "$runpi_plain_elapsed" -ge 3 ]; then
+  echo "Error: run_pi.sh 响应 SIGTERM 的桩超时收口过慢（${runpi_plain_elapsed}s ≥ 3s，宽限期被空等）" >&2
+  runpi_ok=0
+fi
+if [ ! -f "$RUNPI_TMP/plain-pid" ] || ! runpi_wait_gone "$RUNPI_TMP/plain-pid"; then
+  echo "Error: run_pi.sh 响应 SIGTERM 的桩超时后仍有进程存活" >&2
+  runpi_ok=0
+fi
+# 外部中断：SIGTERM 到 wrapper 也必须整组清理（桩忽略 TERM，靠 SIGKILL 收口），退出码 128+15=143。
+STUB_PID_FILE="$RUNPI_TMP/sig-pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/sig.log" 2>&1 </dev/null &
+runpi_bg=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  [ -f "$RUNPI_TMP/sig-pid" ] && [ "$(wc -l < "$RUNPI_TMP/sig-pid")" -ge 2 ] && break
+  sleep 0.2
+done
+if [ ! -f "$RUNPI_TMP/sig-pid" ] || [ "$(wc -l < "$RUNPI_TMP/sig-pid")" -lt 2 ]; then
+  echo "Error: 外部 SIGTERM 用例未就绪（桩未记录两个 PID）" >&2
+  runpi_ok=0
+fi
+kill -TERM "$runpi_bg" 2>/dev/null || true
+runpi_sig_rc=0
+wait "$runpi_bg" || runpi_sig_rc=$?
+runpi_bg=""
+if [ "$runpi_sig_rc" -ne 143 ]; then
+  echo "Error: run_pi.sh 外部 SIGTERM 未以 143 退出（exit=${runpi_sig_rc}）" >&2
+  runpi_ok=0
+fi
+if [ -f "$RUNPI_TMP/sig-pid" ] && ! runpi_wait_gone "$RUNPI_TMP/sig-pid"; then
+  echo "Error: 外部 SIGTERM 后仍有 pi 进程存活（1s 内未消失）" >&2
+  runpi_ok=0
+fi
+# 正常退出：桩记录 PID 后立即 exit 0，其忽略 TERM 的后台子进程必须被 wrapper 清掉，退出码保持 0。
+runpi_exit_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/exit-pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/exit.log" 2>&1 </dev/null || runpi_exit_code=$?
+if [ "$runpi_exit_code" -ne 0 ]; then
+  echo "Error: run_pi.sh 正常退出路径未保持 pi 的退出码 0（exit=${runpi_exit_code}）" >&2
+  runpi_ok=0
+fi
+if [ ! -f "$RUNPI_TMP/exit-pid" ] || [ "$(wc -l < "$RUNPI_TMP/exit-pid")" -lt 2 ]; then
+  echo "Error: 正常退出用例未就绪（桩未记录两个 PID）" >&2
+  runpi_ok=0
+elif ! runpi_wait_gone "$RUNPI_TMP/exit-pid"; then
+  echo "Error: run_pi.sh 正常退出后仍遗留忽略 TERM 的后台子进程" >&2
+  runpi_ok=0
+fi
+# 允许清单内的参数必须真实按序透传给 pi（只验退出码发现不了取值或选项被守卫吞掉）。
+runpi_pass_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/pass-pid" STUB_ARGV_FILE="$RUNPI_TMP/pass-argv" \
+  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  --model provider/id --thinking high --approve \
+  > "$RUNPI_TMP/pass.log" 2>&1 </dev/null || runpi_pass_code=$?
+if [ "$runpi_pass_code" -ne 0 ]; then
+  echo "Error: run_pi.sh 误拒允许清单内的参数（exit=${runpi_pass_code}）" >&2
+  runpi_ok=0
+fi
+runpi_pass_argv=""
+if [ -f "$RUNPI_TMP/pass-argv" ]; then
+  runpi_pass_argv="$(tr '\n' ' ' < "$RUNPI_TMP/pass-argv")"
+fi
+case " $runpi_pass_argv " in
+  *" --model provider/id --thinking high --approve "*) ;;
+  *)
+    echo "Error: 允许清单参数未按序透传给 pi: ${runpi_pass_argv:-（桩未记录参数）}" >&2
+    runpi_ok=0
+    ;;
+esac
+for bad_args in \
+  "-bad|$RUNPI_TMP/prompt.txt" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--session-id|other" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--model" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--model=" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--thinking=" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--model|--approve" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--thinking" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--model=--approve" \
+  "stub-session|$RUNPI_TMP/prompt.txt|--thinking=-x" \
+  "stub-session|$RUNPI_TMP/prompt.txt|-m" \
+  "stub session|$RUNPI_TMP/prompt.txt"; do
+  IFS='|' read -r -a runpi_args <<< "$bad_args"
+  runpi_args_rc=0
+  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=5 \
+    bash easypi/scripts/run_pi.sh "${runpi_args[@]}" >/dev/null 2>&1 </dev/null || runpi_args_rc=$?
+  if [ "$runpi_args_rc" -ne 2 ]; then
+    echo "Error: run_pi.sh 参数守卫未拒绝: ${runpi_args[*]}（exit=${runpi_args_rc}）" >&2
+    runpi_ok=0
+  fi
+done
+# 纯空白取值：单列在此，避免 IFS 切分把空白字段吃掉。
+for blank_args in "--model" "--thinking"; do
+  runpi_blank_rc=0
+  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=5 \
+    bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" "$blank_args" "   " \
+    >/dev/null 2>&1 </dev/null || runpi_blank_rc=$?
+  if [ "$runpi_blank_rc" -ne 2 ]; then
+    echo "Error: run_pi.sh 未拒绝纯空白取值: $blank_args \"   \"（exit=${runpi_blank_rc}）" >&2
+    runpi_ok=0
+  fi
+  runpi_blank_rc=0
+  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=5 \
+    bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" "$blank_args=   " \
+    >/dev/null 2>&1 </dev/null || runpi_blank_rc=$?
+  if [ "$runpi_blank_rc" -ne 2 ]; then
+    echo "Error: run_pi.sh 未拒绝纯空白取值: $blank_args=   （exit=${runpi_blank_rc}）" >&2
+    runpi_ok=0
+  fi
+done
+runpi_cleanup
+if [ "$runpi_ok" -ne 1 ]; then
+  exit 1
+fi
+echo "OK: run_pi.sh 硬超时 124、响应 SIGTERM 的桩 3s 内 124、外部 SIGTERM 143、正常退出清子进程、参数守卫均返回 2（允许清单内参数按序透传）"
 if command -v pwsh >/dev/null 2>&1; then
   pwsh -NoProfile -Command '
     $errors = $null
@@ -661,7 +877,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=74708
+MAX_TOTAL=75839
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

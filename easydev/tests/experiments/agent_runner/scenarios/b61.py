@@ -248,7 +248,12 @@ def evaluate(workspace: Path, changed_paths: list, final_message: str, observed:
         if not path.startswith(IGNORED_HIDDEN_PREFIXES)
     ]
     file_access = set(getattr(observed, "file_access", {}) or {})
-    caller_evidence = sorted(path for path in CALLER_PATHS if path in file_access)
+    caller_evidence = sorted(
+        path
+        for path in file_access
+        for target in CALLER_PATHS
+        if path == target or path.endswith("/" + target)
+    )
     review_rounds = int(getattr(observed, "reviewer_instances", 0) or 0)
     completed = int(getattr(observed, "reviewer_completed_instances", 0) or 0)
     closed_loop_claim = claims_full_closed_loop(final_message)

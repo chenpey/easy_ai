@@ -256,6 +256,7 @@ def select(
     env: Optional[Dict[str, str]] = None,
     now: Optional[datetime] = None,
     locked_window: Optional[str] = None,
+    trust_project: bool = True,
 ) -> Selection:
     """按优先级选第一个存在的完整文件；文件之间不合并，但会按北京时间（或
     locked_window）应用所选文件内的 windows 覆盖后再应用对话级覆盖。"""
@@ -271,7 +272,7 @@ def select(
         if selection.config is None and selection.error is None:
             return Selection(None, "对话指定文件", "对话指定配置文件不存在；不能静默回退到低优先级来源")
         return _apply_window(selection, context, now, locked_window)
-    if project_root:
+    if project_root and trust_project:
         project_path = os.path.join(project_root, ".easydev", "models.json")
         project = _read_config(project_path, "项目配置")
         if project.error:
@@ -369,6 +370,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     resolve.add_argument("--locked", default=None, help="锁定时段键；default 锁定顶层默认配置")
     resolve.add_argument("--project-root", default=None, help="项目根目录（读取 .easydev/models.json）")
     resolve.add_argument("--now", default=None, help="ISO 8601 时间，用于确定性验证时间边界")
+    resolve.add_argument(
+        "--untrusted",
+        action="store_true",
+        help="不读项目级 .easydev/models.json（审查/审计不可信仓库时使用）",
+    )
     args = parser.parse_args(argv)
     now = None
     error = None
@@ -378,7 +384,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         except ValueError:
             error = "--now 不是合法 ISO 8601 时间；按规则暂停分派"
     selection = Selection(None, "命令行参数", error) if error else select(
-        project_root=args.project_root, now=now, locked_window=args.locked
+        project_root=args.project_root,
+        now=now,
+        locked_window=args.locked,
+        trust_project=not args.untrusted,
     )
     print(json.dumps({
         "ok": selection.ok,

@@ -37,6 +37,7 @@ DESIGNER_DELEGATED = "delegated"  # 可用独立实例
 def resolve_designer(
     *,
     model: str = "inherit",
+    reasoning_effort: str = "inherit",
     model_available: bool = True,
     delegation_available: bool = True,
     user_forbids_delegation: bool = False,
@@ -44,15 +45,8 @@ def resolve_designer(
     developer_non_inherit: bool = False,
 ) -> dict:
     """按 design.md「设计者」与「实例隔离」判定本次设计分派的形态。"""
-    # 1) 配置了具体模型但不可用：暂停并报受阻，与有无委派能力无关。
-    if model != "inherit" and not model_available:
-        return {
-            "mode": DESIGNER_PAUSED,
-            "counts_dr": False,
-            "gate": "closed",
-            "reason": "designer 配置的具体模型不可用：暂停设计分派并报受阻，不回落主代理",
-        }
-    # 2) 用户明确授权自查（含用户禁止委派）：主代理兜底；无授权的无委派能力则暂停。
+    # 1) 用户明确授权自查（含明确禁止委派）优先于角色模型配置：配置不可用不得把
+    #    用户可用的兜底路径变成停闸。
     if user_forbids_delegation:
         return {
             "mode": DESIGNER_FALLBACK,
@@ -60,6 +54,14 @@ def resolve_designer(
             "gate": "open_self_checked",
             "must_delegate_developer": False,
             "reason": "用户明确授权主代理自查（或明确禁止委派），按无能力兜底",
+        }
+    # 2) 配置了具体模型或具体深度但不可用：暂停并报受阻，与有无委派能力无关。
+    if not (model == "inherit" and reasoning_effort == "inherit") and not model_available:
+        return {
+            "mode": DESIGNER_PAUSED,
+            "counts_dr": False,
+            "gate": "closed",
+            "reason": "designer 配置的具体模型或深度不可用：暂停设计分派并报受阻，不回落主代理",
         }
     if not delegation_available:
         return {
@@ -69,7 +71,7 @@ def resolve_designer(
             "reason": "宿主不具备子代理委派能力：暂停设计分派并报受阻，由用户决定改配置、停止或授权自查",
         }
     # 3) 有委派能力。
-    if model == "inherit":
+    if model == "inherit" and reasoning_effort == "inherit":
         return {
             "mode": DESIGNER_MAIN_AGENT,
             "counts_dr": True,
@@ -440,6 +442,10 @@ class Budget:
         self.open_findings = 0  # 未关闭的确认缺陷（含范围内 P2、验收缺口）
         self.full_reviewed = False
         self.review_current = False
+        # 中间复审清零仍须由新实例终审；只有终审（is_final=True）或从未修复过的
+        # 首审可以收口。
+        self.needs_final = False
+        self.final_reviewed = False
         # 上次审查后是否发生过修改：定向复审必须有新的修复证据。
         self.change_since_review = False
         # 未启用本环节时没有施工闸，直接按 full 其余流程施工。
@@ -531,6 +537,9 @@ class Budget:
         """施工期修复后核销已关闭缺陷；设计缺陷只能靠升版重审关闭。"""
         if not self.gate_open:
             raise RuleError("施工闸开启前不得核销设计缺陷；须升版重审")
+        if self._r_left() < 1:
+            # 末轮已无复审机会：不做无复审机会的核销。
+            raise Stop("未完成", "无剩余复审轮次，不核销未复审的修复")
         self.record_change()
         self.open_findings = 0 if count is None else max(0, self.open_findings - count)
 
@@ -538,6 +547,8 @@ class Budget:
         """实现、调用方或验证依赖变化：旧审查不再证明当前版本。"""
         self.review_current = False
         self.change_since_review = True
+        # 终审后又修改：已完成的收口失效，须重新终审后才能 finish()。
+        self.final_reviewed = False
 
     def freeze(self) -> None:
         self._require_design_phase("冻结设计版本")
@@ -570,15 +581,21 @@ class Budget:
     def full_review(self, findings: int = 0) -> None:
         if not self.gate_open:
             raise RuleError("完整初审须在施工闸之后")
+        if self.full_reviewed and not self.change_since_review:
+            # 重复完整初审不得在无修改时充当复审：那正是「无修改清零缺陷」的旁路。
+            raise RuleError("已完整初审；无修改不得以完整初审再次清零缺陷，复审请用 rereview/final_review")
         self._spend_r("完整初审")
         self.full_reviewed = True
         self.open_findings = findings
         self.review_current = self.open_findings == 0
         self.change_since_review = False
+        # 首审无修复即终审；报出缺陷则后续必须有终审收口。
+        self.needs_final = bool(findings)
+        self.final_reviewed = not findings
         if findings and self._r_left() < 1:
             raise Stop("未完成", "完整初审报出缺陷但已无复审轮次")
 
-    def rereview(self, findings: int = 0) -> None:
+    def rereview(self, findings: int = 0, *, is_final: bool = False) -> None:
         if self.pure_design:
             raise RuleError("纯 design 路径无独立设计施工审查环节，不得发起施工复审")
         if not self.gate_open:
@@ -587,10 +604,45 @@ class Budget:
             raise RuleError("未经完整初审不得以复审替代")
         if not self.change_since_review:
             raise RuleError("复审前必须有新的修改或修复证据；无修改不得用复审清零缺陷")
+        if self._r_left() < 1:
+            # 已无复审轮次：这是停止条件，不是可换路径的规则拒绝。
+            raise Stop("未完成", "无剩余复审轮次，无法发起复审")
+        if not is_final and self._r_left() < 2:
+            # 中间复审只负责仍有未完成修复的版本，须为终审预留一轮。
+            raise RuleError(
+                f"中间复审后仅余 {self._r_left() - 1} 轮，无法再为新实例终审预留一轮；应直接由终审收口，或报未完成"
+            )
         self._spend_r("复审")
         self.open_findings = findings
         self.review_current = self.open_findings == 0
         self.change_since_review = False
+        # 报出缺陷即仍需下一次终审收口，与 final_review 同口径。
+        self.needs_final = (not is_final) or bool(findings)
+        self.final_reviewed = is_final and not findings
+        if findings and self._r_left() < 1:
+            # 与 full_review 同口径：末轮报缺陷且无后续复审即停。
+            raise Stop("未完成", "复审报出缺陷但已无复审轮次")
+
+    def final_review(self, findings: int = 0) -> None:
+        """新实例终审：同一冻结 diff 的收口轮，不要求新的修改证据。"""
+        if self.pure_design:
+            raise RuleError("纯 design 路径无施工终审")
+        if not self.gate_open:
+            raise RuleError("终审须在施工闸之后")
+        if not self.full_reviewed:
+            raise RuleError("未经完整初审不得终审")
+        if not (self.change_since_review or (self.open_findings == 0 and self.review_current and self.needs_final)):
+            # 无可审对象时终审不得拿来清零上一轮审查报出的缺陷。
+            raise RuleError("终审须收口已修复的修改或中间复审清零的版本；无修改不得用终审清零缺陷")
+        self._spend_r("终审")
+        self.open_findings = findings
+        self.review_current = findings == 0
+        self.change_since_review = False
+        # 终审报出缺陷即仍需下一次终审收口。
+        self.needs_final = bool(findings)
+        self.final_reviewed = not findings
+        if findings and self._r_left() < 1:
+            raise Stop("未完成", "终审报出缺陷但已无复审轮次")
 
     def finish(self) -> str:
         if not self.gate_open:
@@ -601,4 +653,6 @@ class Budget:
             raise RuleError("最终版本尚无完整施工审查")
         if not self.review_current:
             raise RuleError("最终修改尚未经审查")
+        if self.needs_final or not self.final_reviewed:
+            raise RuleError("中间复审清零不替代新实例终审；须以 is_final=True 收口")
         return "闭环完成"

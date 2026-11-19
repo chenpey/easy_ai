@@ -33,7 +33,10 @@ def prepare_codex_environment(run_dir: Path, auth_path: Path) -> Dict[str, str]:
     home.chmod(0o700)
     run_dir.chmod(0o700)
     auth_link = codex_home / "auth.json"
-    if not auth_link.exists():
+    # 悬空软链 exists() 报缺、lexists() 又跳过重建：先删旧链再建，避免认证永 dangling。
+    if os.path.islink(auth_link):
+        auth_link.unlink()
+    if not os.path.lexists(auth_link):
         auth_link.symlink_to(auth_path)
     env = os.environ.copy()
     for key in ("CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"):
@@ -179,7 +182,7 @@ def run_codex(
             )
             tracked = {}
             try:
-                returncode, tracked = wait_for_process(process, timeout)
+                returncode, _ = wait_for_process(process, timeout, tracked=tracked)
                 if returncode is None:
                     timed_out = True
             finally:

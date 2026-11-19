@@ -212,8 +212,115 @@ _KNOWN_COMMANDS = frozenset(
         "node",
         "curl",
         "wget",
+        "pytest",
+        "py.test",
+        "tox",
+        "nox",
+        "make",
     }
 )
+# 不读文件内容、也不把 stdin 当程序执行的命令：只有它们可以“无读取目标”地放行。
+# 其余命令（解释器、sed/dd/tar/ln 等）即使名字已知，读取边界也未完整建模。
+_READ_SILENT_COMMANDS = frozenset(
+    {
+        "echo",
+        "printf",
+        "true",
+        "false",
+        "pwd",
+        "cd",
+        "which",
+        "test",
+        "[",
+        "touch",
+        "mkdir",
+        "rm",
+        "rmdir",
+        "chmod",
+        "chown",
+        "truncate",
+        "tee",
+        "apply_patch",
+    }
+)
+# git 子命令分档：读取类默认只读当前仓库（cwd 受 _apply_cwd_rules 约束），
+# 路径操作数逐个校验；安全类不读仓库外内容；其余（config/fetch/pull/archive/
+# submodule/worktree/filter-branch/bisect 等可读其它仓库或执行命令）一律 fail-closed。
+_GIT_SAFE_SUBCOMMANDS = {
+    "status",
+    "add",
+    "commit",
+    "rev-parse",
+    "tag",
+    "branch",
+    "checkout",
+    "switch",
+    "restore",
+    "reset",
+    "clean",
+    "stash",
+    "rm",
+    "mv",
+    "merge",
+    "cherry-pick",
+    "revert",
+    "rebase",
+    "update-index",
+    "gc",
+    "prune",
+    "repack",
+    "apply",
+    "am",
+}
+# 改变仓库根/对比基准/配置注入的 git 全局选项：一旦出现，仓库外读取不可证明。
+_GIT_ROOT_OPTIONS = {
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--no-index",
+    "--git-common-dir",
+    "--exec-path",
+    "--namespace",
+    "--config-env",
+    "--super-prefix",
+}
+# 解释器只接受这两个模块入口（仓库规定的测试命令）；其余 `-m` 一律 fail-closed。
+_PYTHON_MODULE_ALLOWLIST = {"pytest", "unittest"}
+# 前置赋值/`env` 赋值里能改变读取路径或执行入口的变量：出现即不可证明。
+_SENSITIVE_ENV_PREFIXES = (
+    "GIT_",
+    "PYTHON",
+    "RIPGREP_CONFIG_PATH",
+    "GREP_OPTIONS",
+    "PYTEST_ADDOPTS",
+    "PATH",
+    "CDPATH",
+    "EDITOR",
+    "HOME",
+    "MAGIC",
+    "VISUAL",
+    "XDG_CONFIG_HOME",
+    "MAKEFLAGS",
+    "MAKEFILES",
+    "GNUMAKEFLAGS",
+    "BASH_ENV",
+    "ENV",
+    "PAGER",
+    "MANPAGER",
+    "LESS",
+    "LESSOPEN",
+    "LESSCLOSE",
+    "TAR_OPTIONS",
+    "GLOBIGNORE",
+    "LD_",
+    "DYLD_",
+)
+
+
+def _sensitive_env_assignment(text: str) -> bool:
+    name = text.split("=", 1)[0]
+    return any(name.startswith(prefix) for prefix in _SENSITIVE_ENV_PREFIXES)
 
 # 重定向按运算符分类：数字前缀只是被重定向的 fd，不是目标文件名。
 # `<<<` 优先于 `<<-`，`<<-` 优先于 `<<`（最长匹配）。
@@ -1551,8 +1658,11 @@ def _strip_redirects(
         argv.append(token.text)
         argv_tokens.append(token)
         index += 1
-    # 前置 KEY=VALUE 环境赋值不是命令。
+    # 前置 KEY=VALUE 环境赋值不是命令；GIT_*/PYTHON*/RIPGREP_CONFIG_PATH 等会改变
+    # 内层读取路径或执行入口。
     while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
+        if analysis is not None and _sensitive_env_assignment(argv[0]):
+            analysis.read_unknown = True
         argv = argv[1:]
         argv_tokens = argv_tokens[1:]
     return argv, argv_tokens, redirects, opaque
@@ -1589,7 +1699,30 @@ ENV_VALUE_OPTIONS = {
     "--default-signal",
     "--ignore-signal",
 }
-SUDO_VALUE_OPTIONS = {"-u", "-g", "-h", "-p", "-C", "-T", "-r", "-t", "-U", "-D"}
+# sudo 的已知无值短选项；其余短选项字母按“可能吃值”处理。
+SUDO_FLAG_LETTERS = frozenset("AbEHikKlNnPSsVv")
+# `sudo -i/-s` 会切到目标用户的 HOME 执行内层命令，按 workspace 定位读取边界不成立。
+SUDO_FLAG_LETTERS -= {"i", "s"}
+SUDO_VALUE_OPTIONS = {
+    "-u",
+    "-g",
+    "-h",
+    "-p",
+    "-C",
+    "-T",
+    "-r",
+    "-t",
+    "-U",
+    "-D",
+    "-R",
+    "--chdir",
+    "--chroot",
+    "--user",
+    "--group",
+    "--host",
+    "--prompt",
+    "--close-from",
+}
 
 
 def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str, str]:
@@ -1627,6 +1760,9 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str, str]:
         inner_cwd = ""
         while index < len(rest):
             text = rest[index].text
+            if text in {"-S", "--split-string"} or text.startswith("--split-string="):
+                # `env -S` 把一整串再拆成命令，内层无法静态证明。
+                return None, True, "", ""
             if text in ENV_NO_VALUE_OPTIONS:
                 index += 1
                 continue
@@ -1654,6 +1790,9 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str, str]:
                 index += 1
                 continue
             if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", text):
+                if _sensitive_env_assignment(text):
+                    # `env GIT_DIR=…` / `PYTHONPATH=…` 会改变内层读取路径。
+                    opaque = True
                 index += 1
                 continue
             break
@@ -1662,6 +1801,7 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str, str]:
         return as_argv(rest[index:]), opaque, inner_cwd, "argv"
     if name == "sudo":
         index = 0
+        inner_cwd = ""
         while index < len(rest):
             text = rest[index].text
             if text == "--":
@@ -1670,21 +1810,67 @@ def _wrapper_inner(tokens: List[Token]) -> Tuple[Optional[str], bool, str, str]:
             if text in SUDO_VALUE_OPTIONS:
                 if index + 1 >= len(rest):
                     return None, True, "", ""
+                if text in {"-R", "--chroot"}:
+                    # chroot 会把绝对路径重解释到新根：读取边界静态不可证明。
+                    return None, True, "", ""
+                if text in {"-D", "--chdir"}:
+                    inner_cwd = rest[index + 1].text
                 index += 2
                 continue
-            if text.startswith("-") and text != "-":
-                if "=" in text and text.split("=", 1)[0] in SUDO_VALUE_OPTIONS:
+            if text.startswith("--"):
+                option, separator, attached = text.partition("=")
+                if option in SUDO_VALUE_OPTIONS and separator:
+                    if option in {"-R", "--chroot"}:
+                        return None, True, "", ""
+                    if option == "--chdir":
+                        inner_cwd = attached
                     index += 1
                     continue
+                # 未知长选项可能吃值：内层命令边界不可证明。
+                return None, True, "", ""
+            if text.startswith("-") and text != "-":
+                for position, letter in enumerate(text[1:]):
+                    if letter == "R":
+                        return None, True, "", ""
+                    if letter == "D":
+                        attached_value = text[2 + position :]
+                        if attached_value:
+                            inner_cwd = attached_value
+                        elif index + 1 < len(rest):
+                            inner_cwd = rest[index + 1].text
+                            index += 1
+                        else:
+                            return None, True, "", ""
+                        break
+                    if letter in SUDO_FLAG_LETTERS:
+                        continue
+                    # 未知短选项字母：不猜哪个字母吃掉命令名。
+                    return None, True, "", ""
                 index += 1
                 continue
             break
         if index >= len(rest):
             return None, opaque, "", ""
-        return as_argv(rest[index:]), opaque, "", "argv"
+        return as_argv(rest[index:]), opaque, inner_cwd, "argv"
     if name in {"command", "exec"}:
         index = 0
         while index < len(rest) and _looks_like_option(rest[index].text):
+            text = rest[index].text
+            if text == "--":
+                index += 1
+                break
+            if name == "exec" and text == "-a":
+                # `exec -a <argv0> <cmd>`：argv0 不是命令，必须一并消费。
+                if index + 1 >= len(rest):
+                    return None, True, "", ""
+                index += 2
+                continue
+            if name == "exec" and text in {"-c", "-l"}:
+                index += 1
+                continue
+            if name == "exec":
+                # `-ca`/`-la` 等组合短选项里的 `-a` 会吃掉下一个参数：边界不可证明。
+                return None, True, "", ""
             index += 1
         if index >= len(rest):
             return None, opaque, "", ""
@@ -1709,14 +1895,19 @@ def _wrapper_effective_cwd(
         # 宿主 HOME 与 `~user` 的 passwd 解析都无法在本进程证明，不猜成相对目录。
         return None, False
     if os.path.isabs(value):
-        return os.path.normpath(value), True
+        # 绝对路径直接交给守卫 realpath：`link-dir/..` 在物理语义下可能落在
+        # 允许根之外，词法 normpath 会把校验对象换成另一条路径。
+        return value, True
     if not base:
         return None, False
-    return os.path.normpath(os.path.join(base, value)), base_known
+    # env -C / sudo -D 走内核 chdir（物理语义）：不要词法折叠 `link-dir/..`，
+    # 保留原样交给守卫的 realpath 核对。
+    return os.path.join(base, value), base_known
 
 
 def _track_cd(args: List[str], current: Optional[str]) -> Optional[str]:
     """跟踪可静态确定的 `cd` 目标；无法确定返回 None。"""
+    physical = any(token in {"-P", "--physical"} for token in args)
     positional = [token for token in args if not _looks_like_option(token)]
     if len(positional) != 1:
         return None
@@ -1724,11 +1915,33 @@ def _track_cd(args: List[str], current: Optional[str]) -> Optional[str]:
     if target.startswith("~") or target == "-" or re.search(r"[$`*?\[\]{}]", target):
         # 去引用后仍以 `~` 开头即不可静态定位：不展开 HOME/passwd，也不拼相对目录。
         return None
+    if physical or ".." in target.split("/"):
+        # `cd -P` 走物理路径、含 `..` 时逻辑/物理语义可能不同：不猜，按目录未知处理。
+        return None
     if os.path.isabs(target):
         return os.path.normpath(target)
-    if not current:
+    if not current or ".." in current.split("/"):
+        # 继承自 `env -C`/`sudo -D` 的 cwd 可能含软链 + `..`：词法折叠会把校验对象
+        # 换成另一条物理路径，按目录未知处理。
         return None
     return os.path.normpath(os.path.join(current, target))
+
+
+def _git_operand_path(token: str) -> Optional[str]:
+    """把 Git 位置参数还原为需要校验的文件路径；纯修订表达式返回 None。"""
+    if token.startswith("~") or token in {".", ".."}:
+        return token
+    revision, separator, path = token.partition(":")
+    if separator and "/" not in revision and not path.startswith("~"):
+        # `HEAD~1:src/app.py`：前半是仓库内修订表达式，后半才是路径。
+        return path or None
+    if "/" in token:
+        return token
+    if any(char in token for char in "~^@"):
+        # `HEAD~1`/`HEAD^`/`HEAD@{1}`：仓库内修订表达式，不按文件路径校验。
+        return None
+    # 单段操作数可能是文件名或软链（`git diff link-file`）：交给守卫 realpath。
+    return token or None
 
 
 def _git_actions(
@@ -2923,21 +3136,9 @@ def _write_targets_for_command(
 
 
 _READ_VALUE_OPTIONS = {
-    "-e",
-    "-g",
-    "-t",
-    "-T",
-    "-f",
-    "-A",
-    "-B",
-    "-C",
-    "-m",
-    "-j",
-    "-M",
     "--glob",
     "--iglob",
     "--type",
-    "--type-not",
     "--max-count",
     "--max-depth",
     "--context",
@@ -2946,7 +3147,118 @@ _READ_VALUE_OPTIONS = {
     "--file",
     "--regexp",
     "--encoding",
+    "--sort",
+    "--sortr",
+    "--colors",
+    "--threads",
+    "--max-filesize",
+    "--max-columns",
+    "--replace",
+    "--engine",
+    "--path-separator",
+    "--field-match-separator",
+    "--field-context-separator",
+    "--dfa-size-limit",
+    "--regex-size-limit",
+    "--type-add",
+    "--type-not",
+    "--label",
+    "--include",
+    "--exclude",
+    "--exclude-dir",
+    "--group-separator",
+    "--binary-files",
+    "--directories",
+    "--devices",
+    "--pre-glob",
 }
+# 搜索类的无值长选项（只影响输出与过滤）。未列入的长选项一律按“可能吃值”处理：
+# 不猜它是不是带值选项，直接把读取目标标为不可证明。
+_SEARCH_FLAG_LONG_OPTIONS = frozenset(
+    {
+        "--basic-regexp",
+        "--extended-regexp",
+        "--fixed-strings",
+        "--perl-regexp",
+        "--pcre2",
+        "--no-pcre2",
+        "--ignore-case",
+        "--no-ignore-case",
+        "--smart-case",
+        "--case-sensitive",
+        "--invert-match",
+        "--word-regexp",
+        "--line-regexp",
+        "--line-buffered",
+        "--line-number",
+        "--no-line-number",
+        "--column",
+        "--no-column",
+        "--with-filename",
+        "--no-filename",
+        "--heading",
+        "--no-heading",
+        "--only-matching",
+        "--quiet",
+        "--silent",
+        "--no-messages",
+        "--recursive",
+        "--dereference-recursive",
+        "--text",
+        "--binary",
+        "--count",
+        "--count-matches",
+        "--files-with-matches",
+        "--files-without-match",
+        "--null",
+        "--null-data",
+        "--initial-tab",
+        "--byte-offset",
+        "--unix-byte-offsets",
+        "--color",
+        "--colour",
+        "--hidden",
+        "--no-ignore",
+        "--no-ignore-vcs",
+        "--no-ignore-parent",
+        "--no-ignore-global",
+        "--no-ignore-dot",
+        "--no-ignore-exclude",
+        "--no-ignore-files",
+        "--ignore-file-case-insensitive",
+        "--multiline",
+        "--multiline-dotall",
+        "--crlf",
+        "--trim",
+        "--no-trim",
+        "--files",
+        "--stats",
+        "--json",
+        "--vimgrep",
+        "--unrestricted",
+        "--debug",
+        "--no-config",
+        "--no-mmap",
+        "--mmap",
+        "--follow",
+        "--no-follow",
+        "--search-zip",
+        "--no-search-zip",
+        "--passthru",
+        "--no-passthru",
+        "--stop-on-nonmatch",
+        "--no-unicode",
+        "--unicode",
+        "--require-git",
+        "--no-require-git",
+        "--no-ignore-messages",
+        "--help",
+        "--version",
+    }
+)
+# `tree` 的带值选项（值是层级/模式等，不是读取目标）。`ls` 没有带值短选项：
+# 共用搜索集合会把 `ls -t /outside` 的路径当选项值吞掉。
+_TREE_VALUE_OPTIONS = {"-L", "-P", "-I", "-o", "--filelimit"}
 _FIND_VALUE_OPTIONS = {
     "-name",
     "-iname",
@@ -2968,7 +3280,7 @@ _FIND_VALUE_OPTIONS = {
     "-printf",
 }
 # `find` 的表达式动作：删除与执行。`-exec/-execdir/-ok` 的参数到裸 `;` 或 `+` 才结束。
-_FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok"}
+_FIND_EXEC_ACTIONS = {"-exec", "-execdir", "-ok", "-okdir"}
 _FIND_DELETE_ACTIONS = {"-delete"}
 # `sort` 的显式输出选项：值是写目标，不是输入文件。
 _SORT_OUTPUT_OPTION = "--output"
@@ -3027,17 +3339,41 @@ SEARCH_FLAG_LETTERS = {
 
 
 def _find_layout(rest: List[str]) -> Dict[str, object]:
-    """按 `find [起点…] [表达式…]` 布局分离搜索根与动作。
+    """按 `find [前置选项] [起点…] [表达式…]` 布局分离搜索根与动作。
 
     起点只到第一个表达式 token（`-` 开头）为止，缺省是 `.`；带值谓词先消费自己的
     值，所以 `find . -name -delete` 里的 `-delete` 是被匹配的模式而不是动作。
     `-exec/-execdir/-ok` 的参数到裸 `;` 或 `+` 才结束，绝不当作搜索根。读端与写端
-    共用这份布局，不各自重解一遍。
+    共用这份布局，不各自重解一遍。未知前置选项与 `-files0-from` 都会换掉起点集合：
+    标 `read_unknown` 交给调用方 fail-closed。
     """
     roots: List[str] = []
     exec_actions = 0
     delete_actions = 0
+    follow = False
+    read_unknown = False
     index = 0
+    # find 的前置全局选项（-P/-H/-L/-E/-x/-s/-d、`-D debugopts`、`-O*`、`--`）
+    # 不是起点也不是表达式；BSD 的 -x/-s/-d 与 GNU 的 -D/-O 同样只影响遍历。
+    while index < len(rest):
+        token = rest[index]
+        if token in {"-P", "-H", "-L", "-E", "-x", "-s", "-d"}:
+            follow = follow or token == "-L"
+            index += 1
+            continue
+        if token == "-D" and index + 1 < len(rest):
+            index += 2
+            continue
+        if token.startswith("-O") and token != "-O":
+            index += 1
+            continue
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            # 未知前置选项可能吃值：起点位置不可定位。
+            read_unknown = True
+        break
     expression_seen = False
     while index < len(rest):
         token = rest[index]
@@ -3046,6 +3382,11 @@ def _find_layout(rest: List[str]) -> Dict[str, object]:
             index += 1
             continue
         expression_seen = True
+        if token in {"-files0-from", "--files0-from"}:
+            # 间接文件清单的读取目标无法证明。
+            read_unknown = True
+            index += 2
+            continue
         if token in _FIND_VALUE_OPTIONS:
             # 带值谓词吃掉自己的值；值缺在末尾时直接结束扫描。
             index += 2
@@ -3067,6 +3408,8 @@ def _find_layout(rest: List[str]) -> Dict[str, object]:
         "roots": roots or ["."],
         "exec": exec_actions,
         "delete": delete_actions,
+        "follow": follow,
+        "read_unknown": read_unknown,
     }
 
 
@@ -3174,26 +3517,27 @@ def _sort_layout(rest: List[str]) -> Dict[str, object]:
 
 
 def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
-    follow = False
-    if name == "rg":
-        follow = "--follow" in rest or "-L" in rest
-    elif name == "find":
-        follow = any(token in {"-L", "-H"} and index == 0 for index, token in enumerate(rest))
-        follow = follow or "-L" in rest[:2]
-    elif name == "ls":
-        follow = any(token.startswith("-") and "L" in token for token in rest)
-    if follow:
-        analysis.recursive_follow = True
     if name == "find":
         layout = _find_layout(rest)
         if layout["exec"]:
             # 不解释被执行程序就无法证明读取边界（回放守卫在此 fail-closed）。
             analysis.read_unknown = True
+        if layout["read_unknown"]:
+            analysis.read_unknown = True
+        if layout["follow"]:
+            analysis.recursive_follow = True
         for root in layout["roots"]:  # type: ignore[union-attr]
             analysis.reads.append(
-                {"kind": "find", "path": root, "recursive": True, "follow": follow}
+                {"kind": "find", "path": root, "recursive": True, "follow": bool(layout["follow"])}
             )
         return
+    follow = False
+    if name == "rg":
+        follow = "--follow" in rest or "-L" in rest
+    elif name == "ls":
+        follow = any(token.startswith("-") and "L" in token for token in rest)
+    if follow:
+        analysis.recursive_follow = True
     roots: List[str] = []
     pattern_files: List[str] = []
     has_explicit_pattern = False
@@ -3202,12 +3546,32 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
     index = 0
     positional: List[str] = []
     supports_pattern_file = name in {"rg", "grep", "ag", "ack"}
+    value_options = (
+        _TREE_VALUE_OPTIONS if name == "tree" else set() if name == "ls" else _READ_VALUE_OPTIONS
+    )
     while index < len(rest):
         token = rest[index]
-        if token in _READ_VALUE_OPTIONS:
-            if token in {"-e", "--regexp"}:
+        if token == "--":
+            # `--` 之后全是操作数：grep/rg 未显式给模式时首个 operand 仍是模式。
+            positional.extend(rest[index + 1 :])
+            break
+        if token in {"--ignore-file", "--exclude-from"}:
+            # 忽略/排除规则文件也是真实读取目标。
+            if index + 1 < len(rest):
+                pattern_files.append(rest[index + 1])
+            else:
+                analysis.read_unknown = True
+            index += 2
+            continue
+        if token == "--pre":
+            # `--pre` 执行任意命令，其读取边界不可证明（值不是读取目标）。
+            analysis.read_unknown = True
+            index += 2
+            continue
+        if token in value_options:
+            if token == "--regexp":
                 has_explicit_pattern = True
-            if supports_pattern_file and token in {"-f", "--file"}:
+            if supports_pattern_file and token == "--file":
                 has_explicit_pattern = True
                 if index + 1 < len(rest):
                     pattern_files.append(rest[index + 1])
@@ -3220,11 +3584,27 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
             if option == "--regexp":
                 has_explicit_pattern = True
             if supports_pattern_file and option == "--file":
+                has_explicit_pattern = True
                 value = token.split("=", 1)[1]
                 if value:
                     pattern_files.append(value)
                 else:
                     analysis.read_unknown = True
+            if option in {"--ignore-file", "--exclude-from"}:
+                value = token.split("=", 1)[1]
+                if value:
+                    pattern_files.append(value)
+                else:
+                    analysis.read_unknown = True
+            if option == "--pre":
+                analysis.read_unknown = True
+            if (
+                option not in _SEARCH_FLAG_LONG_OPTIONS
+                and option not in value_options
+                and option not in {"--file", "--regexp", "--ignore-file", "--exclude-from", "--pre"}
+            ):
+                # 未识别的长选项可吃任意值（包括路径）：目标不可证明。
+                analysis.read_unknown = True
             index += 1
             continue
         if (
@@ -3238,6 +3618,9 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
             letters = token[1:]
             consume_next = False
             for position, letter in enumerate(letters):
+                if name == "rg" and letter == "L":
+                    # rg 的 `-L` 就是 `--follow`，短选项集群里同样要认出。
+                    analysis.recursive_follow = True
                 if letter in SEARCH_VALUE_LETTERS.get(name, set()):
                     attached = letters[position + 1 :]
                     value = attached
@@ -3264,6 +3647,12 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
             index += 2 if consume_next else 1
             continue
         if token.startswith("-") and token != "-":
+            if token.startswith("--") and token not in _SEARCH_FLAG_LONG_OPTIONS:
+                # 未识别的长选项无法确定是否吃值：读取目标不可证明。
+                analysis.read_unknown = True
+            elif name == "rg" and token in {"--color", "--colour"}:
+                # rg 只接受 `--color=WHEN`：裸写时下一个参数归属不可证明。
+                analysis.read_unknown = True
             index += 1
             continue
         positional.append(token)
@@ -3286,6 +3675,98 @@ def _search_targets(name: str, rest: List[str], analysis: Analysis) -> None:
         analysis.reads.append(
             {"kind": name + "-file", "path": pattern_file, "recursive": False, "follow": False}
         )
+
+
+_PYTHON_SHORT_FLAGS = frozenset("bBdEhIiOPqsRSuvVx")
+# `python3 -i` 在非 tty stdin 下仍会执行 stdin 代码（即使已给出脚本），不是无害开关。
+_PYTHON_SHORT_FLAGS -= {"i"}
+_PYTHON_LONG_FLAGS = frozenset({"--version", "--help", "--help-env", "--help-xoptions", "--help-all"})
+_UNITTEST_FLAG_OPTIONS = frozenset(
+    {"-v", "-q", "-f", "-b", "--verbose", "--quiet", "--failfast", "--buffer", "--locals"}
+)
+_VALIDATION_VALUE_OPTIONS = {
+    "-C",
+    "--directory",
+    "-f",
+    "--file",
+    "--makefile",
+    "-c",
+    "--conf",
+    "-I",
+    "--include-dir",
+    "--rootdir",
+    "--basetemp",
+    "--confcutdir",
+    "--junitxml",
+    "--log-file",
+    "--noxfile",
+    "--root",
+}
+
+
+def _validation_roots(name: str, rest: List[str]) -> Tuple[List[str], bool]:
+    """pytest/tox/nox/make 的读取根布局；不可证明的选项返回 unknown。"""
+    roots = ["."]
+    unknown = False
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        option = token.split("=", 1)[0]
+        if token in {"--eval", "-E", "-o", "--override-ini"} or token.startswith(
+            ("--eval=", "--override-ini=")
+        ):
+            # `--eval/-E` 执行 makefile 代码；`-o/--override-ini` 的值是复合配置。
+            unknown = True
+            index += 1 if "=" in token else 2
+            continue
+        if re.match(r"^(?:MAKEFLAGS|GNUMAKEFLAGS|MAKEFILES)=", token):
+            # `make 'MAKEFLAGS=-C/outside'` 在参数位置换掉读取根。
+            unknown = True
+            index += 1
+            continue
+        if (
+            len(token) > 2
+            and token.startswith("-")
+            and not token.startswith("--")
+            and any(letter in "CfIcIoE" for letter in token[1:])
+        ):
+            # `-sC/outside`、`-sf/x`、`-qc/pytest.ini`、`-E'...'`：
+            # 组合短选项的取值边界不可证明。
+            unknown = True
+            index += 1
+            continue
+        if name == "pytest" and option in {"-k", "-m"}:
+            # pytest 的 `-k/-m` 值是表达式（不是路径），消费掉且不当读取根。
+            index += 1 if "=" in token else 2
+            continue
+        if option in _VALIDATION_VALUE_OPTIONS:
+            if "=" in token:
+                value = token.split("=", 1)[1]
+                step = 1
+            else:
+                value = rest[index + 1] if index + 1 < len(rest) else ""
+                step = 2
+            if value:
+                roots.append(value)
+            else:
+                unknown = True
+            index += step
+            continue
+        if "=" in token:
+            if name == "make" and ("$" in token or ":=" in token or "!=" in token):
+                # make 变量赋值会在解析阶段执行 `$(shell …)`/`!=`，读取根不可证明。
+                unknown = True
+                index += 1
+                continue
+            value = token.split("=", 1)[1]
+            if "/" in value or value.startswith(("~", ".")):
+                roots.append(value.split("=", 1)[-1])
+            index += 1
+            continue
+        if not token.startswith("-"):
+            roots.append(token)
+        index += 1
+    return roots, unknown
 
 
 def _collect_reads(
@@ -3318,6 +3799,19 @@ def _collect_reads(
             analysis.read_unknown = True
         return
     if name in READ_COMMANDS:
+        # 间接文件清单（`file -f`/`wc --files0-from`）的读取目标无法证明：直接拒绝。
+        for token in rest:
+            option = token.split("=", 1)[0]
+            if option in {"--file", "--files-from", "--files0-from", "--magic-file"}:
+                analysis.read_unknown = True
+                return
+            if token.startswith("-") and not token.startswith("--") and len(token) > 1:
+                letters = token[1:]
+                if (name == "file" and any(letter in letters for letter in "fm")) or (
+                    name == "wc" and "f" in letters
+                ):
+                    analysis.read_unknown = True
+                    return
         targets = [token for token in rest if not _looks_like_option(token)]
         if not targets:
             if data_stdin:
@@ -3349,19 +3843,350 @@ def _collect_reads(
             )
         return
     if name in {"python", "python3"}:
-        literal = " ".join(rest)
-        for match in re.finditer(
-            r"(?:open|read_text|read_bytes)\s*\(\s*['\"]([^'\"]+)['\"]", literal
-        ):
-            analysis.reads.append({"kind": "interpreter", "path": match.group(1), "recursive": False, "follow": False})
-        # 明确 literal 接收者：`Path("x").read_text()` / `.read_bytes()` / `.open()`。
-        for match in re.finditer(
-            r"(?:Path|pathlib\.Path)\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\.\s*"
-            r"(?:read_text|read_bytes|open|readlink)\s*\(",
-            literal,
-        ):
-            analysis.reads.append({"kind": "interpreter", "path": match.group(1), "recursive": False, "follow": False})
+        # 解释器只建模 `-m` 白名单模块与脚本文件两种入口；单趟从左到右扫描，
+        # 遇到首个位置参数（脚本）即停止：`python3 x.py -m pytest` 里的 `-m`
+        # 是脚本自己的参数，不是模块入口。`-c`/未知选项一律不可证明。
+        index = 0
+        module_value = None
+        script = None
+        while index < len(rest):
+            token = rest[index]
+            if token == "--":
+                index += 1
+                continue
+            if token == "-":
+                # `python3 -` 从 stdin 读程序，没有可证明的脚本文件。
+                analysis.read_unknown = True
+                return
+            if token == "-c" or token.startswith("-c"):
+                analysis.read_unknown = True
+                return
+            if token == "-m":
+                if index + 1 >= len(rest):
+                    analysis.read_unknown = True
+                    return
+                module_value = rest[index + 1]
+                index += 2
+                break
+            if token.startswith("-m") and not token.startswith("--"):
+                module_value = token[2:]
+                index += 1
+                break
+            if token == "--check-hash-based-pycs":
+                index += 2
+                continue
+            if token.startswith("--check-hash-based-pycs=") or token in _PYTHON_LONG_FLAGS:
+                index += 1
+                continue
+            if token.startswith("--"):
+                analysis.read_unknown = True
+                return
+            if token.startswith("-"):
+                consume_next = False
+                unknown = False
+                for position, letter in enumerate(token[1:]):
+                    if letter in {"W", "X"}:
+                        consume_next = not token[2 + position :]
+                        break
+                    if letter in _PYTHON_SHORT_FLAGS:
+                        continue
+                    unknown = True
+                    break
+                if unknown:
+                    analysis.read_unknown = True
+                    return
+                index += 2 if consume_next else 1
+                continue
+            script = token
+            break
+        if module_value is not None:
+            arguments = rest[index:]
+            if module_value == "pytest":
+                # 与直接 `pytest` 同一套选项校验：`-o/--override-ini` 能换掉测试根。
+                roots, unknown = _validation_roots("pytest", arguments)
+                analysis.read_unknown = analysis.read_unknown or unknown
+                for root in roots:
+                    analysis.reads.append(
+                        {"kind": "interpreter-module", "path": root, "recursive": True, "follow": False}
+                    )
+                return
+            if module_value == "unittest":
+                # unittest 的 -s/-p/-t 等选项带目录值：只放行无值开关。
+                if any(
+                    token.startswith("-") and token not in _UNITTEST_FLAG_OPTIONS
+                    for token in arguments
+                ):
+                    analysis.read_unknown = True
+                    return
+            elif module_value not in _PYTHON_MODULE_ALLOWLIST:
+                analysis.read_unknown = True
+                return
+            analysis.reads.append({"kind": "interpreter-module", "path": ".", "recursive": True, "follow": False})
+            for token in arguments:
+                if token.startswith("-"):
+                    if "=" in token:
+                        # 选项值（如 --rootdir=/outside）同样可能是读取根。
+                        analysis.read_unknown = True
+                    continue
+                analysis.reads.append({"kind": "interpreter-module", "path": token, "recursive": False, "follow": False})
+            return
+        if script:
+            analysis.reads.append({"kind": "interpreter-script", "path": script, "recursive": False, "follow": False})
+            return
+        analysis.read_unknown = True
         return
+    if name in {"pytest", "py.test", "tox", "nox", "make"}:
+        # 仓库规定的验证命令：cwd 递归 + 位置参数/选项值作为读取根；不可证明的选项
+        # （`--eval/-E`、`-o/--override-ini`、组合短选项、MAKEFLAGS= 等）直接 fail-closed。
+        roots, unknown = _validation_roots(name, rest)
+        analysis.read_unknown = analysis.read_unknown or unknown
+        for root in roots:
+            analysis.reads.append({"kind": name, "path": root, "recursive": True, "follow": False})
+        return
+    if name == "git":
+        # 子命令本身读内容的（diff/log/show/cat-file/grep 等）以及改变仓库根或对比
+        # 基准的全局选项（-C/-c/--git-dir/--work-tree/--no-index）都无法证明读取边界。
+        if any(
+            token.split("=", 1)[0] in _GIT_ROOT_OPTIONS
+            or token.startswith(("-C", "-c"))
+            for token in rest
+        ):
+            analysis.read_unknown = True
+            return
+        index = 0
+        subcommand = ""
+        subcommand_position = -1
+        while index < len(rest):
+            token = rest[index]
+            if token.startswith("-"):
+                index += 1
+                continue
+            subcommand = token
+            subcommand_position = index
+            break
+        # 子命令级文件/执行选项：读文件选项的值是真实读取目标，执行型选项不可证明。
+        # 短选项按子命令分档：`-f` 只有 `git grep` 是模式文件（其他子命令是布尔）；
+        # `-x` 只有 rebase 是执行命令（cherry-pick 的 `-x` 是追加说明）；`-O` 只有
+        # grep 是执行 pager，log/diff/show 是读 orderfile。
+        read_options = {"--template", "--exclude-from", "--pathspec-from-file", "--file"}
+        if subcommand == "grep":
+            read_options.add("-f")
+        if subcommand in {"log", "diff", "show", "whatchanged"}:
+            read_options.add("-O")
+        exec_options = {
+            "--open-files-in-pager",
+            "--exec",
+            "--upload-pack",
+            "--receive-pack",
+            "--separate-git-dir",
+            "--ext-diff",
+            "--tree-filter",
+            "--index-filter",
+            "--msg-filter",
+            "--env-filter",
+        }
+        index = 0
+        consumed = set()
+        seen_dashdash = False
+        grep_has_pattern = False
+        while index < len(rest):
+            token = rest[index]
+            if token == "--":
+                seen_dashdash = True
+                index += 1
+                continue
+            if seen_dashdash:
+                # `--` 之后全部是操作数，不能再按选项消费后继参数。
+                index += 1
+                continue
+            option = token.split("=", 1)[0]
+            if (
+                subcommand == "rebase"
+                and token.startswith("-")
+                and not token.startswith("--")
+                and len(token) > 1
+            ):
+                # `rebase -x<cmd>`/`-ix`/`-fx` 是执行型；`-s/-X/-C` 之后是值。
+                for letter in token[1:]:
+                    if letter in "sXC":
+                        break
+                    if letter == "x":
+                        analysis.read_unknown = True
+                        break
+                index += 1
+                continue
+            if (
+                subcommand == "grep"
+                and token.startswith("-")
+                and not token.startswith("--")
+                and len(token) > 1
+            ):
+                # grep 短选项集群：首个带值字母决定参数归属，`-O` 是执行 pager，
+                # 其余已知开关跳过；未知字母不猜是否吃值。
+                unknown_letter = False
+                for position, letter in enumerate(token[1:]):
+                    if letter == "O":
+                        analysis.read_unknown = True
+                        break
+                    if letter in "efmdDABC":
+                        value = token[2 + position :]
+                        if not value and index + 1 < len(rest):
+                            value = rest[index + 1]
+                            consumed.add(index + 1)
+                            index += 1
+                        if letter in {"e", "f"}:
+                            grep_has_pattern = True
+                        if letter == "f":
+                            if value:
+                                analysis.reads.append(
+                                    {"kind": "git-option", "path": value, "recursive": False, "follow": False}
+                                )
+                            else:
+                                analysis.read_unknown = True
+                        break
+                    if letter not in SEARCH_FLAG_LETTERS["grep"]:
+                        unknown_letter = True
+                        break
+                if unknown_letter:
+                    analysis.read_unknown = True
+                index += 1
+                continue
+            if (
+                subcommand in {"log", "diff", "show", "whatchanged"}
+                and token.startswith("-")
+                and not token.startswith("--")
+                and len(token) > 1
+            ):
+                # `-O<orderfile>` 在集群里可能在开关之后（`-pO…`）；`-S/-G` 的值
+                # 可以紧跟其后或作为下一个参数，`-U` 只接受紧邻数字或作布尔开关，
+                # 不消费后继参数。遇到 S/G 后不再把后面的字符看作 -O。
+                for position, letter in enumerate(token[1:]):
+                    if letter in "SG":
+                        if not token[2 + position :]:
+                            if index + 1 < len(rest):
+                                consumed.add(index + 1)
+                                index += 1
+                            else:
+                                analysis.read_unknown = True
+                        break
+                    if letter == "U":
+                        break
+                    if letter == "O":
+                        value = token[2 + position :]
+                        if not value and index + 1 < len(rest):
+                            value = rest[index + 1]
+                            consumed.add(index + 1)
+                            index += 1
+                        if value:
+                            analysis.reads.append(
+                                {"kind": "git-option", "path": value, "recursive": False, "follow": False}
+                            )
+                        else:
+                            analysis.read_unknown = True
+                        break
+                index += 1
+                continue
+            if subcommand == "grep" and option == "--regexp":
+                # `--regexp PATTERN` 的值是模式，不是读取目标；第二趟不得当路径。
+                grep_has_pattern = True
+                if "=" in token:
+                    index += 1
+                elif index + 1 < len(rest):
+                    consumed.add(index + 1)
+                    index += 2
+                else:
+                    analysis.read_unknown = True
+                    index += 1
+                continue
+            if (
+                subcommand in {"commit", "tag", "merge"}
+                and token.startswith("-")
+                and not token.startswith("--")
+                and len(token) > 1
+            ):
+                # commit/tag/merge 的 `-F`（以及 commit 的 `-t`）从文件读消息；遇到
+                # 吃值的 `-m/-c/-C/-s/-S/-u/-X` 后不再扫描该集群，`-mfix` 保持放行。
+                for position, letter in enumerate(token[1:]):
+                    if letter == "F" or (subcommand == "commit" and letter == "t"):
+                        value = token[2 + position :]
+                        if not value and index + 1 < len(rest):
+                            value = rest[index + 1]
+                            consumed.add(index + 1)
+                            index += 1
+                        if value:
+                            analysis.reads.append(
+                                {"kind": "git-option", "path": value, "recursive": False, "follow": False}
+                            )
+                        else:
+                            analysis.read_unknown = True
+                        break
+                    if letter in "mcCSu" or (subcommand == "merge" and letter in "sX"):
+                        break
+                index += 1
+                continue
+            attached = False
+            if option in read_options or attached:
+                if attached:
+                    value = token[2:]
+                    step = 1
+                elif "=" in token:
+                    value = token.split("=", 1)[1]
+                    step = 1
+                else:
+                    value = rest[index + 1] if index + 1 < len(rest) else ""
+                    step = 2
+                if step == 2 and index + 1 < len(rest):
+                    consumed.add(index + 1)
+                if subcommand == "grep" and option == "--file":
+                    grep_has_pattern = True
+                if value:
+                    analysis.reads.append({"kind": "git-option", "path": value, "recursive": False, "follow": False})
+                else:
+                    analysis.read_unknown = True
+                index += step
+                continue
+            if option in exec_options:
+                analysis.read_unknown = True
+                index += 1
+                continue
+            index += 1
+        # 读取类子命令的路径操作数逐个校验（`git diff /dev/null <外部>` 会被 Git 自动
+        # 当成 --no-index 读取，不能只看子命令名）；纯修订表达式（`HEAD~1`、
+        # `HEAD~1:src/app.py`）不算路径。
+        if subcommand in GIT_READ_SUBCOMMANDS or subcommand in {"apply", "am"}:
+            paths_only = False
+            skip_pattern = subcommand == "grep" and not grep_has_pattern
+            for offset, token in enumerate(rest):
+                if offset in consumed:
+                    continue
+                if token == "--":
+                    paths_only = True
+                    continue
+                if offset == subcommand_position:
+                    continue
+                if token.startswith("-") and not paths_only:
+                    continue
+                if skip_pattern:
+                    skip_pattern = False
+                    continue
+                operand = (
+                    token
+                    if paths_only or subcommand in {"apply", "am"}
+                    else _git_operand_path(token)
+                )
+                if operand:
+                    analysis.reads.append({"kind": "git-operand", "path": operand, "recursive": False, "follow": False})
+            return
+        if subcommand not in _GIT_SAFE_SUBCOMMANDS:
+            analysis.read_unknown = True
+        return
+    if argv_tokens is not None and _wrapper_inner(argv_tokens)[0] is not None:
+        # 包装命令（env/sudo/command/xargs…）的内层 argv 由 _analyze_tokens 单独分析：
+        # 这里看到的是包装器名，不能按“未建模命令”计未知读取。
+        return
+    if name not in _READ_SILENT_COMMANDS:
+        # 名字已知但读取边界未建模（sed/perl/node/dd/tar/ln/curl/wget/未知命令）。
+        analysis.read_unknown = True
 
 
 def analyze(

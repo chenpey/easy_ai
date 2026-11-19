@@ -39,8 +39,17 @@ import transcripts  # noqa: E402
 READ_COMMAND_TOOLS = {"bash", "run_command", "exec_command", "run_terminal_cmd"}
 
 REFERENCE_RE = re.compile(r"references/([A-Za-z0-9_.-]+\.md)")
-# 参数里出现路径键才算一次可见读取；payload 文本匹配比解析 JSON 宽容。
-PATH_KEY_RE = re.compile(r'"(?:file_)?path"\s*:')
+# 参数里的路径键才是可见读取目标；`glob`/`cwd` 等不是被读文件，模式文本也不是。
+PATH_FIELD_NAMES = (
+    "path",
+    "paths",
+    "file_path",
+    "filePath",
+    "Path",
+    "absolute_path",
+    "AbsolutePath",
+    "files",
+)
 SESSION_ID_RE = re.compile(r"_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
 # 子代理交接 prompt 里会复述 references 路径，那不是「主代理读了它」。
 HANDOFF_TOOLS = {"subagent"}
@@ -119,13 +128,26 @@ def tool_payloads(path: Path, child: bool) -> Iterable[Tuple[str, str]]:
 
 def _forms(path: str, cwd: Path) -> set:
     """同一路径的绝对与相对写法：查询与参数两侧都要能对上。"""
+    if os.path.normpath(path) in {".", "./"}:
+        # `--path .` 指整仓范围，子串匹配会命中所有绝对读取（含 `/repo2/…` 兄弟目录）。
+        return set()
     forms = {path, os.path.normpath(path)}
     absolute = Path(path).expanduser()
     if absolute.is_absolute():
-        forms.add(os.path.relpath(str(absolute), str(cwd)))
+        # `~` 展开后的绝对形式才是读侧实际记录的文本。
+        forms.add(os.path.normpath(str(absolute)))
+        relative = os.path.relpath(str(absolute), str(cwd))
+        # `--path` 就是 `--cwd` 本身时 relpath 是 `.`，子串匹配会命中全部路径。
+        if relative != ".":
+            forms.add(relative)
     else:
         forms.add(os.path.normpath(str(cwd / absolute)))
-    return forms
+    return {form for form in forms if os.path.normpath(form) not in {".", "./"}}
+
+
+def _form_matches(form: str, text: str) -> bool:
+    """按路径边界匹配：`/repo` 命中 `/repo/x` 与 `.../repo`，但不命中 `/repo2/x`。"""
+    return text == form or text.startswith(form + os.sep) or text.endswith(os.sep + form)
 
 
 def summarize_records(
@@ -154,7 +176,7 @@ def summarize_records(
             if entry not in file_access:
                 file_access.append(entry)
             for query, forms in queries.items():
-                if any(form in text for form in forms):
+                if any(_form_matches(form, text) for form in forms):
                     hits[query] = hits.get(query, 0) + 1
     summary: Dict[str, Any] = {
         "tool_calls": len(tools.values()) and sum(tools.values()) or 0,
@@ -175,10 +197,40 @@ def summarize_records(
     return summary
 
 
-def _read_paths(tool: str, payload: str) -> List[str]:
-    """只从读工具与静态读命令里取被读路径；写入内容、补丁与 echo 参数不算读取。"""
+def _read_paths(tool: str, payload: str, cwd: Path | None = None) -> List[str]:
+    """只从读工具与静态读命令里取被读路径；写入内容、补丁、模式与 echo 参数不算读取。"""
     if tool in transcripts.READ_TOOL_FIELDS:
-        return [payload]
+        try:
+            arguments = json.loads(payload)
+        except json.JSONDecodeError:
+            # 宽容回退：个别宿主 payload 不是严格 JSON；只取路径键的字面量值，
+            # 不把模式/正文文本当读取。
+            return [
+                os.path.expanduser(match.group(2))
+                for key in PATH_FIELD_NAMES
+                for match in re.finditer(
+                    r"""(?<![A-Za-z0-9_])(?:%(key)s|"%(key)s"|'%(key)s')\s*:\s*(["'])(.*?)\1"""
+                    % {"key": re.escape(key)},
+                    payload,
+                )
+            ]
+        if not isinstance(arguments, dict):
+            return []
+        if isinstance(arguments.get("args"), dict):
+            # 个别宿主把工具参数再包一层 `args`。
+            arguments = arguments["args"]
+        paths: List[str] = []
+        for field in PATH_FIELD_NAMES:
+            value = arguments.get(field)
+            if isinstance(value, str) and value:
+                paths.append(os.path.expanduser(value))
+            elif isinstance(value, list):
+                paths.extend(
+                    os.path.expanduser(item)
+                    for item in value
+                    if isinstance(item, str) and item
+                )
+        return paths
     if tool not in READ_COMMAND_TOOLS:
         return []
     try:
@@ -191,10 +243,17 @@ def _read_paths(tool: str, payload: str) -> List[str]:
     if not isinstance(command, str):
         return []
     run_cwd = arguments.get("cwd")
-    reads, _opaque = shell.read_command_paths(
-        command, cwd=run_cwd if isinstance(run_cwd, str) else None
-    )
-    return [str(read.get("path")) for read in reads]
+    base_cwd = run_cwd if isinstance(run_cwd, str) and run_cwd else (str(cwd) if cwd else None)
+    reads, _opaque = shell.read_command_paths(command, cwd=base_cwd)
+    paths = []
+    for read in reads:
+        path = os.path.expanduser(str(read.get("path")))
+        base = read.get("cwd") or base_cwd
+        # 读取记录自带有效 cwd（含命令内 `cd`）：相对目标要拼成绝对形式，否则与查询路径对不上。
+        if isinstance(base, str) and base and not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(base, path))
+        paths.append(path)
+    return paths
 
 
 def summarize(payloads: Iterable[Tuple[str, str]], wanted: Iterable[str], cwd: Path) -> Dict[str, Any]:
@@ -207,12 +266,14 @@ def summarize(payloads: Iterable[Tuple[str, str]], wanted: Iterable[str], cwd: P
     for tool, payload in payloads:
         calls += 1
         tools[tool] += 1
-        if PATH_KEY_RE.search(payload):
+        read_paths = _read_paths(tool, payload, cwd)
+        # 可见读取只看真实读目标：写工具的 path 参数、纯命令参数都不算。
+        if read_paths:
             visible = True
-        for path_payload in _read_paths(tool, payload):
+        for path_payload in read_paths:
             refs.update(REFERENCE_RE.findall(path_payload))
             for path, forms in queries.items():
-                if any(form in path_payload for form in forms):
+                if any(_form_matches(form, path_payload) for form in forms):
                     hits[path] = hits.get(path, 0) + 1
     summary: Dict[str, Any] = {
         "tool_calls": calls,
@@ -416,6 +477,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     use_host_parser = args.host != "pi" or args.transcript is not None
+    if args.host == "pi" and args.transcript is not None:
+        # pi 会话由内置解析器读，`--transcript` 只会静默落到未知宿主并返回空统计。
+        parser.error("--host pi 不接受 --transcript；请省略 --transcript 以解析 pi 会话")
     if use_host_parser:
         if args.transcript is None:
             parser.error("--host 非 pi 时必须提供 --transcript")

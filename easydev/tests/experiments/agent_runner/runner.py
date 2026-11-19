@@ -21,6 +21,10 @@ AGENT_RUNNER_ROOT = Path(__file__).resolve().parent
 EXPERIMENTS_ROOT = AGENT_RUNNER_ROOT.parent
 EASYDEV_ROOT = AGENT_RUNNER_ROOT.parents[2]
 BEHAVIOR_RESULT_PROTOCOL = "behavior-v1"
+# 只有“读取边界不可证明”是策略性拒绝（命令未执行、无数据流出），记为 blocked
+# 但保留样本；其余（含未知健康码、recursive_follow、守卫自身失败）一律按
+# violations 处理，未知码同样 fail-closed。
+NON_INVALIDATING_BLOCK_CODES = frozenset({"target_unresolved"})
 SWEBENCH_ROOT = EXPERIMENTS_ROOT / "swebench"
 if str(SWEBENCH_ROOT) not in sys.path:
     sys.path.insert(0, str(SWEBENCH_ROOT))
@@ -412,6 +416,8 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
     read_guard = {
         "probe": guard_probe,
         "health": [],
+        "violations": [],
+        "blocked": [],
         "invocations": 0,
         "tampered": False,
         "files_intact": False,
@@ -479,6 +485,12 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
     read_guard.update(
         {
             "health": guard_health,
+            "violations": [
+                code for code in guard_health if code not in NON_INVALIDATING_BLOCK_CODES
+            ],
+            "blocked": [
+                code for code in guard_health if code in NON_INVALIDATING_BLOCK_CODES
+            ],
             "invocations": guard_invocations,
             "files_intact": guard_files_intact,
             "tampered": not guard_files_intact,
@@ -490,9 +502,9 @@ def run_scenario(args: argparse.Namespace) -> Dict[str, Any]:
         and not agent.get("timed_out")
         and (agent.get("event_count") or 0) > 0
         and agent.get("malformed_event_lines") == 0
-        # 守卫健康、文件完整、且运行期确实被调用过，才算有效样本。
+        # 守卫文件完整、确实被调用过，且没有可证明的越界/守卫失败，才算有效样本。
         and guard_files_intact
-        and not guard_health
+        and not read_guard["violations"]
         and guard_invocations > 0
     )
     result = {

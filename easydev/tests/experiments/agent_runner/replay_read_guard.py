@@ -278,9 +278,11 @@ def _resolve(target: str, cwd: Optional[str], real_home: str) -> str:
         if not cwd:
             raise GuardFailure("target_unresolved", "缺少 cwd，无法定位相对读取目标")
         expanded = os.path.join(cwd, expanded)
-    lexical = os.path.normpath(expanded)
-    if os.path.lexists(lexical):
-        resolved = os.path.realpath(lexical)
+    # 先让 realpath 按内核语义解引用，再做任何词法折叠：`link-dir/..` 在词法上
+    # 会被折叠成 workspace 内路径，而内核先解引用 `link-dir` 再把 `..` 作用到它的
+    # 真实父目录——先 normpath 会把两者混为一谈，等于校验了另一条路径。
+    resolved = os.path.realpath(expanded)
+    if os.path.lexists(expanded):
         try:
             info = os.stat(resolved)
         except OSError:
@@ -291,7 +293,7 @@ def _resolve(target: str, cwd: Optional[str], real_home: str) -> str:
         return resolved
     # 目标本身尚不存在（例如探测一个还没生成的文件）：位置仍可证明，但父链不能
     # 经悬空/循环链接消解。
-    ancestor = os.path.dirname(lexical)
+    ancestor = os.path.dirname(expanded)
     while ancestor and ancestor != os.path.dirname(ancestor):
         if os.path.lexists(ancestor):
             break
@@ -301,7 +303,7 @@ def _resolve(target: str, cwd: Optional[str], real_home: str) -> str:
             os.stat(os.path.realpath(ancestor))
         except OSError:
             raise GuardFailure("symlink_unresolved", "父链含悬空或循环链接，目标归属不可证明")
-    return os.path.realpath(lexical)
+    return resolved
 
 
 def _check_path(path: str, policy: Dict[str, Any]) -> None:

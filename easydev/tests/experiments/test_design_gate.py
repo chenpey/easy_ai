@@ -79,7 +79,7 @@ def test_repair_needs_rereview_after_findings_resolved():
     budget.resolve_findings()
     with pytest.raises(gate.RuleError, match="审查"):
         budget.finish()
-    budget.rereview()
+    budget.rereview(is_final=True)
     assert budget.finish() == "闭环完成"
 
 
@@ -102,7 +102,7 @@ def test_dependency_change_invalidates_review_without_refunding_budget():
     with pytest.raises(gate.RuleError, match="审查"):
         budget.finish()
     assert budget.r == 1
-    budget.rereview()
+    budget.rereview(is_final=True)
     assert budget.finish() == "闭环完成"
     assert budget.r == 2
 
@@ -172,7 +172,7 @@ def test_incremental_budget_preserves_final_reviews():
     assert budget.r == 3
     budget.full_review(findings=1)
     budget.resolve_findings()
-    budget.rereview()
+    budget.rereview(is_final=True)
     assert budget.finish() == "闭环完成"
     assert budget.r == 5
 
@@ -200,7 +200,7 @@ def test_normal_upgrade_inherits_candidate_and_review_budgets_into_full():
         budget.incremental_review()
     budget.full_review(findings=1)
     budget.resolve_findings()
-    budget.rereview()
+    budget.rereview(is_final=True)
     assert budget.finish() == "闭环完成"
     assert (budget.d, budget.r) == (3, 5)
 
@@ -264,3 +264,119 @@ def test_design_gate_cli_rejects_rule_regression(tmp_path, rel, old, new, label)
     assert "文档契约" in result.stdout
     assert f"FAIL: {label} ->" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_user_forbids_delegation_precedes_unavailable_designer_model():
+    """用户禁止委派优先于角色模型可用性：配置不可用不得把兜底变成停闸。"""
+    result = gate.resolve_designer(
+        model="gpt-6.1-sol", model_available=False, user_forbids_delegation=True
+    )
+    assert result["mode"] == gate.DESIGNER_FALLBACK
+    assert result["gate"] == "open_self_checked"
+
+
+@pytest.mark.parametrize("model_available", [True, False])
+def test_inherit_model_with_specific_depth_is_delegated(model_available):
+    """模型与深度均为 inherit 才是主代理设计；具体深度必须委派或暂停。"""
+    result = gate.resolve_designer(
+        model="inherit", reasoning_effort="high", model_available=model_available
+    )
+    expected = gate.DESIGNER_DELEGATED if model_available else gate.DESIGNER_PAUSED
+    assert result["mode"] == expected
+
+
+def test_last_rereview_with_findings_stops_instead_of_looping():
+    budget = gate.Budget(design_enabled=False, prior_r=3)
+    budget.full_review(findings=0)
+    budget.record_change()
+    # 末轮只能由终审使用；终审再报缺陷且无后续轮次即停，不得循环。
+    with pytest.raises(gate.Stop):
+        budget.rereview(findings=1, is_final=True)
+
+
+def test_resolve_findings_without_rereview_room_stops():
+    budget = gate.Budget(design_enabled=False, prior_r=5)
+    with pytest.raises(gate.Stop):
+        budget.resolve_findings()
+
+
+def test_intermediate_rereview_cannot_close_without_final():
+    budget = gate.Budget(design_enabled=False)
+    budget.full_review(findings=1)
+    budget.resolve_findings()
+    budget.rereview(findings=0)
+    with pytest.raises(gate.RuleError, match="终审"):
+        budget.finish()
+    budget.final_review()
+    assert budget.finish() == "闭环完成"
+
+
+def test_full_review_without_change_cannot_clear_findings():
+    """重复完整初审不得在无修改时充当复审（P2-2 同一不变量的旁路）。"""
+    budget = gate.Budget(design_enabled=False)
+    budget.full_review(findings=1)
+    with pytest.raises(gate.RuleError, match="无修改"):
+        budget.full_review(findings=0)
+    assert budget.open_findings == 1
+    assert budget.r == 1
+
+
+def test_intermediate_rereview_requires_two_remaining_rounds():
+    """只剩 1 轮时中间复审会吃掉终审轮次，须直接改走终审。"""
+    budget = gate.Budget(design_enabled=False, prior_r=3)
+    budget.full_review(findings=1)
+    budget.resolve_findings()
+    with pytest.raises(gate.RuleError, match="终审"):
+        budget.rereview(findings=0)
+    assert budget.r == 4
+    budget.final_review()
+    assert budget.finish() == "闭环完成"
+    assert budget.r == 5
+
+
+def test_final_review_cannot_clear_findings_without_change():
+    budget = gate.Budget(design_enabled=False)
+    budget.full_review(findings=1)
+    with pytest.raises(gate.RuleError, match="修改"):
+        budget.final_review(findings=0)
+    assert (budget.r, budget.open_findings) == (1, 1)
+    with pytest.raises(gate.Stop, match="未关闭"):
+        budget.finish()
+
+
+def test_final_review_reporting_findings_still_needs_final():
+    budget = gate.Budget(design_enabled=False)
+    budget.full_review(findings=1)
+    budget.resolve_findings()
+    budget.final_review(findings=1)
+    assert (budget.needs_final, budget.final_reviewed) == (True, False)
+    with pytest.raises(gate.Stop, match="未关闭"):
+        budget.finish()
+    budget.resolve_findings()
+    budget.final_review()
+    assert budget.finish() == "闭环完成"
+
+
+def test_final_flag_rereview_reporting_findings_still_needs_final():
+    """is_final=True 但报出缺陷时仍须下一次终审收口，与 final_review 同口径。"""
+    budget = gate.Budget(design_enabled=False)
+    budget.full_review()
+    budget.record_change()
+    budget.rereview(findings=1, is_final=True)
+    assert (budget.needs_final, budget.final_reviewed) == (True, False)
+    with pytest.raises(gate.Stop, match="未关闭"):
+        budget.finish()
+    budget.resolve_findings()
+    budget.final_review()
+    assert budget.finish() == "闭环完成"
+    assert budget.r == 3
+
+
+def test_rereview_without_remaining_rounds_stops():
+    """r/5 已满时中间复审是停止条件（未完成），不是可换路径的规则拒绝。"""
+    budget = gate.Budget(design_enabled=False, prior_r=4)
+    budget.full_review()
+    budget.record_change()
+    with pytest.raises(gate.Stop, match="复审轮次"):
+        budget.rereview()
+    assert budget.r == 5

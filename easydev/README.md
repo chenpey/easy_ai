@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`2.10.1`
+当前版本：`2.11.0`
 
 EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（≤5000 字节），普通 quick 不加载完整编排，详细规则按需读取；主代理默认单写，full 依据配置委派。
 
@@ -74,7 +74,7 @@ EasyDev 的设计围绕三个核心问题展开：**如何让低风险任务零�
 | **主代理 · `normal`** | 必读 | 读 `environment.md`（核实模型）+ `workflow.md`（分流与 `normal` 编排） | 按需读 `engineering.md`（主代理自写时） | 轻量引入独立第二视角，不建重型账本 |
 | **主代理 · `full`** | 必读 | 读 `environment.md` + `workflow.md`（建 `ledger.md` 账本与分片调度） | 读 `design.md#启用门控`；主代理自任开发时读 `engineering.md` | 完整门控闭环与预算强约束 |
 | **主代理 · `gate`** | 必读 | 读 `workflow.md#gate-模式`（设计审查闸与待终审态）；不按 `models.json` 委派角色 | 读 `design.md#设计审查与建议通道` | 外部设计交接：先审设计再开发自验，不建内部 `r/5` |
-| **主代理 · 只读路径**（`design` / `plan` / `debug` / `review` / `audit` / `demo`） | 必读 | `review`/`audit` 按需读 `environment.md` | 只读对应专项模块（如 `design.md`、`engineering.md#根因排障` 或 `review.md`） | 只交付请求产物，不改代码、不跑全量测试 |
+| **主代理 · 只读路径**（`design` / `plan` / `debug` / `review` / `audit` / `demo`） | 必读 | `audit` 与涉候选委派的 `design` 必读 `environment.md`；单次只读 `review` 与无委派路径免读 | 只读对应专项模块（如 `design.md`、`engineering.md#根因排障` 或 `review.md`） | 只交付请求产物，不改代码、不跑全量测试 |
 | **子代理 · `designer`** | 不必重读 | 直达 `roles.md#设计角色` | 读 `design.md` | 专注方案探索、接口契约与回滚设计 |
 | **子代理 · `developer`** | 不必重读 | 直达 `roles.md#开发角色` | 读 `engineering.md` + 已冻结的 `design.md`（若有） | 专注最小实现、端到端测试与项目脚本验证 |
 | **子代理 · `reviewer`** | 不必重读 | 直达 `roles.md#审查角色` | `normal` 执行 `roles.md` 内置最小规程；`full` / 高风险 / `audit` 读 `review.md` | 保持审改分离，杜绝作者自证偏差 |
@@ -158,7 +158,7 @@ EasyDev 的运行不是机械套用固定模板，而是由**主代理单写控�
 
 ## 架构与运作全景脑图
 
-![EasyDev 2.10.1 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
+![EasyDev 2.11.0 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
 
 ## 模型配置
 

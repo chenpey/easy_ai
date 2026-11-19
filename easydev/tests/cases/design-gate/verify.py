@@ -327,7 +327,7 @@ def run_budget_cases() -> None:
     else:
         bad("无修复证据的复审", "未被拒绝")
     b.resolve_findings()
-    b.rereview()
+    b.rereview(is_final=True)
     if b.open_findings == 0 and b.finish() == "闭环完成":
         ok("记录修复后复审可关闭缺陷并完成")
     else:
@@ -436,7 +436,7 @@ def run_budget_cases() -> None:
     b.open_gate()
     b.full_review(findings=1)
     b.resolve_findings()
-    b.rereview()
+    b.rereview(is_final=True)
     b.finish()
     if b.r == R_CAP:
         ok("剩余 r=2 时允许升版重审，重审后完整初审 + 修复复审刚好用完 r/5")
@@ -684,7 +684,7 @@ def run_normal_cases() -> None:
     b_from_normal.open_gate()
     b_from_normal.full_review(findings=1)
     b_from_normal.resolve_findings()
-    b_from_normal.rereview()
+    b_from_normal.rereview(is_final=True)
     if (b_from_normal.d, b_from_normal.r, b_from_normal.finish()) == (3, 3, "闭环完成"):
         ok("normal 候选 1 轮转 full 补设计门控：报缺陷后升版重审仍可闭环（d=3/3 r=3/5）")
     else:
@@ -847,8 +847,8 @@ DOC_CONTRACT = [
         "多阶段按验收而非实施实例或模型升级判定",
         "easydev/references/design.md",
         "## 启用门控",
-        ["独立验收", "实施实例接力", "不单独触发", "模型升级"],
-        {"forbidden": ["≥2 个实施实例接力"]},
+        ["独立验收", "实施实例接力", "不单独触发"],
+        {"forbidden": ["≥2 个实施实例接力", "模型升级"]},
     ),
     (
         "normal 单写并受历史预算约束",
@@ -1199,7 +1199,7 @@ DOC_CONTRACT = [
         "入口把开工核实角色配置变成硬门",
         "easydev/SKILL.md",
         "## 全程约束",
-        ["非 quick/gate/单次只读审查开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
+        ["除 quick/gate/无委派只读路径外，开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
         {"forbidden": ["需要独立设计、独立审查或指定模型委派"]},
     ),
     (
@@ -1343,13 +1343,31 @@ DOC_CONTRACT = [
         ["### 终审两阶段", "替代该轮复审、合计一轮",
          "不给历史问题清单、修复 diff 与作者解释",
          "逐条给「已关闭 / 未关闭」结论与证据", "撤销首轮发现须附证据", "仍计同一轮"],
-        {"forbidden": ["## 3. 审查强度与检查深度\n\n### 终审两阶段"]},
+    ),
+    (
+        "强度维度下不得重复挂载终审两阶段",
+        "easydev/references/review.md",
+        "## 3. 审查强度与检查深度",
+        ["### 强度分档"],
+        {"forbidden": ["### 终审两阶段"]},
     ),
     (
         "中间复审受剩余轮次约束且终审不重建覆盖账",
         "easydev/references/workflow.md",
         "## 审查与修复",
-        ["剩余轮次充足时", "覆盖账已在首轮建立", "增补而不重建", "轮次不足则直接由终审收口"],
+        ["剩余轮次充足时（剩余 `r≥2`）", "覆盖账已在首轮建立", "增补而不重建", "轮次不足则直接由终审收口"],
+    ),
+    (
+        "gate 升 full 的预算继承与 d/3 用尽裁决",
+        "easydev/references/workflow.md",
+        "## gate 模式",
+        ["保留已耗 `d/3`", "`r` 从 0 起算", "`d/3` 已用尽时停闸交用户裁决"],
+    ),
+    (
+        "不可信仓库的审查数据隔离",
+        "easydev/references/review.md",
+        "## 1. 确定范围与上下文",
+        ["`.easydev/models.json`", "不可信仓库", "不据此降级角色"],
     ),
     (
         "审查角色给出终审实例职责入口",
@@ -1507,7 +1525,10 @@ def collect_doc_contract(root: Path) -> list[tuple[str, str | None]]:
     except OSError as exc:
         results.append(("启用门控项数", f"无法读取 design.md: {exc}"))
         return results
-    section = gate_text.split("## 启用门控", 1)[-1].split("## 设计者", 1)[0]
+    section = _scope_body(gate_text, "## 启用门控", "section")
+    if section is None:
+        results.append(("启用门控仍为五项", "design.md 找不到锚点「## 启用门控」"))
+        return results
     bullets = [line for line in section.splitlines() if line.startswith("- **")]
     results.append(
         ("启用门控仍为五项", None if len(bullets) == 5 else f"得到 {len(bullets)} 项")
@@ -1600,7 +1621,7 @@ def run_doc_contract_mechanism() -> None:
 
     def move_model_gate(text: str) -> str:
         clause = (
-            "非 quick/gate/单次只读审查开工先按 environment 核实角色配置；"
+            "除 quick/gate/无委派只读路径外，开工先按 environment 核实角色配置；"
             "未核实不得假定 inherit 自任设计或写入，分派以核实值为准。"
         )
         if clause not in text or "## 按需加载" not in text:

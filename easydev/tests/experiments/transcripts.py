@@ -586,9 +586,15 @@ def _generic_confirmed(name: str, entry: Dict[str, Any]) -> bool:
     if name in COMMAND_TOOL_NAMES:
         return _command_exit_code(text) == 0
     # 只看结果头：文件正文里的 error/failure 字样不是工具失败。短结果（只有消息
-    # 本身、没有正文）整体看，避免把多行错误消息当成成功。
+    # 本身、没有正文）整体看，避免把多行错误消息当成成功。Antigravity 的 `read_file`
+    # 结果与正文之间没有空行，失败标记检测只到读取结果行为止（正文不参与）。
     head = _header_text(text)
     head_lines = head.splitlines()
+    for index, line in enumerate(head_lines):
+        if READ_RESULT_LINE_RE.match(line.strip()) or READ_TRUNCATION_LINE_RE.match(line.strip()):
+            head_lines = head_lines[: index + 1]
+            break
+    head = "\n".join(head_lines)
     first = next((line for line in head_lines if line.strip()), "")
     if FAILURE_MARKER_RE.search(first):
         return False

@@ -136,10 +136,15 @@ def wait_for_process(
     timeout: float,
     *,
     poll_interval: float = 0.25,
+    tracked: Optional[Dict[int, ProcessIdentity]] = None,
 ) -> Tuple[Optional[int], Dict[int, ProcessIdentity]]:
-    """Wait while retaining identities for descendants that later daemonize."""
+    """Wait while retaining identities for descendants that later daemonize.
+
+    `tracked` 由调用方传入时原地更新：等待期间被中断（KeyboardInterrupt）时，
+    调用方仍能拿到已观测到的后代，不会在清理阶段丢掉已经 `setsid()` 的孙进程。
+    """
     deadline = time.monotonic() + timeout
-    tracked: Dict[int, ProcessIdentity] = {}
+    tracked = {} if tracked is None else tracked
     while True:
         try:
             snapshot = _process_snapshot()
@@ -200,14 +205,25 @@ def _signal_group(pgid: int, sig: int) -> None:
 def _signal_known(
     known: Dict[int, ProcessIdentity],
     sig: int,
-) -> None:
-    try:
-        snapshot = _process_snapshot()
-    except (OSError, RuntimeError):
-        return
+    snapshot: Optional[Dict[int, Tuple[int, ProcessIdentity]]],
+) -> List[str]:
+    """只对最近一次成功快照里仍存活的已知 PID 发信号。
+
+    快照不可用时 `snapshot is None`：不向 tracked 的历史 PID 盲发信号（PID 复用
+    后可能误杀无关进程），只清理可证明组归属的 leader/组。单个失败不中断其余
+    PID，失败信息由调用方汇总。
+    """
+    if snapshot is None:
+        return []
+    failures: List[str] = []
     for pid, identity in known.items():
-        if _identity_alive(pid, identity, snapshot):
+        if not _identity_alive(pid, identity, snapshot):
+            continue
+        try:
             _signal_pid(pid, sig)
+        except RuntimeError as error:
+            failures.append(str(error))
+    return failures
 
 
 def _reap_leader(process: subprocess.Popen, timeout: float) -> bool:
@@ -278,7 +294,7 @@ def terminate_process(
         _signal_group(process.pid, signal.SIGTERM)
     if root_alive:
         _signal_pid(process.pid, signal.SIGTERM)
-    _signal_known(known, signal.SIGTERM)
+    signal_failures = _signal_known(known, signal.SIGTERM, snapshot or None)
 
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
@@ -299,7 +315,12 @@ def terminate_process(
             for pid, identity in known.items()
             if _identity_alive(pid, identity, snapshot)
         }
-        if process.poll() is not None and not alive:
+        # 快照不可用时不能把“看不到”当成“已退出”：继续等到截止，交给 SIGKILL 分支处理。
+        if snapshot and process.poll() is not None and not alive:
+            if signal_failures:
+                raise RuntimeError(
+                    "signal errors: " + ", ".join(sorted(set(signal_failures)))
+                )
             return
         time.sleep(0.05)
 
@@ -322,10 +343,11 @@ def terminate_process(
             except (ProcessLookupError, PermissionError):
                 continue
     if root_alive_now or tracked_alive_now:
+        # leader 存活或同组已跟踪后代存活时，PGID 仍属本任务，才发组信号。
         _signal_group(process.pid, signal.SIGKILL)
     if root_alive_now:
         _signal_pid(process.pid, signal.SIGKILL)
-    _signal_known(known, signal.SIGKILL)
+    signal_failures.extend(_signal_known(known, signal.SIGKILL, snapshot or None))
     if not _reap_leader(process, max(grace_seconds, 0.05)):
         raise RuntimeError(
             f"process {process.pid} did not terminate after signals"
@@ -334,29 +356,34 @@ def terminate_process(
     try:
         snapshot = _process_snapshot()
     except (OSError, RuntimeError):
-        snapshot = {}
+        # 无法验证清理结果时不能假报成功。
+        raise RuntimeError("cannot verify process cleanup: snapshot unavailable")
     alive: List[int] = [
         pid
         for pid, identity in known.items()
         if _identity_alive(pid, identity, snapshot)
     ]
-    if not alive:
-        return
     kill_deadline = time.monotonic() + max(grace_seconds, 0.05)
-    while time.monotonic() < kill_deadline:
+    while alive and time.monotonic() < kill_deadline:
         try:
             snapshot = _process_snapshot()
         except (OSError, RuntimeError):
-            snapshot = {}
+            raise RuntimeError("cannot verify process cleanup: snapshot unavailable")
         alive = [
             pid
             for pid, identity in known.items()
             if _identity_alive(pid, identity, snapshot)
         ]
         if not alive:
-            return
+            break
         time.sleep(0.05)
-    raise RuntimeError(f"descendant processes survived SIGKILL: {sorted(alive)}")
+    if signal_failures:
+        detail = "signal errors: " + ", ".join(sorted(set(signal_failures)))
+        if alive:
+            detail += f"; descendant processes survived SIGKILL: {sorted(alive)}"
+        raise RuntimeError(detail)
+    if alive:
+        raise RuntimeError(f"descendant processes survived SIGKILL: {sorted(alive)}")
 
 
 def run_captured(command, *, cwd, env, timeout):
@@ -375,7 +402,7 @@ def run_captured(command, *, cwd, env, timeout):
         )
         tracked = {}
         try:
-            code, tracked = wait_for_process(process, timeout)
+            code, _ = wait_for_process(process, timeout, tracked=tracked)
             timed_out = code is None
         finally:
             terminate_process(process, tracked=tracked)

@@ -2,6 +2,16 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.11.0 更新说明（2026-11-19）
+
+全仓深度审计后续修复与安全守卫加固；`easydev` 流程档位、`d/3` 与 `r/5` 两本账及三次修复预算不变，规则文档总量上限调整为 75839 字节（`SKILL.md` + `references/*.md` 合计不得超过 75839 字节，当前 75839 字节）。
+
+- **再审计收口**：补齐不可信仓库在 `review.md` 的隔离口径与 `scripts/models.py --untrusted`、守卫的 cwd/包装器/解释器/git/搜索命令 fail-closed、回放 `violations`/`blocked` 分流、`gate→full` 预算裁决与终审实例约束；同步文档契约与测试，规则总量按实际值上调至 75839 字节。
+- **第二轮审计修复与容量上调**：补齐 `references/environment.md` 不可信仓库跳过项目级配置与锁定时段入账本、`references/workflow.md` 中间复审非收口口径与 `gate` 升 `full` 预算继承、`references/design.md` 用户禁止委派优先于模型可用性；新增安全与流程条款使规则总量增至 75839 字节，上限按实际值上调并同步文档契约与字节统计。
+- **第三轮审计收口**：回放守卫收口 `grep`/`rg` 单字母模式、`sudo` 粘连 `-D/-R` 与未知选项、`exec` 组合短选项及 `CDPATH`/`EDITOR`/`HOME` 等敏感变量、解释器/`make`/`pytest`/`git` 组合选项与 `file`/`wc`/`find` 间接文件清单，并区分仓库内修订表达式；`Budget` 补中间复审 `r≥2` 门槛与终审入口校验；`run_pi.sh` 修复正常退出清理死代码、信号竞态与额外参数白名单；`process_control.py`、`analyze_events.py`、`role_metric.py` 同步收紧并补回归。
+- **第四轮审计收口**：解释器单趟扫描（脚本后的 `-m/-c` 不再当模块入口，`python3 -` 拒绝）、`git` 短选项按子命令分档（grep 的 `-f`/`-O`、rebase 的 `-x`）、`apply/am` 与单段操作数按路径校验、`sudo -R/--chroot` 一律 fail-closed；`rereview(is_final=True, findings>0)` 仍需终审、r 用尽抛 `Stop`；`run_pi.sh` 先阻塞信号再清理并按轮回收子进程；`analyze_events` 英文否定补词边界与路径否定动词；§7b 补参数透传与快速收口语义。
+- **第五轮审计收口**：`python3 -i` 与 `sudo -i/-s` 不再视为无害开关；`git commit/tag/merge` 的 `-F`/`--file` 与 `commit -t` 纳入读取校验；`make` 变量赋值出现 `$(shell …)`/`:=`/`!=` 时 fail-closed；`git grep` 模式参数与 `git log -S/-G` 的值不再被误当路径，恢复常规正则检索；`--` 之后不再按选项消费，`-U` 不吞后继参数。
+
 ## 2.10.1 更新说明（2026-11-18）
 
 全仓深度审计后的安全与稳定性小版本修复；`easydev` 流程档位、`d/3` 与 `r/5` 两本账及三次修复预算不变，规则文档总量上限维持 74708 字节（`SKILL.md` + `references/*.md` 合计不得超过 74708 字节，当前 74705 字节）。

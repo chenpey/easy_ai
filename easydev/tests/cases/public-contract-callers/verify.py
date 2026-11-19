@@ -388,7 +388,9 @@ def expect_rejected(root: Path, name: str, files: Dict[str, str], labels: Iterab
         expect=1,
     )
     for label in labels:
-        if label not in completed.stdout:
+        # 逐行匹配拒绝行：`other user denied` 是 `dynamic other user denied` 的子串，
+        # 子串判断会在前一条已出现时静默放行。
+        if not any(line.startswith(f"- {label}: ") for line in completed.stdout.splitlines()):
             print(f"FAIL: pseudo-fix {name}: missing rejection label {label!r}")
             print(completed.stdout)
             raise SystemExit(1)

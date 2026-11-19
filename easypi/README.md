@@ -1,6 +1,6 @@
 # easypi
 
-当前版本：`0.4.0`
+当前版本：`0.5.0`
 
 专用于 Antigravity（agy）向 `pi` 分派任务并走 `easydev` **`gate` 模式**完成闭环：**agy 设计 → Pi 走 `easydev gate` 审设计（无分歧后开发自验）→ agy 开发终审（无分歧后结束）**；在用户指定开局即走或批准升级到 **`full` 协同分支**时，保留 `agy ↔ Pi`（会话 A）开发协同，按 `easydev` 模型组配置（`models.json`）与外发门槛读取 `developer`/`reviewer` 模型（无效、`inherit` 或不可用时不静默回退，交用户指定），由 agy 在外层另起全新 `--session-id` 的只读 `Pi` 实例补齐独立第三方 `d/3`、`r/5` 与终审两阶段闭环（详见 [references/full.md](references/full.md)）。
 
@@ -30,7 +30,7 @@ ln -sfn "$PWD/easypi" "$HOME/.gemini/config/skills/easypi"
 
 ## 辅助脚本用法
 
-`scripts/run_pi.sh` 封装了非交互模式与 stdin 封闭（`</dev/null`），第二个参数是 prompt 文件（不内联到命令行，避免宿主钩子把设计正文里的反引号与 `$(...)` 当命令复核）；脚本自身不切换工作目录（`exec pi` 继承调用方 `cwd`）：
+`scripts/run_pi.sh` 封装了非交互模式与 stdin 封闭（`</dev/null`），第二个参数是 prompt 文件（不内联到命令行，避免宿主钩子把设计正文里的反引号与 `$(...)` 当命令复核）；脚本自身不切换工作目录（`pi` 继承调用方 `cwd`）。脚本带硬超时：`EASYPI_TIMEOUT`（默认 900 秒）超时后终止整组进程并以 `124` 退出；`pi` 正常退出后也会清理同组残留的后台子进程（忽略 `SIGTERM` 的在 1 秒后强杀），外部 `SIGTERM` 中断以 `143` 退出。会话 ID 不得以 `-` 开头，额外参数按白名单只接受 `--model`/`--thinking`/`--approve`（其余一律 `exit 2`），`--model`/`--thinking` 必须带非空白且不以 `-` 开头的取值（`--model=<值>` 写法同样校验）。`--model` 按 `full` 协同的 `developer` 核实值传入；解析为 `inherit` 或不可用时按 `full.md` 暂停交用户指定，不静默省略或猜模型。
 
 ```bash
 bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>" --approve </dev/null
