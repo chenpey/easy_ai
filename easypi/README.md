@@ -1,8 +1,8 @@
 # easypi
 
-当前版本：`0.3.1`
+当前版本：`0.4.0`
 
-专用于 Antigravity（agy）向 `pi` 分派任务并走 `easydev` **`gate` 模式**完成闭环：**agy 设计 → Pi 走 `easydev gate` 审设计（无分歧后开发自验）→ agy 开发终审（无分歧后结束）**。
+专用于 Antigravity（agy）向 `pi` 分派任务并走 `easydev` **`gate` 模式**完成闭环：**agy 设计 → Pi 走 `easydev gate` 审设计（无分歧后开发自验）→ agy 开发终审（无分歧后结束）**；在用户指定开局即走或批准升级到 **`full` 协同分支**时，保留 `agy ↔ Pi`（会话 A）开发协同，按 `easydev` 模型组配置（`models.json`）与外发门槛读取 `developer`/`reviewer` 模型（无效、`inherit` 或不可用时不静默回退，交用户指定），由 agy 在外层另起全新 `--session-id` 的只读 `Pi` 实例补齐独立第三方 `d/3`、`r/5` 与终审两阶段闭环（详见 [references/full.md](references/full.md)）。
 
 ## 目录结构
 
@@ -11,6 +11,8 @@ easypi/
 ├── CHANGELOG.md
 ├── README.md
 ├── SKILL.md
+├── references/
+│   └── full.md
 └── scripts/
     └── run_pi.sh
 ```
@@ -52,3 +54,7 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 5. 当前为非交互（-p）运行：需要用户确认的命令会被钩子硬拦，遇到时停写回报。
 6. 完成后汇报：是否加载 easydev（gate 模式）、设计审查结论、改动与新增文件清单、实际验证命令与真实结果、遗留风险。
 ```
+
+## `full` 协同分支模板
+
+`full` 协同分支的完整规程以及专用的 [developer prompt 模板](references/full.md#developer-prompt-模板) 与 [reviewer prompt 模板](references/full.md#reviewer-prompt-模板) 均维护在 [references/full.md](references/full.md)。

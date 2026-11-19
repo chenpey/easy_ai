@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 更新说明（2026-11-19）
+
+- 新增 **`full` 协同分支**（[references/full.md](references/full.md)）：支持开局直接指定或从 `gate` 经用户批准升级到 `full` 协同，保留 `agy ↔ Pi`（会话 A 原 `--session-id`）开发协同，按 `easydev` 模型组配置（`models.json`）解析 `developer` / `reviewer` 模型与深度（配置无效、`inherit` 或不可用时不静默回退，暂停交用户指定），由 `agy` 在外层调起全新 `--session-id` 的独立只读 `Pi` 实例补齐 `d/3`、`r/5` 盲审（含发现逐条核实与 P0/P1 排除复核）及终审两阶段闭环，并继承既有预算。
+- 明确区分 `easydev` 原生 `full`（AGY 接管全流程，不调 `Pi`）与 `easypi` `full` 协同分支（`agy` 编排 + 多 `Pi` 会话调用第三方模型），并补齐 `full` 协同专用的 `developer` / `reviewer` prompt 模板。
+
 ## 0.3.1 更新说明（2026-11-18）
 
 - `scripts/run_pi.sh` 校验非空 `SESSION_ID`、拒绝额外参数传入裸 `--` 并使用 `cat -- "$PROMPT_FILE"`。

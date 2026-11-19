@@ -1,17 +1,16 @@
 ---
 name: easypi
 description: >-
-  当用户要求调用 easypi、或通过 Antigravity（agy）把开发任务分派给 Pi 走 easydev gate 模式完成设计审查与编码实现时使用。
-  采用“agy 设计 → Pi 走 easydev gate 审设计并开发 → agy 开发终审”的闭环流程。
+  当用户要求调用 easypi、或通过 Antigravity（agy）分派 Pi 走 easydev gate 模式或 full 协同分支完成设计审查、编码与独立审查时使用。
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
 ---
 
 # easypi
 
-本流程专用于 **Antigravity（agy）分派任务到 Pi 走 `easydev` `gate` 模式**：agy 负责设计与开发终审，Pi 负责设计审查（`d/3`）与唯一代码实现。`gate` 的两处例外（`d/3` 由后续实现者执行、终审由设计方执行）由 `easydev` 规则定义，报告中须披露。
+本流程专用于 **Antigravity（agy）分派任务到 Pi 走 `easydev` `gate` 模式**（支持第 5 节 `full` 协同分支）：默认 agy 负责设计与开发终审，Pi 负责设计审查（`d/3`）与唯一代码实现。`gate` 的两处例外（`d/3` 由后续实现者执行、终审由设计方执行）由 `easydev` 规则定义，报告中须披露。
 
-触及 `easydev` 高风险边界（鉴权、支付、敏感数据、并发、破坏性操作、密码学、CI 与供应链、生产日志等）的任务不适用本流程：改按 `full` 保留内部独立审查，或经用户明确接受未覆盖风险后按 gate 执行并披露。
+触及 `easydev` 高风险边界（鉴权、支付、敏感数据、并发、破坏性操作、密码学、CI 与供应链、生产日志等）的任务不适用纯 `gate`：交 agy 接管原生 `full`，或走第 5 节 `full` 协同分支，或经用户明确接受未覆盖风险后按 `gate` 执行并披露。
 
 ## 1. 准备与设计（agy）
 
@@ -44,3 +43,7 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 - **有缺陷（至多返工 2 轮）**：同一工作目录与 `--session-id` 再次调用，附文件路径、行号与修改要求，修完后由 agy 复审；需改设计时先修订并重走 `gate` 设计审查。
 - **达到上限**：累计 2 轮返工（或同根因 3 次修复）仍未通过时暂停，汇报根因、阻塞点、当前 `git status` 与已/未验证项。
 - **通过**：汇总设计要点、Pi 设计审查结论、改动内容、验证结果与 agy 终审结论。
+
+## 5. `full` 协同分支（保留 `agy ↔ Pi` 协同）
+
+开局即指定或经用户批准从 `gate` 升级时，完整规程（模型组读取与不可用/inherit 暂停交用户指定、三方隔离、发现逐条核实与终审两阶段）及 `developer`/`reviewer` 模板按 [references/full.md](references/full.md) 执行。
