@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode json --host antigravity",
             "timeout": 10
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode json --host antigravity",
             "timeout": 10
           }
         ]
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode json --host antigravity",
             "timeout": 10
           }
         ]
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode json --host antigravity",
             "timeout": 10
           }
         ]
@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode json --host antigravity",
             "timeout": 10
           }
         ]
@@ -56,7 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.config/agent-hooks/check_command.py --mode antigravity --host antigravity",
+            "command": "python3 ~/.config/agent-hooks/check_command.py --mode json --host antigravity",
             "timeout": 10
           }
         ]

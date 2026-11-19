@@ -2,6 +2,14 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.13.0 更新说明（2026-11-19）
+
+全仓口径统一、文档去重瘦身与跨平台守卫同步；规则文档总量维持 75839 字节上限以内（当前 75634 字节，`SKILL.md` 4921 字节）。
+
+- **规则口径澄清与去重**：`SKILL.md` 第 15 行就地追加 `demo` 实验代码例外；`design.md` 与 `roles.md` 补充 `gate` 惯例例外简注；`workflow.md` 澄清 `r/5` 阶段增量上限语义；合并 `engineering.md` 重复验证调度条款、去重 `AGENTS.md` §5 已有表述，并精简 `README.md` 重复正文为导航表。
+- **`agent-hooks` 清理与 CLI 契约对齐**：`check_command.py` 破坏性将 `--mode` 合法值从 `antigravity`/`exit2` 改为 `json`/`exit2`（缺省 `json`，同步更新 `hooks.json` 与 `enforce-noninteractive.ts`），删除重复 `.netrc` 正则分支，提取 `_split_git_global_args` 与 `_has_force_flag` 共享 helper。
+- **脚本与同步补齐**：`scripts/sync-agent-rules.ps1` 补齐 `agent-hooks` 三部署件同步与命名键合并；`scripts/check.sh` 改用 `easythink/**/*.md` glob 并补充脚本语法检查。
+
 ## 2.12.0 更新说明（2026-11-19）
 
 为 `easydev/tests/experiments` 全部被测 Agent、不可信 `pytest` 与验收/Git 子进程落地最小环境变量白名单隔离，阻止无关宿主凭据与环境配置污染进入子进程；`easydev` 流程档位、规则正文不变，规则文档总量上限维持 75839 字节（`SKILL.md` + `references/*.md` 合计不得超过 75839 字节，当前 75839 字节）。

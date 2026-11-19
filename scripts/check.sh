@@ -289,17 +289,13 @@ def extract_slugs(file_path):
                 slugs.add(final_slug)
     return slugs
 
-files = [
-    "README.md",
-    "AGENTS.md",
-    "easythink/README.md",
-    "easythink/SKILL.md",
-    "easythink/CHANGELOG.md",
-    "easythink/references/methods.md",
-    "easythink/references/safety.md",
-    "easythink/references/examples.md",
-    "easythink/tests/behavior.md"
-] + sorted(glob.glob("easythink/tests/runs/**/*.md", recursive=True)) + sorted(glob.glob("agent-rules/**/*.md", recursive=True)) + sorted(glob.glob("easydev/**/*.md", recursive=True)) + sorted(glob.glob("easypi/**/*.md", recursive=True))
+files = (
+    ["README.md", "AGENTS.md"]
+    + sorted(glob.glob("easythink/**/*.md", recursive=True))
+    + sorted(glob.glob("agent-rules/**/*.md", recursive=True))
+    + sorted(glob.glob("easydev/**/*.md", recursive=True))
+    + sorted(glob.glob("easypi/**/*.md", recursive=True))
+)
 
 file_slugs = {f: extract_slugs(f) for f in files}
 link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -459,7 +455,9 @@ PY
 echo "=== 7. 规则同步与辅助脚本语法检查 ==="
 bash -n scripts/sync-agent-rules.sh
 bash -n easypi/scripts/run_pi.sh
-echo "OK: scripts/sync-agent-rules.sh 与 easypi/scripts/run_pi.sh 语法合法"
+bash -n scripts/smoke-install.sh
+bash -n scripts/check.sh
+echo "OK: scripts/sync-agent-rules.sh、easypi/scripts/run_pi.sh、scripts/smoke-install.sh 与 scripts/check.sh 语法合法"
 
 # 7b. run_pi.sh 的硬超时、正常退出清理与参数守卫：桩 pi 忽略 SIGTERM 并派生 sleep 子进程，
 # 超时必须 SIGKILL 整组并以 124 退出；外部 SIGTERM 也必须整组清理并以 143 退出；

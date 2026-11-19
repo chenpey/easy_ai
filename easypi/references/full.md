@@ -6,9 +6,11 @@
 
 - **触发方式**：开局即由用户指定 `/easypi` 走 `full` 协同；或在 `gate` 过程中因触及高风险边界、开发终审发现重大影响或用户要求，经用户明确批准从 `gate` 升级。
 - **预算继承**：升级保留已消耗的 `d/3` 与同根因尝试次数；`gate` 不消耗 `r/5`（它本就跳过内部代码审查），升级后 `r` 从 0 起算，`agy` 在 `gate` 阶段的终审与返工只作移交证据、不折算为 `r`。
-- **调用与中断恢复**：通过 [run_pi.sh](../scripts/run_pi.sh) 调起 `Pi` 时，`force_ask` 硬拦、硬超时（`EASYPI_TIMEOUT`，默认 900 秒，超时以 124 退出并终止整组进程）、异常中断恢复（查 `git status` / `git diff HEAD` 并经用户确认后清理）、受信任的项目级 `.pi/` 的 `--approve` 及 `Pi` 运行期间 `agy` 不改工作区等安全限定，均沿用 [SKILL.md](../SKILL.md) 第 2 节。
+- **调用与中断恢复**：通过 [run_pi.sh](../scripts/run_pi.sh) 调起 `Pi` 时的 `force_ask` 硬拦、硬超时、异常中断恢复、`--approve` 与“`Pi` 运行期间 `agy` 不改工作区”等安全限定，均沿用 [SKILL.md](../SKILL.md) 第 2 节，不重复维护。
 
 ## 2. 模型组配置与不可用兜底
+
+**CLI 适配覆写**：本节以 `inherit` 不静默回退、必须暂停交用户指定的规则，覆写 [easydev full 编排](../../easydev/references/workflow.md#full-编排) 中“`developer` 模型与深度均为 `inherit` 时由主代理写入”的默认约定——`run_pi.sh` 无法核实宿主实际角色配置，只能按显式 `<provider/id>` 分派。
 
 分派前由 `agy` 按 [environment.md#模型配置](../../easydev/references/environment.md#模型配置) 优先级解析 `developer` 与 `reviewer` 的 `model`、`reasoning_effort`（含项目级 `.easydev/models.json` 外发安全门槛；开局 `full` 在任务开始时解析并锁定北京时间 `windows`，无命中按 `default` 持久化；中途从 `gate` 升级时若已有锁定的 `Selection.window` 则沿用，未锁定则在升级时解析并锁定一次，之后不再切换），分别映射到 [run_pi.sh](../scripts/run_pi.sh) 的 `--model` 与 `--thinking`：`reasoning_effort` 为 `off`–`max` 时传 `--thinking <effort>`，为 `inherit` 时省略 `--thinking`（不得传 `--thinking inherit`）。
 

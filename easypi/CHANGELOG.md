@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 更新说明（2026-11-19）
+
+- **模板归位与口径对齐**：新增 [references/gate.md](references/gate.md) 承接 `gate` prompt 模板（同步「禁止 `git add`」与 `**[建议]**` 通道）及 `baseline` 敏感快照安全细则；修复 `README.md` 与 `SKILL.md` 的 `--model` 传参口径冲突，并在 `references/full.md` 显式标注 `inherit` 禁令为 CLI 适配覆写。
+- **安装契约补齐**：`scripts/smoke-install.sh` 新增场景 7 校验 `easypi` 整目录软链安装契约，并同步更新 `README.md` 描述。
+- **破坏性 CLI 迁移披露**：共享守卫 `agent-hooks/check_command.py` 已无兼容别名地将 `--mode antigravity` 更名为 `--mode json`（缺省同步改为 `json`），同步更新 Antigravity `hooks.json` 与 Pi `enforce-noninteractive.ts`；升级后须通过 `sync-agent-rules` 同步更新全部三个部署副本并禁止混合版本运行窗口。
+
 ## 0.5.0 更新说明（2026-11-19）
 
 - `scripts/run_pi.sh` 加固：额外参数改为白名单（`--model`/`--thinking`/`--approve`，取值非空白且不以 `-` 开头），新增 `EASYPI_TIMEOUT` 硬超时（默认 900 秒，超时以 124 退出），正常退出也清理同组残留子进程（1 秒后强杀），并把创建子进程窗口纳入信号屏蔽与同一 `try/finally`，避免竞态泄漏整组进程。

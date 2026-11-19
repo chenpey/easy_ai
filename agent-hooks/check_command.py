@@ -157,7 +157,6 @@ COMMIT_VALUE_OPTS = (
 
 SENSITIVE_DIR_RE = re.compile(
     r"(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+|/home/[^/\s\"']+)/\.(?:ssh|aws|gnupg|netrc|docker|kube|config/gh)(?:/|\b|\s|$)"
-    r"|(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+|/home/[^/\s\"']+)/\.netrc\b"
 )
 
 # `rm -rf` 的可重建目标：临时目录与缓存/构建产物，删掉后可由脚本或包管理器重建。
@@ -655,15 +654,17 @@ def scan_secrets(texts: Iterable[str], location: str) -> Optional[str]:
     return None
 
 
-def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
-    """Scan staged (and `-a` / path-specified) diffs before `git commit`."""
+def _split_git_global_args(cwd: str, args: List[str]) -> Tuple[str, int]:
+    """跳过 `git` 的全局选项，返回 (子命令实际工作目录, 子命令下标)。
+
+    `-C` 的相对路径按前一次 `-C` 的结果逐次拼接，与 Git 自身的处理顺序一致。
+    """
     target_cwd = cwd
     i = 0
     while i < len(args):
-        if args[i] == "-C" and i + 1 < len(args):
-            target_cwd = os.path.join(target_cwd, args[i + 1]) if not os.path.isabs(args[i + 1]) else args[i + 1]
-            i += 2
-        elif args[i] == "-c" and i + 1 < len(args):
+        if args[i] in ("-C", "-c") and i + 1 < len(args):
+            if args[i] == "-C":
+                target_cwd = args[i + 1] if os.path.isabs(args[i + 1]) else os.path.join(target_cwd, args[i + 1])
             i += 2
         elif args[i] in GIT_VALUE_OPTS and i + 1 < len(args):
             i += 2
@@ -671,6 +672,17 @@ def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
             i += 1
         else:
             break
+    return target_cwd, i
+
+
+def _has_force_flag(args: List[str]) -> bool:
+    """`--force` 或单横线短选项簇里的 `f`；双横线参数中的字母 f（如 `--exclude=eff`）不算。"""
+    return any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a) for a in args)
+
+
+def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
+    """Scan staged (and `-a` / path-specified) diffs before `git commit`."""
+    target_cwd, i = _split_git_global_args(cwd, args)
 
     # `commit` subcommand args follow `commit`.
     commit_args = args[i + 1 :] if i < len(args) and args[i] == "commit" else []
@@ -738,8 +750,7 @@ def _git_wide_discard(sub: str, sub_args: List[str]) -> bool:
     """是否整仓级丢弃工作区修改：`-f` 或整仓路径；`restore --staged` 例外。"""
     if sub == "restore" and _git_staged_only(sub_args):
         return False
-    force = any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a) for a in sub_args)
-    return force or _git_whole_tree_path(sub_args)
+    return _has_force_flag(sub_args) or _git_whole_tree_path(sub_args)
 
 
 def _git_whole_tree_path(sub_args: List[str]) -> bool:
@@ -753,16 +764,7 @@ def _git_whole_tree_path(sub_args: List[str]) -> bool:
 
 def _check_git_action(args: List[str], cwd: str) -> Tuple[Optional[str], Optional[str]]:
     """Return (decision, reason) for git subcommands."""
-    i = 0
-    while i < len(args):
-        if args[i] in ("-C", "-c") and i + 1 < len(args):
-            i += 2
-        elif args[i] in GIT_VALUE_OPTS and i + 1 < len(args):
-            i += 2
-        elif args[i].startswith("-"):
-            i += 1
-        else:
-            break
+    _, i = _split_git_global_args(cwd, args)
     if i >= len(args):
         return None, None
 
@@ -782,10 +784,7 @@ def _check_git_action(args: List[str], cwd: str) -> Tuple[Optional[str], Optiona
         return "force_ask", "执行 `git reset --hard` 会丢弃未提交改动，请确认（§1）。"
 
     if sub == "clean":
-        has_force = any(
-            a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a)
-            for a in sub_args
-        )
+        has_force = _has_force_flag(sub_args)
         has_dry = any(
             a == "--dry-run" or (a.startswith("-") and not a.startswith("--") and "n" in a)
             for a in sub_args
@@ -827,8 +826,7 @@ def _rm_target_is_disposable(target: str) -> bool:
 
 def _check_rm_force(args: List[str]) -> Optional[str]:
     has_r = any(a == "--recursive" or (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a)) for a in args)
-    has_f = any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a) for a in args)
-    if not (has_r and has_f):
+    if not (has_r and _has_force_flag(args)):
         return None
 
     targets: List[str] = []
@@ -1085,7 +1083,7 @@ def evaluate_payload(payload: dict, host: str) -> Tuple[Optional[str], Optional[
 
 
 def _emit(mode: str, decision: Optional[str], reason: Optional[str]) -> int:
-    if mode == "antigravity":
+    if mode == "json":
         if decision in ("deny", "force_ask"):
             print(json.dumps({"decision": decision, "reason": reason or ""}, ensure_ascii=False))
         return 0
@@ -1098,7 +1096,7 @@ def _emit(mode: str, decision: Optional[str], reason: Optional[str]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Shared non-interactive & safety command check")
-    parser.add_argument("--mode", choices=("antigravity", "exit2"), default="antigravity")
+    parser.add_argument("--mode", choices=("json", "exit2"), default="json")
     parser.add_argument("--host", choices=("antigravity", "pi", "generic"), default="antigravity")
     args = parser.parse_args()
 

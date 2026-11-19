@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 安装契约冒烟测试：按 README 远程安装提示词规范校验运行时文件集落盘契约，
-# 覆盖运行时文件集完整性、维护文件隔离边界、版本一致性、备份隔离与两技能共存。
+# 覆盖运行时文件集完整性、维护文件隔离边界、版本一致性、备份隔离、两技能共存与 easypi 整目录软链契约。
 # 用法：bash scripts/smoke-install.sh
 #   SMOKE_TMP=<一次性目录>  指定测试用 HOME；脚本不会删除调用方指定的目录，需自行清理。
 set -euo pipefail
@@ -147,5 +147,17 @@ for skill in easythink easydev; do
   grep -q "~/.agents/skills/$skill" "$readme" || fail "$readme 缺少标准安装路径"
   pass "$skill README 远程安装提示词契约完整"
 done
+
+echo "=== 场景 7：easypi 整目录软链安装契约 ==="
+# easypi 依赖仓内 scripts/run_pi.sh 且只在 Antigravity 宿主使用，按 README 用整目录软链安装。
+EASYPI_SRC="$ROOT_DIR/easypi"
+EASYPI_LINK="$TMP_HOME/.gemini/config/skills/easypi"
+mkdir -p "$(dirname "$EASYPI_LINK")"
+ln -sfn "$EASYPI_SRC" "$EASYPI_LINK"
+[ -L "$EASYPI_LINK" ] || fail "easypi 软链创建失败: $EASYPI_LINK"
+[ "$(cd "$EASYPI_LINK" && pwd -P)" = "$(cd "$EASYPI_SRC" && pwd -P)" ] || fail "easypi 软链未指向仓内整目录"
+[ -f "$EASYPI_LINK/SKILL.md" ] || fail "easypi 软链后 SKILL.md 不可达"
+[ -f "$EASYPI_LINK/scripts/run_pi.sh" ] || fail "easypi 软链后 scripts/run_pi.sh 不可达"
+pass "easypi 整目录软链安装契约与关键文件可达"
 
 echo "=== 安装契约冒烟测试全部通过 ==="

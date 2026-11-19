@@ -3,7 +3,7 @@ name: easypi
 description: >-
   当用户要求调用 easypi、或通过 Antigravity（agy）分派 Pi 走 easydev gate 模式或 full 协同分支完成设计审查、编码与独立审查时使用。
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # easypi
@@ -14,10 +14,10 @@ metadata:
 
 ## 1. 准备与设计（agy）
 
-1. 运行 `git status --short --untracked-files=all </dev/null` 并记 `git rev-parse HEAD`；任务相关脏/未跟踪文件按 easydev 基线与敏感快照存首次原内容到 `baseline/`，保护用户改动。
+1. 运行 `git status --short --untracked-files=all </dev/null` 并记 `git rev-parse HEAD`；任务相关脏/未跟踪文件的首次原内容按[敏感快照](references/gate.md#baseline-敏感快照)存 `baseline/`。
 2. 明确目标、范围与验收标准；高代价歧义先向用户澄清。
 3. **冻结设计**：写清目标文件、接口契约、数据流、失败路径与测试策略并与用户确认；按宿主规则（`agent-rules/antigravity.md`）落盘到会话 scratch（`<appDataDir>/brain/<conversation-id>/scratch/`，不写 `/tmp`）并冻结为 `v1`（修订升版），不写入产品仓库。该文件是设计唯一事实源，Pi 只核对首行版本并只读审查。
-4. **写 prompt 文件**：按 [README 模板](README.md#prompt-模板) 写成同一 scratch 下的 `prompt.md`，只放设计路径、验收标准与约束；设计正文不内联到命令行（宿主钩子会把双引号内的反引号与 `$(...)` 当命令复核）。
+4. **写 prompt 文件**：按 [gate 模板](references/gate.md#prompt-模板) 写成同一 scratch 下的 `prompt.md`，只放设计路径、验收标准与约束；设计正文不内联到命令行（宿主钩子会把双引号内的反引号与 `$(...)` 当命令复核）。
 5. 工作目录由调用方从外部带入，本流程不指定；生成唯一会话 ID（如 `easypi-YYYYMMDD-HHMMSS`），返工时在同一目录用同一 `--session-id` 续接。
 
 ## 2. 分派 Pi 走 `easydev gate`（agy -> pi）

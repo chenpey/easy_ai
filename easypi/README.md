@@ -1,6 +1,6 @@
 # easypi
 
-当前版本：`0.5.0`
+当前版本：`0.6.0`
 
 专用于 Antigravity（agy）向 `pi` 分派任务并走 `easydev` **`gate` 模式**完成闭环：**agy 设计 → Pi 走 `easydev gate` 审设计（无分歧后开发自验）→ agy 开发终审（无分歧后结束）**；在用户指定开局即走或批准升级到 **`full` 协同分支**时，保留 `agy ↔ Pi`（会话 A）开发协同，按 `easydev` 模型组配置（`models.json`）与外发门槛读取 `developer`/`reviewer` 模型（无效、`inherit` 或不可用时不静默回退，交用户指定），由 agy 在外层另起全新 `--session-id` 的只读 `Pi` 实例补齐独立第三方 `d/3`、`r/5` 与终审两阶段闭环（详见 [references/full.md](references/full.md)）。
 
@@ -12,7 +12,8 @@ easypi/
 ├── README.md
 ├── SKILL.md
 ├── references/
-│   └── full.md
+│   ├── full.md
+│   └── gate.md
 └── scripts/
     └── run_pi.sh
 ```
@@ -26,34 +27,21 @@ mkdir -p "$HOME/.gemini/config/skills"
 ln -sfn "$PWD/easypi" "$HOME/.gemini/config/skills/easypi"
 ```
 
-本技能依赖仓库内的 `scripts/run_pi.sh`，且只在 Antigravity 宿主使用，所以整目录软链是刻意的，不走其他技能的运行时文件集安装契约（也不在 `scripts/smoke-install.sh` 覆盖范围内）。
+本技能依赖仓库内的 `scripts/run_pi.sh`，且只在 Antigravity 宿主使用，所以整目录软链是刻意的，不走其他技能的运行时文件集安装契约；`scripts/smoke-install.sh` 会在临时 `$HOME` 里校验该软链契约（安装后 `SKILL.md` 与 `scripts/run_pi.sh` 可达）。
 
 ## 辅助脚本用法
 
-`scripts/run_pi.sh` 封装了非交互模式与 stdin 封闭（`</dev/null`），第二个参数是 prompt 文件（不内联到命令行，避免宿主钩子把设计正文里的反引号与 `$(...)` 当命令复核）；脚本自身不切换工作目录（`pi` 继承调用方 `cwd`）。脚本带硬超时：`EASYPI_TIMEOUT`（默认 900 秒）超时后终止整组进程并以 `124` 退出；`pi` 正常退出后也会清理同组残留的后台子进程（忽略 `SIGTERM` 的在 1 秒后强杀），外部 `SIGTERM` 中断以 `143` 退出。会话 ID 不得以 `-` 开头，额外参数按白名单只接受 `--model`/`--thinking`/`--approve`（其余一律 `exit 2`），`--model`/`--thinking` 必须带非空白且不以 `-` 开头的取值（`--model=<值>` 写法同样校验）。`--model` 按 `full` 协同的 `developer` 核实值传入；解析为 `inherit` 或不可用时按 `full.md` 暂停交用户指定，不静默省略或猜模型。
+`scripts/run_pi.sh` 封装非交互模式与 stdin 封闭（`</dev/null`），第二参数是 prompt 文件（不内联设计正文，避免宿主钩子把反引号与 `$(...)` 当命令复核）；脚本自身不切工作目录（`pi` 继承调用方 `cwd`）。硬超时 `EASYPI_TIMEOUT`（默认 900 秒）到期终止整组进程并以 `124` 退出；正常退出也清理同组残留子进程，外部 `SIGTERM` 以 `143` 退出。会话 ID 不得以 `-` 开头，额外参数只接受 `--model`/`--thinking`/`--approve`（其余一律 `exit 2`），取值须非空白且不以 `-` 开头。完整语义见 [SKILL.md](SKILL.md) 第 2 节与 [full 协同分支](references/full.md)。
+
+`--model` 只在确有需要时传入：`gate` 不按 `models.json` 委派角色，调用方未指定即省略；`full` 协同按 `developer` 的核实值传入（独立审查实例另按 `reviewer` 核实值），解析为 `inherit` 或不可用时按 [full.md](references/full.md) 暂停交用户指定，不静默省略或猜模型。
 
 ```bash
-bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>" --approve </dev/null
+bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" </dev/null
 ```
 
 ## prompt 模板
 
-写成文件后作为第二个参数传入；只写设计路径与约束，不内联设计正文：
-
-```text
-请激活 easydev skill，严格按 gate 模式执行本任务。
-
-设计：<已冻结 design.md 的绝对路径>（先核对首行版本，只读审查）
-目标文件与验收标准：<...>
-
-约束：
-1. 先按 gate 执行设计审查（d/3）：发现 P0/P1、范围内 P2、验收缺口或设计分歧时，严禁写代码，停在施工闸前输出分歧清单等待修订。
-2. 无分歧后严格按设计编码与自验；保护工作区已有未提交改动，禁止 git commit 与 git push。
-3. 跳过内部 r/5 代码审查，停在待终审态，由外层 Antigravity 执行开发终审。
-4. 发现任务实际触及 easydev 高风险边界时立即停写回报，不要自行改走 full 或跳过 r/5。
-5. 当前为非交互（-p）运行：需要用户确认的命令会被钩子硬拦，遇到时停写回报。
-6. 完成后汇报：是否加载 easydev（gate 模式）、设计审查结论、改动与新增文件清单、实际验证命令与真实结果、遗留风险。
-```
+`gate` 设计审查用的 prompt 模板、`**[建议]**` 通道要求与 `baseline/` 敏感快照口径维护在 [references/gate.md](references/gate.md#prompt-模板)；模板写成文件后作为第二个参数传入，不内联到命令行。
 
 ## `full` 协同分支模板
 

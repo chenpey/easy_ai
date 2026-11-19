@@ -38,7 +38,7 @@ export default function (pi: ExtensionAPI) {
     try {
       rawOut = execFileSync(
         "python3",
-        [CHECK_SCRIPT, "--mode", "antigravity", "--host", "pi"],
+        [CHECK_SCRIPT, "--mode", "json", "--host", "pi"],
         {
           input: JSON.stringify({
             toolName: event.toolName,

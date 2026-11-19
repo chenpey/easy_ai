@@ -14,13 +14,17 @@ SCRIPT = Path(__file__).resolve().parent / "check_command.py"
 
 def run_hook(
     payload: object,
-    mode: str = "antigravity",
+    mode: str | None = "json",
     host: str = "antigravity",
     raw_input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     stdin_text = raw_input if raw_input is not None else json.dumps(payload)
+    argv = [sys.executable, str(SCRIPT)]
+    if mode is not None:
+        argv += ["--mode", mode]
+    argv += ["--host", host]
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--mode", mode, "--host", host],
+        argv,
         input=stdin_text,
         text=True,
         capture_output=True,
@@ -44,6 +48,8 @@ def run_hook(
         "ping -c 3 127.0.0.1 </dev/null",
         "python3 -m unittest discover </dev/null",
         "git clean -n </dev/null",
+        "git clean -nfd </dev/null",
+        "git clean --exclude=eff </dev/null",
         "ls </dev/null 2>&1",
         "exec 3<&0 </dev/null",
         "ls</dev/null",
@@ -110,9 +116,12 @@ def test_sleep_allowed_on_pi_denied_on_antigravity() -> None:
         "git push origin main </dev/null",
         "git reset --hard HEAD~1 </dev/null",
         "git clean -fd </dev/null",
+        "git clean --force </dev/null",
         "git restore . </dev/null",
         "rm -rf ./src </dev/null",
+        "rm --recursive --force ./src </dev/null",
         "cat ~/.ssh/id_rsa </dev/null",
+        "cat ~/.netrc </dev/null",
         'cat "$HOME/.aws/credentials" </dev/null',
         "sudo -n rm -rf /x </dev/null",
         "sudo -D /tmp rm -rf /x </dev/null",
@@ -191,6 +200,7 @@ def test_bounded_scope_needs_no_confirmation(cmd: str) -> None:
         "git checkout . </dev/null",
         "git checkout -f main </dev/null",
         "git restore . </dev/null",
+        "git restore --force . </dev/null",
         "git restore -W . </dev/null",
     ],
 )
@@ -256,6 +266,38 @@ def test_git_commit_with_attached_message_keeps_pathspec(tmp_path: Path) -> None
     assert fake_key not in data["reason"]
 
 
+def test_git_global_options_locate_subcommand(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    fake_key = "AKIA" + "1234567890ABCDEF"
+    (tmp_path / "secret.txt").write_text(f"key={fake_key}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "secret.txt"], cwd=tmp_path, check=True)
+
+    # `-C` 指向临时仓库、`-c` 只带配置值：密钥扫描必须落在该仓库的暂存 diff 上。
+    commit = run_hook(
+        {
+            "toolCall": {
+                "name": "run_command",
+                "args": {"CommandLine": f"git -C {tmp_path} -c user.name=Test commit -m 'msg' </dev/null"},
+            }
+        }
+    )
+    data = json.loads(commit.stdout)
+    assert data["decision"] == "deny"
+    assert fake_key not in data["reason"]
+
+    # 同一套全局选项解析定位 `push` 子命令；不实际执行 push。
+    push = run_hook(
+        {
+            "toolCall": {
+                "name": "run_command",
+                "args": {"CommandLine": f"git -C {tmp_path} -c user.name=Test push origin main </dev/null"},
+            }
+        }
+    )
+    assert json.loads(push.stdout)["decision"] == "force_ask"
+
+
 def test_git_commit_scans_staged_diff(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
@@ -278,13 +320,43 @@ def test_git_commit_scans_staged_diff(tmp_path: Path) -> None:
 
 
 def test_fail_closed_on_invalid_json_and_exit2_mode() -> None:
-    bad_json = run_hook(None, mode="antigravity", raw_input="{not-json")
+    bad_json = run_hook(None, mode="json", raw_input="{not-json")
     assert bad_json.returncode == 0
     assert json.loads(bad_json.stdout)["decision"] == "deny"
 
     bad_exit2 = run_hook({"command": "npm test"}, mode="exit2")
     assert bad_exit2.returncode == 2
     assert "stdin" in bad_exit2.stderr
+
+
+def test_default_mode_emits_json_decision_on_stdout() -> None:
+    # 缺省模式为 json：拦截命令仍以 0 退出并把决策写 stdout；若缺省成 exit2 则会退出 2 且理由进 stderr。
+    proc = run_hook(
+        {"toolCall": {"name": "run_command", "args": {"CommandLine": "git push origin main </dev/null"}}},
+        mode=None,
+    )
+    assert proc.returncode == 0
+    assert proc.stderr.strip() == ""
+    data = json.loads(proc.stdout)
+    assert data["decision"] == "force_ask"
+    assert data["reason"]
+
+
+@pytest.mark.parametrize("cmd, expected", [("vim </dev/null", "deny"), ("git push origin main </dev/null", "force_ask")])
+def test_explicit_json_mode_emits_json_decision(cmd: str, expected: str) -> None:
+    proc = run_hook({"toolCall": {"name": "run_command", "args": {"CommandLine": cmd}}}, mode="json")
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["decision"] == expected
+
+
+def test_legacy_antigravity_mode_is_rejected() -> None:
+    proc = run_hook(
+        {"toolCall": {"name": "run_command", "args": {"CommandLine": "git push origin main </dev/null"}}},
+        mode="antigravity",
+    )
+    assert proc.returncode == 2
+    assert proc.stdout.strip() == ""
+    assert "invalid choice" in proc.stderr
 
 
 def test_stdin_redirect_on_tail_segment_does_not_close_pipeline_head() -> None:
@@ -427,7 +499,7 @@ def test_replace_file_content_scans_top_level_replacement() -> None:
 
 
 def test_write_to_sensitive_credential_directory_requires_confirmation() -> None:
-    for path in ("~/.ssh/authorized_keys", "/Users/someone/.aws/config"):
+    for path in ("~/.ssh/authorized_keys", "/Users/someone/.aws/config", "~/.netrc"):
         proc = run_hook(
             {"toolCall": {"name": "write", "args": {"path": path, "content": "ok\n"}}}
         )
