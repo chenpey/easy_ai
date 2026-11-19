@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 更新说明（2026-11-19）
+
+- **口径与路径澄清**：`SKILL.md` 明确「返工达 2 轮或同根因 3 次修复任一上限即暂停」（4986 字节 ≤ 5000）；`README.md` 将 `scripts/run_pi.sh` 明确为 `easypi/scripts/run_pi.sh`。
+
 ## 0.6.0 更新说明（2026-11-19）
 
 - **模板归位与口径对齐**：新增 [references/gate.md](references/gate.md) 承接 `gate` prompt 模板（同步「禁止 `git add`」与 `**[建议]**` 通道）及 `baseline` 敏感快照安全细则；修复 `README.md` 与 `SKILL.md` 的 `--model` 传参口径冲突，并在 `references/full.md` 显式标注 `inherit` 禁令为 CLI 适配覆写。

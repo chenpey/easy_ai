@@ -3,7 +3,7 @@ name: easypi
 description: >-
   当用户要求调用 easypi、或通过 Antigravity（agy）分派 Pi 走 easydev gate 模式或 full 协同分支完成设计审查、编码与独立审查时使用。
 metadata:
-  version: "0.6.0"
+  version: "0.6.1"
 ---
 
 # easypi
@@ -42,7 +42,7 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 ## 4. 返工或结束
 
 - **有缺陷（至多返工 2 轮）**：同一工作目录与 `--session-id` 再次调用，附文件路径、行号与修改要求，修完后由 agy 复审；需改设计时先修订并重走 `gate` 设计审查。
-- **达到上限**：累计 2 轮返工（或同根因 3 次修复）仍未通过时暂停，汇报根因、阻塞点、当前 `git status` 与已/未验证项。
+- **达到上限**：返工达 2 轮或同根因 3 次修复任一上限即暂停，汇报根因、阻塞点、当前 `git status` 与已/未验证项。
 - **通过**：汇总设计要点、Pi 设计审查结论、改动、验证结果、文档校准状态、`gate` 两处例外、遗留与未验证项及 agy 终审结论。
 
 ## 5. `full` 协同分支（保留 `agy ↔ Pi` 协同）

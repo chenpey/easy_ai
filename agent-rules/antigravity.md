@@ -10,7 +10,7 @@ description: "Antigravity 宿主工具语义：并发与轮询、上下文读取
 ## 1. 往返与并发
 
 - 每次模型调用都要重新支付首 token 延迟与完整上下文开销，纯工具轮占大头；不影响正确性的前提下减少往返。
-- 写操作（`write_file`/`edit_file`）、同一文件的多处修改、依赖前一步结果的步骤一律串行；同一文件紧邻的修改合并为单次 `edit_file`。
+- 写操作（`write_file`/`edit_file`）及同一文件的多处修改一律串行；同一文件紧邻的修改合并为单次 `edit_file`。
 - `run_command` 每次调用都在独立的新 shell 会话中执行（`cd` 与环境变量不跨调用保留）；有上下文依赖的连续命令合并在同一条 `CommandLine` 中一次执行（如 `cd pkg && npm test`）。
 - 异步任务与子代理（`invoke_subagent`、`schedule`、异步 `run_command`）具备响应式唤醒：启动后系统会通知结果，**严禁轮询**（不循环调用 `manage_task`/`manage_subagents`，也不用 shell `sleep` 等待）；后台 `run_command` 尚在运行时须等唤醒通知，避免重复发起。
 
@@ -23,7 +23,7 @@ description: "Antigravity 宿主工具语义：并发与轮询、上下文读取
 ## 3. 终端沙箱与工作区外访问
 
 - `run_command` 受终端沙箱与命令策略限制：受限模式下通过 shell 子进程（`cat`/`ls`/`python`）访问工作区外路径可能直接报 `Operation not permitted` 且不触发授权提示；需读写工作区外文件（如 `~/.gemini`）时优先用 `read_file`/`write_file`/`edit_file`（按 Non-Workspace File Access 策略提示授权），不用 shell 反复试探。
-- 一次性调试脚本与临时测试数据（不含凭证）放在会话专属 `<appDataDir>/brain/<conversation-id>/scratch/`（无活跃工作区的新建项目放 `~/.gemini/antigravity/scratch/`），不写入 `/tmp`、`~/.gemini` 根目录或桌面；含凭证的基线快照按安全规则放权限受控（`0700`/`0600`）的私有临时目录，不放进会被展示或同步的 artifact 目录。
+- 一次性调试脚本与临时测试数据（不含凭证）放在会话专属 `<appDataDir>/brain/<conversation-id>/scratch/`（无活跃工作区的新建项目放 `~/.gemini/antigravity/scratch/`），不写入 `/tmp`、`~/.gemini` 根目录或桌面；敏感基线快照除外，按安全规则放权限受控（`0700`/`0600`）的私有临时目录，不放进会被展示或同步的 artifact 目录。
 
 ## 4. 回复里的文件引用
 

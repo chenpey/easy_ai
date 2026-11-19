@@ -25,8 +25,8 @@ echo "OK: 已跟踪文件与工作区均无行尾空白或冲突标记"
 
 echo "=== 2. SKILL.md 体量与 Frontmatter 校验 ==="
 # 体量上限包含 UTF-8 正文和 frontmatter，防止入口重新膨胀。
-for SKILL_NAME in easythink easydev easypi; do
-  SKILL_FILE="$SKILL_NAME/SKILL.md"
+for SKILL_FILE in */SKILL.md; do
+  SKILL_NAME="${SKILL_FILE%/SKILL.md}"
   if [ ! -f "$SKILL_FILE" ]; then
     echo "Error: $SKILL_FILE 不存在" >&2
     exit 1
@@ -789,6 +789,11 @@ limits = {
         read("easydev/SKILL.md"),
         "easydev/SKILL.md「quick 执行核心」",
     ),
+    "easypi/SKILL.md": extract(
+        r"同根因\s*([一二三四五六七八九十\d]+)\s*次修复",
+        read("easypi/SKILL.md"),
+        "easypi/SKILL.md「返工或结束」",
+    ),
 }
 missing = sorted(name for name, value in limits.items() if value is None)
 if missing:
@@ -875,7 +880,7 @@ echo "=== 10. 规则文档总量棘轮（默认只减不增，扩容须记入 CH
 # 规则正文做减法：入口与 references 合计不得越过基线，新增规则必须同时删掉等量篇幅。
 # 范围只含 SKILL.md 与 references/*.md（运行时实际下发的规则正文）；维护材料与 README 不计。
 # 改 MAX_TOTAL 必须同步 CHANGELOG 对应版本的数值；扩容需在 CHANGELOG 说明理由。
-MAX_TOTAL=75839
+MAX_TOTAL=75634
 TOTAL=$(cat easydev/SKILL.md easydev/references/*.md | tr -d '\r' | wc -c | tr -d ' ')
 echo "规则文档总字节: $TOTAL (棘轮上限: $MAX_TOTAL)"
 if [ "$TOTAL" -gt "$MAX_TOTAL" ]; then

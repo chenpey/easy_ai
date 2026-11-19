@@ -2,9 +2,15 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.13.1 更新说明（2026-11-19）
+
+修复文档口径冲突、棘轮短语缺失与测试说明偏差，规则文档总量上限下调至 75634 字节（`SKILL.md` + `references/*.md` 合计不得超过 75634 字节，当前 75634 字节，`SKILL.md` 4921 字节）。
+
+- **门禁与口径修复**：补回棘轮门禁要求的精确短语并将 `MAX_TOTAL` 从 `75839` 收紧至 `75634`（同步 `easydev-mindmap.svg`）；`scripts/check.sh` §2 改由 `*/SKILL.md` 枚举、§9 纳入 `easypi/SKILL.md` 3 次修复预算校验；`easydev/README.md` 写入者条件对齐「模型与深度均为 `inherit`」；`easydev/tests/README.md` 区分断面用例与 `experiments/stubs/`。
+
 ## 2.13.0 更新说明（2026-11-19）
 
-全仓口径统一、文档去重瘦身与跨平台守卫同步；规则文档总量维持 75839 字节上限以内（当前 75634 字节，`SKILL.md` 4921 字节）。
+全仓口径统一、文档去重瘦身与跨平台守卫同步；规则文档总量上限下调至 75634 字节（`SKILL.md` + `references/*.md` 合计不得超过 75634 字节，当前 75634 字节，`SKILL.md` 4921 字节）。
 
 - **规则口径澄清与去重**：`SKILL.md` 第 15 行就地追加 `demo` 实验代码例外；`design.md` 与 `roles.md` 补充 `gate` 惯例例外简注；`workflow.md` 澄清 `r/5` 阶段增量上限语义；合并 `engineering.md` 重复验证调度条款、去重 `AGENTS.md` §5 已有表述，并精简 `README.md` 重复正文为导航表。
 - **`agent-hooks` 清理与 CLI 契约对齐**：`check_command.py` 破坏性将 `--mode` 合法值从 `antigravity`/`exit2` 改为 `json`/`exit2`（缺省 `json`，同步更新 `hooks.json` 与 `enforce-noninteractive.ts`），删除重复 `.netrc` 正则分支，提取 `_split_git_global_args` 与 `_has_force_flag` 共享 helper。

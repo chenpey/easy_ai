@@ -1,6 +1,6 @@
 # 维护材料总览
 
-`tests/` 仅用于维护 EasyDev 本身，非编码任务运行依赖。所有测试均使用 `tests/experiments/stubs/` 替身驱动（模拟外部 CLI、pytest、网络与时钟），不消耗真实模型调用，断言基于退出码、输出文本与产物文件。
+`tests/` 仅用于维护 EasyDev 本身，非编码任务运行依赖。确定性断面用例与实验回归均不消耗真实模型调用（`experiments/` 使用 `tests/experiments/stubs/` 替身驱动模拟外部 CLI、pytest、网络与时钟），断言基于退出码、输出文本与产物文件。
 
 ## 运行
 
