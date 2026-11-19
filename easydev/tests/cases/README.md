@@ -1,6 +1,6 @@
 # 测试用例目录
 
-本目录保存可执行的自包含确定性用例。每个子目录使用描述行为的语义化 slug，包含被测初始状态、参考材料与独立验收入口。
+本目录保存可执行的自包含确定性用例。每个子目录使用描述行为的语义化 slug，最小形态为 `run.sh`，复杂用例另含 `initial/`、评测私有材料（如 `solution.patch`）或 `verify.py`。
 
 ## 约定
 
@@ -18,7 +18,4 @@
 | `design-gate` | normal 审查复审、转 full 继承、启用门控、两本账与施工闸状态机 | `bash tests/cases/design-gate/run.sh` |
 | `audit-overflow` | 33 项发现时正文上限 30 条、附录全量保留与溢出 P1 披露 | `bash tests/cases/audit-overflow/run.sh` |
 
-其余行为场景由 [tests/behavior.md](../behavior.md) 定义：
-- B01、B02、B16、B61（观测部分）、B67 由 `tests/experiments/agent_runner/` 驱动。
-- B60 与 B61（确定性部分）由 `design-gate` 覆盖。
-- B65（确定性部分）由 `audit-overflow` 覆盖。
+其余行为场景与 B 编号载体映射见 [tests/behavior.md](../behavior.md#离线可执行载体)。

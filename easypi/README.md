@@ -31,7 +31,7 @@ ln -sfn "$PWD/easypi" "$HOME/.gemini/config/skills/easypi"
 
 ## 辅助脚本用法
 
-`easypi/scripts/run_pi.sh` 封装非交互模式与 stdin 封闭（`</dev/null`），第二参数是 prompt 文件（不内联设计正文，避免宿主钩子把反引号与 `$(...)` 当命令复核）；脚本自身不切工作目录（`pi` 继承调用方 `cwd`）。硬超时 `EASYPI_TIMEOUT`（默认 900 秒）到期终止整组进程并以 `124` 退出；正常退出也清理同组残留子进程，外部 `SIGTERM` 以 `143` 退出。会话 ID 不得以 `-` 开头，额外参数只接受 `--model`/`--thinking`/`--approve`（其余一律 `exit 2`），取值须非空白且不以 `-` 开头。完整语义见 [SKILL.md](SKILL.md) 第 2 节与 [full 协同分支](references/full.md)。
+`easypi/scripts/run_pi.sh` 封装非交互、stdin 封闭、硬超时与参数校验，脚本不切工作目录（`pi` 继承调用方 `cwd`）；外部 `SIGTERM` 以 `143` 退出，非法参数 `exit 2`。其余超时、退出码与参数白名单语义见 [SKILL.md](SKILL.md) 第 2 节与 [full 协同分支](references/full.md)。
 
 `--model` 只在确有需要时传入：`gate` 不按 `models.json` 委派角色，调用方未指定即省略；`full` 协同按 `developer` 的核实值传入（独立审查实例另按 `reviewer` 核实值），解析为 `inherit` 或不可用时按 [full.md](references/full.md) 暂停交用户指定，不静默省略或猜模型。
 

@@ -19,7 +19,7 @@
 
 - `AGENTS.md`：通用工作规则，发布至 `~/.config/agent-rules/AGENTS.md`（Pi、Codex、Antigravity 软链共享）。
 - `agent-rules/antigravity.md`：Antigravity 专有适配规则，发布至 `~/.gemini/config/rules/antigravity.md`。
-- `agent-hooks/check_command.py`：跨宿主共享的命令与写入硬守卫（非交互 stdin 封闭、高危 Git/删除确认、密钥防写入与防提交、网络命令硬超时、`sleep` 禁令及敏感凭据目录确认），发布至 `~/.config/agent-hooks/check_command.py`。
+- `agent-hooks/check_command.py`：跨宿主共享的命令与写入硬守卫（非交互 stdin 封闭、高危 Git/删除确认、密钥防写入与防提交、网络命令硬超时、`sleep` 禁令（仅 Antigravity）及敏感凭据目录确认），发布至 `~/.config/agent-hooks/check_command.py`。
 - `agent-hooks/antigravity/hooks.json` 与 `agent-hooks/pi/enforce-noninteractive.ts`：Antigravity（`~/.gemini/config/hooks.json`，按命名键合并）与 Pi（`~/.pi/agent/extensions/enforce-noninteractive.ts`）的前置拦截适配器，随 `sync-agent-rules.sh`（macOS/Linux）与 `sync-agent-rules.ps1`（Windows）一并同步。
 
 ### 规则同步
