@@ -913,6 +913,16 @@ class SwebenchCliTest:
         assert result.returncode == 0, result.stdout
         assert self.result(experiment)["test_statuses"][TASK["f2p"]] == "MISSING"
 
+    def test_zero_timeouts_are_rejected_at_the_cli(self) -> None:
+        env = os.environ.copy()
+        for args, message in (
+            (["run", "--experiment", str(self.root / "exp"), "--test-timeout", "0"], "--test-timeout 必须 >= 1"),
+            (["calibrate", "--out", str(self.root / "cal"), "--timeout", "0"], "--timeout 必须 >= 1"),
+        ):
+            completed = self.cli(args, env=env)
+            assert completed.returncode == 2, args
+            assert message in completed.stdout, completed.stdout
+
     def test_setup_resolves_relative_asset_links(self) -> None:
         assets = self.make_assets("relative-assets")
         result = self.cli(["setup", "--dataset", assets.dataset.relative_to(self.root),
@@ -1009,6 +1019,41 @@ class SwebenchCliTest:
         assert summary["baseline"]["runs"] == 1
         assert summary["baseline"]["resolved_rate"] == 1.0
         assert (experiment / "results.jsonl").is_file()
+
+    def test_summarize_pairs_arms_without_overlap_and_reports_direction(self) -> None:
+        assets = self.make_assets("summarize-pairs", tasks=(TASK, TASK2))
+        stub = self.make_stub("summarize-pairs-stub")
+
+        def run(experiment: Path, arm: str, task: dict, resolved: bool) -> None:
+            statuses = {task["f2p"]: "PASSED" if resolved else "FAILED", task["p2p"]: "PASSED"}
+            completed = self.cli(
+                [
+                    "run", "--experiment", experiment, "--tasks", task["id"],
+                    "--arms", arm, "--repeats", "1", "--concurrency", "1",
+                    "--agent-timeout", "30", "--test-timeout", "30",
+                    "--codex-bin", stub.launcher,
+                ],
+                env=self.environment(stub, self.complete_plan(), statuses),
+            )
+            assert completed.returncode == 0, completed.stdout
+
+        # baseline 解出、checklist 未解出：左侧（baseline）胜 1、右侧 0。
+        overlap = self.install_experiment(assets, "overlap", tasks=(TASK, TASK2))
+        run(overlap, "baseline", TASK, True)
+        run(overlap, "checklist", TASK, False)
+        completed = self.summarize(overlap)
+        assert completed.returncode == 0, completed.stdout
+        report = (overlap / "report.md").read_text(encoding="utf-8")
+        assert "任务级胜/负/平（baseline / checklist）：1/0/0" in report, report
+
+        # 两臂没有共同任务：配对比较仍要能出报告，而不是 KeyError 崩溃。
+        disjoint = self.install_experiment(assets, "disjoint", tasks=(TASK, TASK2))
+        run(disjoint, "baseline", TASK, True)
+        run(disjoint, "checklist", TASK2, True)
+        completed = self.summarize(disjoint)
+        assert completed.returncode == 0, completed.stdout
+        report = (disjoint / "report.md").read_text(encoding="utf-8")
+        assert "任务级胜/负/平（baseline / checklist）：0/0/0" in report, report
 
     def test_summarize_discloses_excluded_p2p_counts_and_reasons(self) -> None:
         # A parametrized node id may contain a pipe; the report must escape it so
@@ -1743,9 +1788,17 @@ class SwebenchCliTest:
             with tarfile.open(path, "w") as archive:
                 add_link(archive, "hard-link", str(external), hard=True)
 
+        def special_member(path: Path) -> None:
+            with tarfile.open(path, "w") as archive:
+                info = tarfile.TarInfo("pipe")
+                info.type = tarfile.FIFOTYPE
+                info.mode = 0o644
+                archive.addfile(info)
+
         for label, writer in (
             ("directory escape", directory_escape),
             ("hardlink escape", hardlink_escape),
+            ("fifo member", special_member),
         ):
             with subtests.test(case=label):
                 assets = self.make_assets(
@@ -1760,8 +1813,10 @@ class SwebenchCliTest:
                     statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
                 )
                 assert completed.returncode != 0, completed.stdout
-                assert "unsafe tar" in completed.stdout
+                if label != "fifo member":
+                    assert "unsafe tar" in completed.stdout
                 assert not (self.run_path(experiment).parent / "evil").exists()
+                assert not (self.run_path(experiment) / "repo" / "pipe").exists()
                 assert external.read_text(encoding="utf-8") == "keep\n"
 
     def test_template_reversed_chain_and_delayed_directory_attributes(self) -> None:

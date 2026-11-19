@@ -1,7 +1,7 @@
 """B61: normal 微闭环与复审范围（观测型）。
 
 任务改的是 `src/cart.py` 的 `total`，两个调用方 `src/invoice.py`、`src/receipt.py`
-会因此静默改变输出且没有调用方测试。按 `routing.md`，信号②（被两个及以上独立
+会因此静默改变输出且没有调用方测试。按 `workflow.md`，信号②（被两个及以上独立
 调用方依赖）成立；信号①可主张——`total` 的金额变化会传导到没有测试的调用方展示，
 但它也含新增行为，按①的豁免条款不单独成立。两条合起来应走 normal 并做一次
 独立定向审查。
@@ -334,9 +334,10 @@ def evaluate(workspace: Path, changed_paths: list, final_message: str, observed:
                     review_rounds >= 1 and completed >= review_rounds,
                     {"reviews": review_rounds, "completed": completed},
                 ),
+                # 只有仍停留在 normal 的交付不得自称 full 闭环；合法升 full 并完成闭环的样本可以这么报。
+                check("no full closed-loop claim", not closed_loop_claim, final_message[-200:]),
             ]
         )
-    checks.append(check("no full closed-loop claim", not closed_loop_claim, final_message[-200:]))
     return evaluation(
         checks,
         details={

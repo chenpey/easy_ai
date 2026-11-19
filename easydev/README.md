@@ -73,6 +73,7 @@ EasyDev 的设计围绕三个核心问题展开：**如何让低风险任务零�
 | **主代理 · `quick`** | 必读 | 默认不读（仅入口自问句成立时才读 `workflow.md`） | 默认不读（仅涉及性能声明或未知外部验证能力时按锚点定向补读 `engineering.md`） | 极速闭环，零编排税 |
 | **主代理 · `normal`** | 必读 | 读 `environment.md`（核实模型）+ `workflow.md`（分流与 `normal` 编排） | 按需读 `engineering.md`（主代理自写时） | 轻量引入独立第二视角，不建重型账本 |
 | **主代理 · `full`** | 必读 | 读 `environment.md` + `workflow.md`（建 `ledger.md` 账本与分片调度） | 读 `design.md#启用门控`；主代理自任开发时读 `engineering.md` | 完整门控闭环与预算强约束 |
+| **主代理 · `gate`** | 必读 | 读 `workflow.md#gate-模式`（设计审查闸与待终审态）；不按 `models.json` 委派角色 | 读 `design.md#设计审查与建议通道` | 外部设计交接：先审设计再开发自验，不建内部 `r/5` |
 | **主代理 · 只读路径**（`design` / `plan` / `debug` / `review` / `audit` / `demo`） | 必读 | `review`/`audit` 按需读 `environment.md` | 只读对应专项模块（如 `design.md`、`engineering.md#根因排障` 或 `review.md`） | 只交付请求产物，不改代码、不跑全量测试 |
 | **子代理 · `designer`** | 不必重读 | 直达 `roles.md#设计角色` | 读 `design.md` | 专注方案探索、接口契约与回滚设计 |
 | **子代理 · `developer`** | 不必重读 | 直达 `roles.md#开发角色` | 读 `engineering.md` + 已冻结的 `design.md`（若有） | 专注最小实现、端到端测试与项目脚本验证 |
@@ -150,7 +151,8 @@ EasyDev 的运行不是机械套用固定模板，而是由**主代理单写控�
 1. **设计 → 开发（Design to Dev）**：传递已通过施工闸的最新 `design.md`、分配给该分片的写入文件边界，以及验证命令约定。
 2. **开发 → 首次独立审查（Dev to Initial Review）**：传递原始需求、`design.md`、**相对任务基线的完整 diff**、直接调用方位置，以及开发者提交的红绿测试输出与验证证据。审查者只看客观产物与代码事实，不听开发者的主观辩解。
 3. **修复 → 定向复审（Fix to Targeted Re-review）**：不重审全仓，而是传递**上一轮已审版本**、**本次修复的增量 diff**、**未决问题 ID 列表（P0/P1/P2）** 以及对应的回归验证输出，由审查者逐项核销并检查是否引入新回归。
-4. **作者争议复核（Dispute Resolution）**：若 `developer` 认为某条审查发现属于误报，不得自行忽略，必须提交**代码行号、调用链或可复现输出证据**；主代理将该反证打包交由独立 `reviewer` 复核确认后，方可关闭该问题。
+4. **终审两阶段（终审实例）**：发生修复后由新的审查实例收口，阶段 1 只给需求、验收、范围与可接受风险及最终 diff 做盲审，阶段 2 以同一实例补发历史清单与修复 diff 核对关闭结论，两阶段合计一轮，口径见 [审查规程](references/review.md#终审两阶段)。
+5. **作者争议复核（Dispute Resolution）**：若 `developer` 认为某条发现属于误报，不得自行忽略，必须提交**代码行号、调用链或可复现输出证据**；主代理将该反证打包交由独立 `reviewer` 复核确认后，方可关闭该问题。
 
 ---
 
@@ -193,7 +195,7 @@ EasyDev 的运行不是机械套用固定模板，而是由**主代理单写控�
 }
 ```
 
-示例中的 `windows` 按北京时间（`UTC+8`）时段切换角色局部覆盖：开工或新对话开始时解析一次并锁定，本次对话未结束前即使跨过切换时刻也不中途切换。
+示例中的 `windows` 按北京时间（`UTC+8`）时段切换角色局部覆盖：开工或新对话开始时解析一次并锁定，任务结束前不中途切换，下次新任务按当时北京时间重新解析。
 
 ### 选型参考
 
@@ -223,7 +225,7 @@ Windows 路径、字段及生效核对见 [environment.md](references/environmen
 
 规则以 [SKILL.md](SKILL.md) 及 references 为准：
 
-- [角色定义](references/roles.md)：开发与审查角色交接入口
+- [角色定义](references/roles.md)：开发、审查与设计角色交接入口
 - [流程编排](references/workflow.md)：分流、normal、full 与 gate 编排、两本账与尝试预算
 - [工程实践](references/engineering.md)：实现规范、代码质量判据、测试、排障与验证
 - [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选

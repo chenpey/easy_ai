@@ -26,6 +26,17 @@ if [ ! -f "$PROMPT_FILE" ]; then
   exit 2
 fi
 
+if [ ! -r "$PROMPT_FILE" ]; then
+  echo "Error: prompt 文件不可读: $PROMPT_FILE" >&2
+  exit 2
+fi
+
+PROMPT="$(cat -- "$PROMPT_FILE")"
+if [ -z "$PROMPT" ]; then
+  echo "Error: prompt 文件为空: $PROMPT_FILE" >&2
+  exit 2
+fi
+
 for arg in "$@"; do
   if [ "$arg" = "--" ]; then
     echo "Error: 额外参数不得包含裸 --，否则会覆盖脚本自身的分隔符" >&2
@@ -33,4 +44,4 @@ for arg in "$@"; do
   fi
 done
 
-exec pi -p --session-id "$SESSION_ID" "$@" -- "$(cat -- "$PROMPT_FILE")" </dev/null
+exec pi -p --session-id "$SESSION_ID" "$@" -- "$PROMPT" </dev/null

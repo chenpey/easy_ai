@@ -102,6 +102,8 @@ def run_python(
     extra_env: Dict[str, str] | None = None,
 ) -> Dict[str, object]:
     env = os.environ.copy()
+    # 验收脚本普遍依赖 assert；-O / PYTHONOPTIMIZE 会剥掉断言，造成验收假绿。
+    env.pop("PYTHONOPTIMIZE", None)
     env.update(extra_env or {})
     env.update(
         {

@@ -46,10 +46,14 @@ HOOKS_REL_PATH="agent-hooks/antigravity/hooks.json"
 HOOKS_TARGET="$HOME/.gemini/config/hooks.json"
 
 apply_tmp=''
+hooks_tmp=''
 remote_tmp_dir=''
 cleanup() {
   if [ -n "$apply_tmp" ] && [ -f "$apply_tmp" ]; then
     rm -f -- "$apply_tmp"
+  fi
+  if [ -n "$hooks_tmp" ] && [ -f "$hooks_tmp" ]; then
+    rm -f -- "$hooks_tmp"
   fi
   if [ -n "$remote_tmp_dir" ] && [ -d "$remote_tmp_dir" ]; then
     rm -rf -- "$remote_tmp_dir"
@@ -114,32 +118,7 @@ hash_sha256() {
   fi
 }
 
-# 拓扑与软链入口处理
-if [ "$MODE" = "--apply" ]; then
-  for entry in "${entries[@]}"; do
-    entry_dir="$(dirname "$entry")"
-    mkdir -p "$entry_dir"
-    if [ -L "$entry" ]; then
-      if [ "$(readlink "$entry")" != "${targets[0]}" ]; then
-        echo "已有非预期软链入口: $entry -> $(readlink "$entry")" >&2
-        exit 1
-      fi
-    elif [ -e "$entry" ]; then
-      echo "已有非预期入口（非符号链接），请先核对并备份: $entry" >&2
-      exit 1
-    else
-      ln -s "${targets[0]}" "$entry"
-    fi
-  done
-else
-  for entry in "${entries[@]}"; do
-    if [ ! -L "$entry" ] || [ "$(readlink "$entry")" != "${targets[0]}" ]; then
-      echo "Unexpected rule entry: $entry" >&2
-      exit 1
-    fi
-  done
-fi
-
+# 先完成全部只读校验：任一项失败都不得留下半更新状态。
 for i in "${!targets[@]}"; do
   test -f "${sources[$i]}"
   if [ -d "${targets[$i]}" ]; then
@@ -148,9 +127,9 @@ for i in "${!targets[@]}"; do
   fi
 done
 
-# 通用规则发布文件必须是非软链的真文件。
-if [ -L "${targets[0]}" ]; then
-  echo "Shared rule target must be a regular file" >&2
+# 运行时规则发布文件必须是非软链的真文件。
+if [ -L "${targets[0]}" ] || [ -L "${targets[2]}" ] || [ -L "${targets[3]}" ]; then
+  echo "Runtime rule target must be a regular file: ${targets[0]} ${targets[2]} ${targets[3]}" >&2
   exit 1
 fi
 
@@ -165,25 +144,11 @@ if [ -L "${targets[1]}" ]; then
 fi
 
 if [ "$MODE" = "--apply" ]; then
-  for i in "${!targets[@]}"; do
-    target_dir="$(dirname "${targets[$i]}")"
-    mkdir -p "$target_dir"
-    apply_tmp="$(mktemp "$target_dir/.agent-rule.XXXXXX")"
-    cp "${sources[$i]}" "$apply_tmp"
-    diff -q "${sources[$i]}" "$apply_tmp"
-    if [[ "${targets[$i]}" == *.py ]]; then
-      chmod 755 "$apply_tmp"
-    else
-      chmod 644 "$apply_tmp"
-    fi
-    mv -f "$apply_tmp" "${targets[$i]}"
-    apply_tmp=''
-  done
-
+  # 先把合并结果写进临时文件并校验 hooks.json，成功后才动规则文件与入口软链。
   hooks_dir="$(dirname "$HOOKS_TARGET")"
   mkdir -p "$hooks_dir"
-  apply_tmp="$(mktemp "$hooks_dir/.agent-hooks.XXXXXX")"
-  python3 - "$HOOKS_SOURCE" "$HOOKS_TARGET" "$apply_tmp" <<'PY'
+  hooks_tmp="$(mktemp "$hooks_dir/.agent-hooks.XXXXXX")"
+  python3 - "$HOOKS_SOURCE" "$HOOKS_TARGET" "$hooks_tmp" <<'PY'
 import json, os, sys
 
 src_path, dst_path, tmp_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -212,9 +177,51 @@ with open(tmp_path, "w", encoding="utf-8") as f:
     json.dump(dst_data, f, indent=2, ensure_ascii=False)
     f.write("\n")
 PY
-  chmod 644 "$apply_tmp"
-  mv -f "$apply_tmp" "$HOOKS_TARGET"
-  apply_tmp=''
+  chmod 644 "$hooks_tmp"
+
+  # 入口预检只读：任何冲突都在创建软链之前退出，不留悬空链接。
+  for entry in "${entries[@]}"; do
+    if [ -L "$entry" ]; then
+      if [ "$(readlink "$entry")" != "${targets[0]}" ]; then
+        echo "已有非预期软链入口: $entry -> $(readlink "$entry")" >&2
+        exit 1
+      fi
+    elif [ -e "$entry" ]; then
+      echo "已有非预期入口（非符号链接），请先核对并备份: $entry" >&2
+      exit 1
+    fi
+  done
+
+  for entry in "${entries[@]}"; do
+    mkdir -p "$(dirname "$entry")"
+    [ -L "$entry" ] || ln -s "${targets[0]}" "$entry"
+  done
+
+  for i in "${!targets[@]}"; do
+    target_dir="$(dirname "${targets[$i]}")"
+    mkdir -p "$target_dir"
+    apply_tmp="$(mktemp "$target_dir/.agent-rule.XXXXXX")"
+    cp "${sources[$i]}" "$apply_tmp"
+    diff -q "${sources[$i]}" "$apply_tmp"
+    if [[ "${targets[$i]}" == *.py ]]; then
+      chmod 755 "$apply_tmp"
+    else
+      chmod 644 "$apply_tmp"
+    fi
+    mv -f "$apply_tmp" "${targets[$i]}"
+    apply_tmp=''
+  done
+
+  # hooks.json 的临时文件在所有规则文件就位后才替换，失败时保留旧配置。
+  mv -f "$hooks_tmp" "$HOOKS_TARGET"
+  hooks_tmp=''
+else
+  for entry in "${entries[@]}"; do
+    if [ ! -L "$entry" ] || [ "$(readlink "$entry")" != "${targets[0]}" ]; then
+      echo "Unexpected rule entry: $entry" >&2
+      exit 1
+    fi
+  done
 fi
 
 for i in "${!targets[@]}"; do

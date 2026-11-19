@@ -8,7 +8,7 @@ The workspace ships two code-quality samples that differ in cost, not in taste:
   indentation, a camel-case loop variable and mixed quotes.
 
 A reviewer that reports the first and not the second matches the wording in
-``review.md``/``reviewer-role.md`` (P3 for real comprehension cost, style noise
+``review.md``/``roles.md`` (P3 for real comprehension cost, style noise
 suppressed).  Findings are read from the machine-checkable block only.
 """
 

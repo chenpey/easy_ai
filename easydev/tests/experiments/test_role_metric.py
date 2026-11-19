@@ -199,6 +199,22 @@ class RoleMetricTests:
         worker = [row for row in rows if row["role"] == "worker"][0]
         assert worker.get("matched_paths") == {"/repo/easydev/references/execution.md": 1}
 
+    def test_write_and_echo_payloads_are_not_reads(self) -> None:
+        session = "22222222-3333-4444-8555-666666666666"
+        write_main_session(
+            self.session,
+            session,
+            [
+                ("write", {"path": "/repo/easydev/references/written.md", "content": "x"}),
+                ("bash", {"command": "echo easydev/references/echoed.md"}),
+                ("bash", {"command": "cat easydev/references/executed.md"}),
+            ],
+        )
+        rows, _ = self.run_cli_json(
+            "--session-dir", str(self.session), "--session", session, "--cwd", "/repo"
+        )
+        assert rows[0]["references"] == ["executed.md"]
+
     def test_no_visible_read_hint_for_external_delegation(self) -> None:
         # 外部委派工具的参数里没有路径键：读取不在事件层，只能提示，不能当作没读。
         write_child(

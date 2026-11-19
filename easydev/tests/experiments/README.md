@@ -21,7 +21,7 @@
 
 ```bash
 # 需 pytest 环境
-python3 -m pytest tests/experiments/test_role_metric.py -v
+python3 -m pytest tests/experiments/test_role_metric.py tests/experiments/test_design_gate.py -v
 python3 -m pytest tests/experiments/agent_runner -v
 python3 -m pytest tests/experiments/swebench -v
 ```

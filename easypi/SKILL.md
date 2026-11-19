@@ -10,7 +10,7 @@ metadata:
 
 本流程专用于 **Antigravity（agy）分派任务到 Pi 走 `easydev` `gate` 模式**（支持第 5 节 `full` 协同分支）：默认 agy 负责设计与开发终审，Pi 负责设计审查（`d/3`）与唯一代码实现。`gate` 的两处例外（`d/3` 由后续实现者执行、终审由设计方执行）由 `easydev` 规则定义，报告中须披露。
 
-触及 `easydev` 高风险边界（鉴权、支付、敏感数据、并发、破坏性操作、密码学、CI 与供应链、生产日志等）的任务不适用纯 `gate`：交 agy 接管原生 `full`，或走第 5 节 `full` 协同分支，或经用户明确接受未覆盖风险后按 `gate` 执行并披露。
+触及 `easydev` 高风险边界（鉴权、支付、敏感数据、并发、破坏性操作、密码学、CI 与供应链、生产日志等）的任务不适用 `gate`：交 agy 接管原生 `full`，或走第 5 节 `full` 协同分支。
 
 ## 1. 准备与设计（agy）
 
@@ -29,7 +29,7 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 ```
 
 - **设计分歧处理**：Pi 停在施工闸前返回分歧时，agy 结合用户意见修订设计（升版）并同步 `prompt.md` 与设计路径，保持同一工作目录与 `--session-id` 再次调用；修订重审计入 `d/3`，累计 3 轮用尽即停并报用户。
-- **高风险与硬拦**：Pi 发现任务实际触及高风险边界时立即停写回报；`pi -p` 无 UI，`force_ask` 级命令（`rm -rf`、`git reset/restore/clean/checkout --`、`commit/push`）会被钩子直接阻断，需要此类操作时交 agy 经用户确认执行。
+- **高风险与硬拦**：Pi 发现任务实际触及高风险边界时立即停写回报；`pi -p` 无 UI，`force_ask` 级命令（非临时/缓存目标的 `rm -rf`、`git reset --hard`/`clean -f`/整仓 `restore`·`checkout`、`commit`/`push`）会被钩子直接阻断，需要此类操作时交 agy 经用户确认执行。
 - **中断恢复**：超时或异常中断时，先查 `git status --short --untracked-files=all </dev/null` 与 `git diff`，再决定续跑或经用户确认后清理。按需追加 `--thinking <level>`；需加载受信任的项目级 `.pi/` 资源时追加 `--approve`；Pi 运行期间 agy 不修改工作区。
 
 ## 3. 开发终审（agy）

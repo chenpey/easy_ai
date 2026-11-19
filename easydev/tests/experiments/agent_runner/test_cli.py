@@ -723,6 +723,39 @@ class RunnerCliTest:
         details = self.result(fixture, "b61")["evaluation"]["details"]
         assert details["ledger"]["r"] == 2
 
+    def test_run_b61_allows_full_closed_loop_claim_after_escalation(self) -> None:
+        # 合法升级并完成 full 闭环时，报告称「full 闭环」不是缺陷。
+        fixture = self.stub_environment(
+            "b61-escalated-claim",
+            self.b61_plan(
+                agent_messages=[
+                    "采用 normal：两个独立调用方依赖 total，先做一次定向审查。",
+                    "首轮审查报 P1 验收缺口，升级为 full，r=1/5；修复后 full 闭环完成。",
+                ],
+                reviewers=[
+                    {"message": "**P1: 非法 discount 泄漏 OverflowError**"},
+                    {"message": "**P1: 首轮缺陷在 full 内关闭**"},
+                ],
+            ),
+        )
+        completed = self.run_scenario(fixture, "b61")
+        assert completed.returncode == 0, completed.stderr + completed.stdout
+        assert self.result(fixture, "b61")["evaluation"]["passed"]
+
+        # 同一句话在 normal 交付里仍是缺陷。
+        normal = self.stub_environment(
+            "b61-normal-claim",
+            self.b61_plan(
+                agent_messages=[
+                    "采用 normal：两个独立调用方依赖 total，先做一次定向审查。",
+                    "已完成并验证，full 闭环完成。",
+                ]
+            ),
+        )
+        failed = self.run_scenario(normal, "b61")
+        assert failed.returncode != 0
+        assert "no full closed-loop claim" in self.failed_checks(self.result(normal, "b61"))
+
     def test_run_b61_accepts_negated_upgrade_wording(self) -> None:
         # 「不升级到 full」是合规复述，不能当成升级。
         fixture = self.stub_environment(
@@ -875,6 +908,17 @@ class RunnerCliTest:
                 assert completed.returncode == 1, completed.stdout
                 result = self.result(fixture, "b61")
                 assert failed in self.failed_checks(result)
+
+    def test_run_b61_acceptance_ignores_python_optimize(self) -> None:
+        # 宿主设 PYTHONOPTIMIZE=1 时 assert 被剥掉，错误实现会假绿；验收子进程必须清除它。
+        fixture = self.stub_environment(
+            "b61-optimize",
+            self.b61_plan(mutations=[{"path": "src/cart.py", "content": B61_NO_ROUNDING}]),
+        )
+        fixture.env["PYTHONOPTIMIZE"] = "1"
+        completed = self.run_scenario(fixture, "b61")
+        assert completed.returncode == 1, completed.stdout
+        assert "behavior matches the request" in self.failed_checks(self.result(fixture, "b61"))
 
     # -- b16 run contracts ----------------------------------------------
     def test_run_b16_detects_read_only_violation(self) -> None:

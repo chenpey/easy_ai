@@ -160,6 +160,29 @@ SENSITIVE_DIR_RE = re.compile(
     r"|(?:~|\$\{?HOME\}?|/Users/[^/\s\"']+|/home/[^/\s\"']+)/\.netrc\b"
 )
 
+# `rm -rf` 的可重建目标：临时目录与缓存/构建产物，删掉后可由脚本或包管理器重建。
+RM_DISPOSABLE_DIRS = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    ".cache",
+    ".next",
+    "node_modules",
+    "dist",
+    "build",
+    "htmlcov",
+    "coverage",
+}
+RM_TEMP_ROOTS = ("/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/tmp/")
+RM_TEMP_NAME_RE = re.compile(r"^\.tmp(?:[-_.].*)?$|^tmp[-_].*$")
+# `$VAR`、通配符与花括号展开的实际目标无法在 hook 侧静态确定，一律按高危处理。
+RM_EXPANSION_RE = re.compile(r"[$`*?\[\]{}]")
+# `git checkout` / `git restore` 的整仓级路径参数：丢弃范围是整棵树而非单个文件。
+GIT_WHOLE_TREE_PATHS = {".", "./"}
+
 # 允许紧贴命令词的无空格写法（`ls</dev/null`），但仍排除 `>&` / `&>` 这类输出重定向。
 STDIN_REDIRECTION_RE = re.compile(r"0?<(?:&-|\s*[^\s<(&>])|<<<?")
 SHORT_OPT_WITH_C_RE = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
@@ -241,6 +264,9 @@ def _strip_heredoc_bodies(cmd: str) -> Tuple[str, List[str]]:
             continue
         out.append(line)
         pending.extend(_heredoc_starts(line))
+    # 未写结束定界符时 bash 仍把余下各行当正文执行其中的替换，不能整段丢弃。
+    if pending and not pending[0][1] and body:
+        bodies.append("\n".join(body))
     return "\n".join(out), bodies
 
 
@@ -394,6 +420,52 @@ def _iter_substitutions(text: str) -> List[str]:
     return found
 
 
+def _iter_process_substitutions(text: str) -> List[str]:
+    """Yield inner commands of unquoted `<( ... )` / `>( ... )` process substitutions."""
+    found: List[str] = []
+    i = 0
+    n = len(text)
+    in_sq = False
+    in_dq = False
+    while i < n:
+        ch = text[i]
+        if in_sq:
+            in_sq = ch != "'"
+            i += 1
+            continue
+        if in_dq:
+            if ch == "\\":
+                i += 2
+                continue
+            in_dq = ch != '"'
+            i += 1
+            continue
+        if ch == "'":
+            in_sq = True
+            i += 1
+            continue
+        if ch == '"':
+            in_dq = True
+            i += 1
+            continue
+        if ch in "<>" and text.startswith("(", i + 1):
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                if text[j] == "(":
+                    depth += 1
+                elif text[j] == ")":
+                    depth -= 1
+                j += 1
+            inner = text[i + 2 : j - 1] if depth == 0 else text[i + 2 : j]
+            if inner.strip():
+                found.append(inner)
+            i = j
+            continue
+        i += 1
+    return found
+
+
 def _has_path_arg(args: List[str], cwd: str) -> bool:
     """True when some non-flag argument names an existing path, i.e. input comes from a file."""
     i = 0
@@ -418,6 +490,7 @@ def _split_outside_quotes(text: str, seps: Tuple[str, ...]) -> List[str]:
     n = len(text)
     in_sq = False
     in_dq = False
+    depth = 0
     ordered_seps = sorted(seps, key=len, reverse=True)
 
     while i < n:
@@ -455,8 +528,21 @@ def _split_outside_quotes(text: str, seps: Tuple[str, ...]) -> List[str]:
             i += 2
             continue
 
+        if ch == "\\" and i + 1 < n:
+            # 转义字符（`\(`、`\;`）是字面量，不参与括号计数也不当分隔符。
+            buf.append(text[i : i + 2])
+            i += 2
+            continue
+
+        if ch in "()":
+            # 括号分组内部不按 seps 拆分，整组交给 _unwrap_group 递归处理。
+            depth = depth + 1 if ch == "(" else max(depth - 1, 0)
+            buf.append(ch)
+            i += 1
+            continue
+
         matched_sep = None
-        for sep in ordered_seps:
+        for sep in (ordered_seps if depth == 0 else ()):
             if text.startswith(sep, i):
                 # Avoid splitting `|` when it's `||` if `||` is not in seps.
                 if sep == "|" and text.startswith("||", i):
@@ -483,12 +569,40 @@ def _tokenize(segment: str) -> List[str]:
         return segment.split()
 
 
+def _unwrap_group(text: str) -> str:
+    """剥掉包住整条语句的 `( ... )` / `{ ... }` 外壳，保留其后原本的重定向等尾部。"""
+    stripped = text.strip()
+    opener = stripped[:1]
+    if opener not in ("(", "{"):
+        return text
+    closer = ")" if opener == "(" else "}"
+    # 等长挖空引号内容，使下标与原文对齐，避免括号里的引号干扰配对。
+    masked = QUOTED_STR_RE.sub(lambda m: " " * len(m.group(0)), stripped)
+    depth = 0
+    for i, ch in enumerate(masked):
+        if ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                inner = stripped[1:i].strip().rstrip(";").strip()
+                return f"{inner} {stripped[i + 1 :]}".strip()
+    return text
+
+
 def _unwrap_prefixes(tokens: List[str]) -> Tuple[str, List[str], bool]:
     """Strip env assignments and wrapper commands; return (base_cmd, args, has_timeout_wrapper)."""
     i = 0
     has_timeout = False
     while i < len(tokens):
         tok = tokens[i]
+        # 子 shell `(cmd ...)`、花括号组 `{ cmd; }` 与取反 `! cmd` 的记号前缀不是命令名。
+        stripped = tok.lstrip("({!}")
+        if stripped != tok:
+            if not stripped:
+                i += 1
+                continue
+            tokens[i] = tok = stripped
         if "=" in tok and not tok.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
             i += 1
             continue
@@ -575,11 +689,13 @@ def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
             j += 1
             continue
         if arg.startswith("-") and not arg.startswith("--"):
-            if "a" in arg[1:]:
+            # 短选项簇按字符解析：带值选项的值可紧贴（`-mmsg`）或占用下一个参数（`-m msg`）。
+            flags = arg[1:]
+            value_at = next((k for k, c in enumerate(flags) if c in "mFcCu"), len(flags))
+            if "a" in flags[:value_at]:
                 has_all = True
-            if any(c in arg[1:] for c in "mFcCu"):
-                j += 2
-                continue
+            j += 2 if value_at == len(flags) - 1 else 1
+            continue
         elif arg == "--all":
             has_all = True
         elif not arg.startswith("-"):
@@ -602,6 +718,37 @@ def _scan_git_commit_diff(cwd: str, args: List[str]) -> Optional[str]:
             if hit:
                 return hit
     return None
+
+
+def _git_staged_only(sub_args: List[str]) -> bool:
+    """`git restore --staged` 只动暂存区（可逆），未带 `--worktree` 时不碰工作区。"""
+    staged = worktree = False
+    for arg in sub_args:
+        if arg == "--staged":
+            staged = True
+        elif arg == "--worktree":
+            worktree = True
+        elif arg.startswith("-") and not arg.startswith("--"):
+            staged = staged or "S" in arg[1:]
+            worktree = worktree or "W" in arg[1:]
+    return staged and not worktree
+
+
+def _git_wide_discard(sub: str, sub_args: List[str]) -> bool:
+    """是否整仓级丢弃工作区修改：`-f` 或整仓路径；`restore --staged` 例外。"""
+    if sub == "restore" and _git_staged_only(sub_args):
+        return False
+    force = any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a) for a in sub_args)
+    return force or _git_whole_tree_path(sub_args)
+
+
+def _git_whole_tree_path(sub_args: List[str]) -> bool:
+    """`. `、`./`、`:/` 等整仓级路径参数（`--` 前后的位置参数都计入）。"""
+    return any(
+        arg in GIT_WHOLE_TREE_PATHS or arg.startswith(":/")
+        for arg in sub_args
+        if not arg.startswith("-")
+    )
 
 
 def _check_git_action(args: List[str], cwd: str) -> Tuple[Optional[str], Optional[str]]:
@@ -646,11 +793,9 @@ def _check_git_action(args: List[str], cwd: str) -> Tuple[Optional[str], Optiona
         if has_force and not has_dry:
             return "force_ask", "执行 `git clean -f` 会永久删除未跟踪文件，请确认（§1）。"
 
-    if sub == "checkout" and "--" in sub_args:
-        return "force_ask", "执行 `git checkout -- ...` 会覆盖工作区修改，请确认（§1）。"
-
-    if sub == "restore":
-        return "force_ask", "执行 `git restore` 会丢弃工作区/暂存区修改，请确认（§1）。"
+    # 单文件丢弃与切分支可逆，只有整仓级丢弃（`.`/`./`/`:/`/`-f`）才需确认。
+    if sub in ("checkout", "restore") and _git_wide_discard(sub, sub_args):
+        return "force_ask", f"执行 `git {sub}` 整仓丢弃工作区修改不可逆，请确认（§1）。"
 
     if sub == "stash" and any(a in ("drop", "clear") for a in sub_args):
         return "force_ask", "执行 `git stash drop/clear` 不可逆，请确认（§1）。"
@@ -661,12 +806,52 @@ def _check_git_action(args: List[str], cwd: str) -> Tuple[Optional[str], Optiona
     return None, None
 
 
+def _rm_target_is_disposable(target: str) -> bool:
+    """临时目录与缓存/构建产物可重建，删除它们不算不可逆高危。"""
+    if not target or target.startswith("~") or RM_EXPANSION_RE.search(target):
+        return False
+    path = os.path.normpath(target).replace(os.sep, "/")
+    if path.startswith("/"):
+        # 规范化后仍须落在系统临时目录的子路径上，`/tmp` 本身不算。
+        return any(path.startswith(root) for root in RM_TEMP_ROOTS)
+    parts = path.split("/")
+    if ".." in parts:
+        # `../build` 之类会越出当前目录，删的是别的目录，不能当可重建缓存。
+        return False
+    return (
+        RM_TEMP_NAME_RE.match(parts[0]) is not None
+        or parts[0] in RM_DISPOSABLE_DIRS
+        or parts[-1] in RM_DISPOSABLE_DIRS
+    )
+
+
 def _check_rm_force(args: List[str]) -> Optional[str]:
     has_r = any(a == "--recursive" or (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a)) for a in args)
     has_f = any(a == "--force" or (a.startswith("-") and not a.startswith("--") and "f" in a) for a in args)
-    if has_r and has_f:
-        return "执行递归强制删除 `rm -rf` 属于不可逆高危操作，请确认（§1）。"
-    return None
+    if not (has_r and has_f):
+        return None
+
+    targets: List[str] = []
+    skip_next = False
+    after_double_dash = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+        elif re.fullmatch(r"\d*[<>]+", arg):
+            skip_next = True  # 重定向目标不是删除目标
+        elif re.match(r"^\d*[<>]", arg):
+            continue
+        elif arg == "--":
+            after_double_dash = True  # 此后连 `-x` 也是删除目标
+        elif arg.startswith("-") and not after_double_dash:
+            continue
+        else:
+            targets.append(arg)
+
+    # 全部目标都是可重建的临时/缓存路径才放行，防止 `rm -rf .tmp-a /etc` 夹带。
+    if targets and all(_rm_target_is_disposable(t) for t in targets):
+        return None
+    return "执行递归强制删除 `rm -rf` 属于不可逆高危操作，请确认（§1）。"
 
 
 def _check_network_timeout(cmd: str, args: List[str], has_timeout_wrapper: bool) -> Optional[str]:
@@ -703,6 +888,11 @@ def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) ->
     if not stripped:
         return None, None
 
+    # 子 shell / 花括号组先剥外壳：否则 `(git push)` 的子命令会被解析成 `push)`。
+    group_inner = _unwrap_group(stripped)
+    if group_inner != stripped:
+        return evaluate_command(group_inner, cwd=cwd, host=host, check_stdin=check_stdin)
+
     secret_hit = scan_secrets([stripped], "命令行参数")
     if secret_hit:
         return "deny", secret_hit
@@ -729,12 +919,21 @@ def evaluate_command(cmd: str, cwd: str, host: str, check_stdin: bool = True) ->
                 return best_decision, best_reason
 
     for stmt in statements:
+        # 链条后段的组（`cd x && (git push)`）先剥外壳再递归，组内多语句与多层括号一并覆盖。
+        unwrapped = _unwrap_group(stmt)
+        if unwrapped != stmt:
+            sub_dec, sub_reason = evaluate_command(unwrapped, cwd=cwd, host=host, check_stdin=check_stdin)
+            record(sub_dec, sub_reason)
+            if best_decision == "deny":
+                return best_decision, best_reason
+            continue
         stmt_unquoted = _strip_comments_and_quotes(stmt).strip()
         if not stmt_unquoted:
             continue
 
-        # Hidden commands: `$(...)` and backticks run before the outer command.
-        for inner in _iter_substitutions(_strip_single_quotes(_strip_comments(stmt))):
+        # Hidden commands: `$(...)`、反引号与进程替换先于外层命令执行。
+        probe = _strip_single_quotes(_strip_comments(stmt))
+        for inner in _iter_substitutions(probe) + _iter_process_substitutions(probe):
             sub_dec, sub_reason = evaluate_command(inner, cwd=cwd, host=host, check_stdin=False)
             record(sub_dec, sub_reason)
             if best_decision == "deny":
@@ -824,7 +1023,7 @@ def _extract_write_texts(payload: dict) -> Tuple[str, List[str]]:
 
     path = str(args.get("Path") or args.get("TargetFile") or args.get("path") or "目标文件")
     texts: List[str] = []
-    for key in ("Content", "Replacement", "CodeContent", "content", "newText"):
+    for key in ("Content", "ReplacementContent", "Replacement", "CodeContent", "content", "newText"):
         val = args.get(key)
         if isinstance(val, str):
             texts.append(val)
@@ -877,6 +1076,8 @@ def evaluate_payload(payload: dict, host: str) -> Tuple[Optional[str], Optional[
         hit = scan_secrets(texts, f"写入内容（{os.path.basename(path)}）")
         if hit:
             return "deny", hit
+        if SENSITIVE_DIR_RE.search(path):
+            return "force_ask", "写入涉及敏感凭据目录（如 `.ssh`/`.aws`/`.gnupg`），须由用户明确授权（§3）。"
         return None, None
 
     cmd = _extract_command(payload)

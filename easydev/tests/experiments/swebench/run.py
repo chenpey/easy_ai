@@ -307,6 +307,10 @@ def extract_template(template: Path, destination: Path) -> None:
                     raise RuntimeError(
                         f"unsafe tar member (link): {member.name} ({reason})"
                     )
+            elif not member.isfile():
+                # 3.12 以下的 extract 没有 data_filter，FIFO/设备节点会直接落地；
+                # 模板只应有普通文件、目录与链接。
+                raise RuntimeError(f"unsafe tar member: {member.name}")
             archive.extract(member, destination, **extract_kwargs)
     # Archive order says nothing about depth, and a read-only parent (0500, 0400)
     # blocks the attributes of its children, so apply deepest first. Containment is
@@ -578,10 +582,9 @@ def run_agent(
             returncode = process.wait(timeout=10)
     except Exception as error:  # noqa: BLE001 - recorded as experiment data
         returncode = -1
-        stderr_path.write_text(
-            stderr_path.read_text(encoding="utf-8", errors="replace") + f"\n{error}\n",
-            encoding="utf-8",
-        )
+        # 异常可能发生在 stderr 文件创建前，追加式写入不依赖它已存在。
+        with stderr_path.open("a", encoding="utf-8") as stderr_file:
+            stderr_file.write(f"\n{error}\n")
     elapsed = time.time() - started
     parsed = parse_events(events_path)
     if last_message_path.exists():
@@ -1423,7 +1426,14 @@ def paired_bootstrap(
 ) -> Dict[str, float]:
     task_ids = sorted(set(left) & set(right))
     if not task_ids:
-        return {"risk_difference": 0.0, "ci_low": 0.0, "ci_high": 0.0}
+        return {
+            "risk_difference": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "tasks_left_better": 0,
+            "tasks_right_better": 0,
+            "tasks_tied": 0,
+        }
     differences = [right[task_id] - left[task_id] for task_id in task_ids]
     randomizer = random.Random(seed)
     sampled = []
@@ -1434,8 +1444,8 @@ def paired_bootstrap(
         "risk_difference": sum(differences) / len(differences),
         "ci_low": percentile(sampled, 0.025),
         "ci_high": percentile(sampled, 0.975),
-        "tasks_left_better": sum(difference > 0 for difference in differences),
-        "tasks_right_better": sum(difference < 0 for difference in differences),
+        "tasks_left_better": sum(difference < 0 for difference in differences),
+        "tasks_right_better": sum(difference > 0 for difference in differences),
         "tasks_tied": sum(difference == 0 for difference in differences),
     }
 
@@ -1629,7 +1639,7 @@ def markdown_report(experiment: Path, results: Sequence[Dict[str, Any]]) -> str:
                 f"- `{arm} - baseline`: 风险差 "
                 f"{comparison['risk_difference']:+.1%}，任务级 bootstrap 95% CI "
                 f"[{comparison['ci_low']:+.1%}, {comparison['ci_high']:+.1%}]；"
-                f"任务胜/负/平 "
+                f"任务级胜/负/平（baseline / {arm}）："
                 f"{comparison['tasks_left_better']}/"
                 f"{comparison['tasks_right_better']}/"
                 f"{comparison['tasks_tied']}；均值输入 token 为 baseline 的 "
@@ -1788,7 +1798,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--experiment", type=Path, required=True)
     args = parser.parse_args(argv)
-    for option in ("repeats", "concurrency", "agent_timeout"):
+    for option in ("repeats", "concurrency", "agent_timeout", "test_timeout", "timeout"):
         value = getattr(args, option, None)
         if value is not None and value < 1:
             parser.error("--%s 必须 >= 1" % option.replace("_", "-"))

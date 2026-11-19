@@ -160,7 +160,9 @@ groups = {
         "SKILL.md": ("easythink/SKILL.md", None),
         "CHANGELOG.md": ("easythink/CHANGELOG.md", r"^##\s*([0-9]+\.[0-9]+\.[0-9]+)\s*更新说明"),
         # 回归记录从 behavior.md 拆到 tests/runs/README.md，版本仍取最新一行的日期行。
-        "tests/runs/README.md": ("easythink/tests/runs/README.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|")
+        "tests/runs/README.md": ("easythink/tests/runs/README.md", r"\|\s*20[0-9]{2}-[0-9]{2}-[0-9]{2}\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
+        "mindmap title": ("easythink/assets/easythink-mindmap.svg", r"<title[^>]*>EasyThink\s+([0-9]+\.[0-9]+\.[0-9]+)\s"),
+        "mindmap eyebrow": ("easythink/assets/easythink-mindmap.svg", r">EASYTHINK\s+([0-9]+\.[0-9]+\.[0-9]+)\s")
     },
     "easydev": {
         "root README": ("README.md", r"\|\s*\[EasyDev\]\(easydev/README\.md\)\s*\|\s*([0-9]+\.[0-9]+\.[0-9]+)\s*\|"),
@@ -404,14 +406,21 @@ PY
 echo "=== 6b. Python 脚本与回放守卫静态检查 ==="
 python3 - <<'PY'
 import ast
-import glob
 import os
+import subprocess
 import sys
 import warnings
 
 errors = []
 
-python_files = sorted(glob.glob("**/*.py", recursive=True))
+python_files = sorted(
+    subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.py"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+)
 
 
 def position(exc):

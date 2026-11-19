@@ -1,11 +1,11 @@
 # 0.3.2 定向抽测证据（2026-10-24）
 
-> **证据状态：历史证据，部分不可复核。** 快照为 0.3.2（`SKILL.md` 12,190 字节）时代；final 快照结论仅在该快照内自洽，与当前 0.5.0 规则不一致，不作为覆盖或发布依据。
-抽测由主代理执行；本 developer 仅按交接保存逐条回复全文、登记结果并收尾版本，未执行抽测。主代理在**最终 final 快照** `/tmp/easythinking-probe-0.3.2-final`（`SKILL.md` 12,190 字节，metadata.version=0.3.2，与当前工作树一致）上同批重跑全部 10 条，**10/10 通过**；该一次性结果替代此前跨快照组合口径，逐条全文见 [final/](final/README.md)。历史 0.3.2b 首测、0.3.2c/0.3.2d 复测与 L 三次记录均保留（见下文「r2 修复与复测」）。仍非全量回归；未执行私有 held-out（0/0），未验证宿主自动触发（description 路由）。
+> **证据状态：历史证据，部分不可复核。** 快照为 0.3.2（`SKILL.md` 12,190 字节）时代；final 快照结论仅在该快照内自洽，与当前版本规则不一致，不作为覆盖或发布依据。
+抽测由主代理执行；本 developer 仅按交接保存逐条回复全文、登记结果并收尾版本，未执行抽测。主代理在**最终 final 快照** `/tmp/easythinking-probe-0.3.2-final`（`SKILL.md` 12,190 字节，metadata.version=0.3.2，与当时工作树一致）上同批重跑全部 10 条，**10/10 通过**；该一次性结果替代此前跨快照组合口径，逐条全文见 [final/](final/README.md)。历史 0.3.2b 首测、0.3.2c/0.3.2d 复测与 L 三次记录均保留（见下文「r2 修复与复测」）。仍非全量回归；未执行私有 held-out（0/0），未验证宿主自动触发（description 路由）。
 
 ## 执行与加载证据
 
-- **final 快照**：`/tmp/easythinking-probe-0.3.2-final` 只含 `SKILL.md`（12,190 字节、metadata.version=0.3.2，与当前工作树一致）、`references/`、`agents/`，不含 `tests/`、`CHANGELOG.md`、`README.md`；10 个独立 delegate 实例同批并行，每条只给输入，只读快照并忽略宿主已安装技能，未接触验收清单。逐实例 read toolCall、时间与模型见 [final/load-evidence.md](final/load-evidence.md)，逐条全文见 [final/](final/README.md)。
+- **final 快照**：`/tmp/easythinking-probe-0.3.2-final` 只含 `SKILL.md`（12,190 字节、metadata.version=0.3.2，与当时工作树一致）、`references/`、`agents/`，不含 `tests/`、`CHANGELOG.md`、`README.md`；10 个独立 delegate 实例同批并行，每条只给输入，只读快照并忽略宿主已安装技能，未接触验收清单。逐实例 read toolCall、时间与模型见 [final/load-evidence.md](final/load-evidence.md)，逐条全文见 [final/](final/README.md)。
 - **0.3.2b 历史批次**：快照 `/tmp/easythinking-probe-0.3.2b` 只含 `SKILL.md`（12,217 字节、metadata.version=0.3.1 候选）、`references/`、`agents/`，不含 `tests/`、`CHANGELOG.md`、`README.md`。该快照为 r2 修复前批次；最终 0.3.2 为 12,190 字节，差异为 metadata.version 及 r2 删除的第三方禁句，运行规则以当前工作树为准。
 - 0.3.2b 批次的 10 个独立 delegate 实例同批并行，每条只给输入；要求只读快照并忽略宿主已安装技能，未接触验收清单。运行实例 ID 见下表。
 - 实际模型 `magpie/opencode-go/deepseek-v4.1-flash`，thinking high（运行状态）；请求值为 `opencode-go/deepseek-v4.1-flash`，宿主加 provider 前缀。
@@ -30,7 +30,7 @@
 
 ## 最终 10/10（final 快照）
 
-主代理在 `/tmp/easythinking-probe-0.3.2-final`（`SKILL.md` 12,190 字节、metadata.version=0.3.2，与当前工作树一致）上同批重跑 10 条，**10/10 通过**。这是同一快照的一次性结果，替代此前跨快照组合的最终口径。逐实例 read toolCall 见 [final/load-evidence.md](final/load-evidence.md)，逐条回复全文与执行元数据见 [final/](final/README.md)。
+主代理在 `/tmp/easythinking-probe-0.3.2-final`（`SKILL.md` 12,190 字节、metadata.version=0.3.2，与当时工作树一致）上同批重跑 10 条，**10/10 通过**。这是同一快照的一次性结果，替代此前跨快照组合的最终口径。逐实例 read toolCall 见 [final/load-evidence.md](final/load-evidence.md)，逐条回复全文与执行元数据见 [final/](final/README.md)。
 
 | 用例与全文 | 判定 | 结果摘要与边界 |
 | --- | --- | --- |
@@ -74,7 +74,7 @@ r2 复审提出 1 P2 与 1 P3，均已处理并复测；`SKILL.md` 删除第三�
 快照谱系：
 
 - `/tmp/easythinking-probe-0.3.2b`：`SKILL.md` 12,217 字节（r2 修复前）；B/C/E 数据变体/H/J/M/BH-02A/NT-13 共 8 项在此通过（I 首测亦通过，最终组合采用其 0.3.2c 复测）。
-- `/tmp/easythinking-probe-0.3.2c`：`SKILL.md` 12,190 字节（删除第三方禁句后，与当前工作树一致）；I 通过，L 未通过。
+- `/tmp/easythinking-probe-0.3.2c`：`SKILL.md` 12,190 字节（删除第三方禁句后，与当时工作树一致）；I 通过，L 未通过。
 - `/tmp/easythinking-probe-0.3.2d`：`SKILL.md` 仍为 12,190 字节，仅 `references/methods.md` 补强 L「首个动作」判据（`tests/behavior.md` 同步补强不在快照内）；L 通过。
 
 历史跨快照组合为 8 项在 0.3.2b 通过，改动仅涉及第三方规则，不影响这 8 项；I 在 0.3.2c 复测通过；L 在 0.3.2d 复测通过。该组合现由 final 快照同批 10/10 替代；L 首测与 0.3.2c 两次未达标记录仍保留，不因最终通过而删除或改写。

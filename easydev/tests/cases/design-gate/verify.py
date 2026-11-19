@@ -206,6 +206,10 @@ ROUTE_CASES = [
      "full", ["报告偏离"]),
     ("设计门控命中不把 quick/normal 反向升级",
      {"prior_check_catches_regression": True, "public_contract": True, "packages": 3}, "quick", []),
+    ("外部指定 gate 且非高风险：按 gate",
+     {"user_tier": "gate", "prior_check_catches_regression": True}, "gate", []),
+    ("外部指定 gate 但触及高风险：升 full",
+     {"user_tier": "gate", "high_risk": "confirmed"}, "full", []),
 ]
 
 INTENSITY_CASES = [
@@ -1195,7 +1199,7 @@ DOC_CONTRACT = [
         "入口把开工核实角色配置变成硬门",
         "easydev/SKILL.md",
         "## 全程约束",
-        ["非 quick/单次只读审查开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
+        ["非 quick/gate/单次只读审查开工先按 environment 核实角色配置", "未核实不得假定 inherit"],
         {"forbidden": ["需要独立设计、独立审查或指定模型委派"]},
     ),
     (
@@ -1596,7 +1600,7 @@ def run_doc_contract_mechanism() -> None:
 
     def move_model_gate(text: str) -> str:
         clause = (
-            "非 quick/单次只读审查开工先按 environment 核实角色配置；"
+            "非 quick/gate/单次只读审查开工先按 environment 核实角色配置；"
             "未核实不得假定 inherit 自任设计或写入，分派以核实值为准。"
         )
         if clause not in text or "## 按需加载" not in text:

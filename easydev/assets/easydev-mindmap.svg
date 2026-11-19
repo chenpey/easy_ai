@@ -25,7 +25,7 @@
   <!-- Top Header -->
   <text x="48" y="42" class="eyebrow">EASYDEV 2.10.1 · 架构与上下文交接全景</text>
   <text x="48" y="80" class="heading">按风险组织编码 · 按职责渐进加载 · 跨代理无损交接</text>
-  <text x="48" y="112" class="subtitle">三级渐进式披露 · 三档风险分流 · 独立设计与审查闭环 · 结构化摘要与落盘产物交接</text>
+  <text x="48" y="112" class="subtitle">三级渐进式披露 · 四档风险分流 · 独立设计与审查闭环 · 结构化摘要与落盘产物交接</text>
 
   <!-- Top Banners: Progressive Disclosure & Budget Caps -->
   <!-- Left Banner: Progressive Disclosure -->
@@ -39,7 +39,7 @@
   <!-- Right Banner: State & Budget Caps -->
   <g>
     <rect x="736" y="132" width="656" height="92" rx="14" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
-    <text x="756" y="158" class="banner-title" fill="#991b1b">◆ 主代理单控与三项硬预算（切挡与跨阶段累计不重置）</text>
+    <text x="756" y="158" class="banner-title" fill="#991b1b">◆ 主代理单控与三项硬预算（切档与跨阶段累计不重置）</text>
     <text x="756" y="184" class="banner-text" fill="#7f1d1d">主代理独占分流、分派、预算与完成声明；子代理只履行单一角色并回报新证据</text>
     <text x="756" y="206" class="banner-text" fill="#7f1d1d">同根因最多 3 次有新证据的修复 · 设计账 d/3（候选/初审/重审） · 施工账 r/5（增量/初审/复审）</text>
   </g>
@@ -72,7 +72,7 @@
     <text x="114" y="283" class="card-title">风险分流与路径选择</text>
     <text x="68" y="318" class="card-desc">只读路径（review/audit/design/plan）不改代码不跑全量测试</text>
     <text x="68" y="342" class="card-desc">四问自检识别第二视角信号：无现成检查 / ≥2调用方 / 共享契约</text>
-    <text x="68" y="366" class="card-desc">quick 自查 · normal 独立审查+1次局部P2复审 · full 完整闭环</text>
+    <text x="68" y="366" class="card-desc">quick 自查 · normal 独立审查 · full 闭环 · gate 外部设计</text>
   </g>
 
   <!-- 02 渐进披露与按需加载 -->
@@ -117,7 +117,7 @@
     <text x="1034" y="443" class="card-title">角色隔离与模型配置</text>
     <text x="988" y="478" class="card-desc">designer / developer / reviewer 三角色，审查者绝不兼任设计或实现</text>
     <text x="988" y="502" class="card-desc">developer=inherit 时主代理可单写，否则委派独立开发者</text>
-    <text x="988" y="526" class="card-desc">支持 windows 按北京时间时段切换，当前对话未结束不中途切换</text>
+    <text x="988" y="526" class="card-desc">支持 windows 按北京时间时段切换，任务结束前不中途切换</text>
   </g>
 
   <!-- 06 并行分片与工作树隔离 -->
@@ -168,8 +168,8 @@
     <text x="988" y="812" class="perspective-cond" fill="#6b21a8">核心原则：不同角色与复审轮次按职责接收精确的增量证据</text>
     <text x="988" y="842" class="perspective-body" fill="#581c87">• 设计 → 开发：冻结 design.md + 写入集边界，不把未审草案当契约</text>
     <text x="988" y="870" class="perspective-body" fill="#581c87">• 开发 → 初审：完整任务 diff + 直接调用方 + 验证命令与红绿输出</text>
-    <text x="988" y="898" class="perspective-body" fill="#581c87">• 修复 → 定向复审：上次审查版本 + 本次修复 diff + 原问题 ID 核销</text>
-    <text x="988" y="926" class="perspective-body" fill="#581c87">• 时段锁定：开工解析一次 windows，当前对话未结束不中途切换</text>
+    <text x="988" y="898" class="perspective-body" fill="#581c87">• 修复 → 终审两阶段：首轮盲审最终 diff，二阶段补发清单逐条核销</text>
+    <text x="988" y="926" class="perspective-body" fill="#581c87">• 时段锁定：开工解析一次 windows，任务结束前不中途切换</text>
     <text x="988" y="954" class="perspective-body" fill="#581c87">• 争议复核：作者异议须附代码路径或可复现检查，交独立审查者裁决</text>
     <text x="988" y="980" class="perspective-body" fill="#7e22ce">→ 消除多轮修补与跨模型接力中的信息衰减与上下文串味</text>
   </g>

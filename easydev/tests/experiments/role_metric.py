@@ -32,7 +32,11 @@ EXPERIMENTS_ROOT = Path(__file__).resolve().parent
 if str(EXPERIMENTS_ROOT) not in sys.path:
     sys.path.insert(0, str(EXPERIMENTS_ROOT))
 
+import shell  # noqa: E402
 import transcripts  # noqa: E402
+
+# 命令类工具：只有静态可判的读命令算读取，echo/写重定向不算。
+READ_COMMAND_TOOLS = {"bash", "run_command", "exec_command", "run_terminal_cmd"}
 
 REFERENCE_RE = re.compile(r"references/([A-Za-z0-9_.-]+\.md)")
 # 参数里出现路径键才算一次可见读取；payload 文本匹配比解析 JSON 宽容。
@@ -171,6 +175,28 @@ def summarize_records(
     return summary
 
 
+def _read_paths(tool: str, payload: str) -> List[str]:
+    """只从读工具与静态读命令里取被读路径；写入内容、补丁与 echo 参数不算读取。"""
+    if tool in transcripts.READ_TOOL_FIELDS:
+        return [payload]
+    if tool not in READ_COMMAND_TOOLS:
+        return []
+    try:
+        arguments = json.loads(payload)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(arguments, dict):
+        return []
+    command = arguments.get("command")
+    if not isinstance(command, str):
+        return []
+    run_cwd = arguments.get("cwd")
+    reads, _opaque = shell.read_command_paths(
+        command, cwd=run_cwd if isinstance(run_cwd, str) else None
+    )
+    return [str(read.get("path")) for read in reads]
+
+
 def summarize(payloads: Iterable[Tuple[str, str]], wanted: Iterable[str], cwd: Path) -> Dict[str, Any]:
     refs: set = set()
     hits: Dict[str, int] = {}
@@ -183,10 +209,11 @@ def summarize(payloads: Iterable[Tuple[str, str]], wanted: Iterable[str], cwd: P
         tools[tool] += 1
         if PATH_KEY_RE.search(payload):
             visible = True
-        refs.update(REFERENCE_RE.findall(payload))
-        for path, forms in queries.items():
-            if any(form in payload for form in forms):
-                hits[path] = hits.get(path, 0) + 1
+        for path_payload in _read_paths(tool, payload):
+            refs.update(REFERENCE_RE.findall(path_payload))
+            for path, forms in queries.items():
+                if any(form in path_payload for form in forms):
+                    hits[path] = hits.get(path, 0) + 1
     summary: Dict[str, Any] = {
         "tool_calls": calls,
         "references": sorted(refs),
