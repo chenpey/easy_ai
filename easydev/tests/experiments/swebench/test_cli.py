@@ -720,6 +720,134 @@ class SwebenchCliTest:
         assert (run_path / "grade" / "junit.xml").is_file()
         assert "src/mod.py" in (run_path / "agent.patch").read_text(encoding="utf-8")
 
+    def test_run_baseline_only_hands_allowlisted_host_variables_to_the_agent(
+        self, monkeypatch
+    ) -> None:
+        assets = self.make_assets("run-agent-env")
+        experiment = self.install_experiment(assets, "experiment")
+        stub = self.make_stub("run-agent-env-stub")
+        dump = stub.base / "agent-env.json"
+        stub.launcher.write_text(
+            "#!/bin/sh\n"
+            '"{python}" -c \'import json, os, sys; '
+            'json.dump(dict(os.environ), open(sys.argv[1], "w"))\' "{dump}"\n'
+            'exec "{python}" -B "{codex_stub}" "$@"\n'.format(
+                python=sys.executable, dump=dump, codex_stub=CODEX_STUB
+            ),
+            encoding="utf-8",
+        )
+        stub.launcher.chmod(0o755)
+        injected = {
+            "GITHUB_TOKEN": "secret",
+            "AWS_SECRET_ACCESS_KEY": "secret",
+            "PYTHONOPTIMIZE": "1",
+            "PYTEST_ADDOPTS": "-x",
+            "RIPGREP_CONFIG_PATH": "/outside/rg.conf",
+            "OPENAI_API_KEY": "sk-test",
+            "HTTPS_PROXY": "http://127.0.0.1:7890",
+        }
+        for key, value in injected.items():
+            monkeypatch.setenv(key, value)
+        completed = self.run_command(
+            stub,
+            experiment,
+            plan=self.complete_plan(),
+            statuses={TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"},
+        )
+        assert completed.returncode == 0, completed.stdout
+        assert self.result(experiment)["resolved"]
+        observed = json.loads(dump.read_text(encoding="utf-8"))
+        assert observed["HOME"] == str(self.run_path(experiment) / "home")
+        assert observed["CODEX_HOME"] == str(self.run_path(experiment) / "codex-home")
+        assert observed["PYTHONDONTWRITEBYTECODE"] == "1"
+        assert observed["PIP_DISABLE_PIP_VERSION_CHECK"] == "1"
+        assert observed["PATH"].startswith(
+            str(experiment / "venvs" / TASK["id"] / "bin") + os.pathsep
+        )
+        assert observed["EASYDEV_STUB_PLAN"] == str(stub.base / "codex-plan.json")
+        assert observed["OPENAI_API_KEY"] == injected["OPENAI_API_KEY"]
+        assert observed["HTTPS_PROXY"] == injected["HTTPS_PROXY"]
+        for key in (
+            "GITHUB_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "PYTHONOPTIMIZE",
+            "PYTEST_ADDOPTS",
+            "RIPGREP_CONFIG_PATH",
+        ):
+            assert key not in observed
+
+    def test_calibrate_pytest_subprocess_excludes_host_credentials(
+        self, monkeypatch
+    ) -> None:
+        assets = self.make_assets("pytest-env")
+        stub = self.make_stub("pytest-env-stub")
+        dump = stub.base / "pytest-env.jsonl"
+        python = assets.venvs / TASK["id"] / "bin" / "python"
+        python.unlink()
+        python.write_text(
+            "#!{}\n".format(sys.executable)
+            + "import json, os, sys\n"
+            + "with open({!r}, 'a', encoding='utf-8') as handle:\n".format(str(dump))
+            + "    handle.write(json.dumps(dict(os.environ)) + '\\n')\n"
+            + "os.execv(sys.executable, [sys.executable, '-B', {!r}, *sys.argv[1:]])\n".format(
+                str(PYTEST_STUB)
+            ),
+            encoding="utf-8",
+        )
+        python.chmod(0o755)
+        env = self.environment(
+            stub, {}, {TASK["f2p"]: "PASSED", TASK["p2p"]: "PASSED"}
+        )
+        env["EASYDEV_PYTEST_TRAILER"] = "stub-trailer"
+        injected = {
+            "GITHUB_TOKEN": "secret",
+            "OPENAI_API_KEY": "sk-test",
+            "PYTEST_ADDOPTS": "-x",
+            "HTTPS_PROXY": "http://127.0.0.1:7890",
+        }
+        env.update(injected)
+        out = assets.root / "calibrated"
+        completed = self.cli(
+            [
+                "calibrate",
+                "--dataset",
+                assets.dataset,
+                "--templates",
+                assets.templates,
+                "--venvs",
+                assets.venvs,
+                "--tasks",
+                TASK["id"],
+                "--out",
+                out,
+            ],
+            env=env,
+        )
+        assert completed.returncode == 0, completed.stdout
+        dumps = [
+            json.loads(line)
+            for line in dump.read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(dumps) == 2, dumps
+        for observed in dumps:
+            assert observed["PYTHONDONTWRITEBYTECODE"] == "1"
+            assert observed["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
+            assert observed["EASYDEV_PYTEST_PLAN"] == str(
+                stub.base / "pytest-plan.json"
+            )
+            assert observed["EASYDEV_PYTEST_TRAILER"] == "stub-trailer"
+            for key in (
+                "GITHUB_TOKEN",
+                "OPENAI_API_KEY",
+                "PYTEST_ADDOPTS",
+                "HTTPS_PROXY",
+            ):
+                assert key not in observed
+        assert {observed["PYTHONPATH"] for observed in dumps} == {
+            str(out / "task-baselines" / TASK["id"] / "repo"),
+            str(out / "gold" / TASK["id"] / "repo"),
+        }
+
     def test_patch_apply_failure_is_a_stored_terminal_result(self) -> None:
         # The Agent can write into pkg/ only after chmod-ing the copy in its own
         # worktree, so the captured patch applies to that copy but not to the

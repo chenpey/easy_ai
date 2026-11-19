@@ -29,6 +29,9 @@ if str(EXPERIMENTS_ROOT) not in sys.path:
     sys.path.insert(0, str(EXPERIMENTS_ROOT))
 
 from process_control import (  # noqa: E402
+    AGENT_EXTRA_ENV_ALLOWLIST,
+    PYTEST_STUB_ENV_ALLOWLIST,
+    filtered_env,
     run_captured,
     terminate_process,
     wait_for_process,
@@ -116,7 +119,7 @@ def run_command(
             "-c",
             "core.fsmonitor=false",
         ]
-        effective_env = os.environ.copy() if env is None else dict(env)
+        effective_env = filtered_env() if env is None else dict(env)
         effective_env["GIT_CONFIG_NOSYSTEM"] = "1"
         effective_env["GIT_CONFIG_GLOBAL"] = os.devnull
         effective_env["GIT_ATTR_SYSTEM"] = os.devnull
@@ -503,17 +506,20 @@ def codex_env(workdir: Path, venv: Path, run_dir: Path) -> Dict[str, str]:
     if not os.path.lexists(auth_link):
         auth_link.symlink_to(auth)
 
-    env = os.environ.copy()
-    for key in ("CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"):
-        env.pop(key, None)
-    env.update(
-        {
+    base_path = os.environ.get("PATH", "")
+    env = filtered_env(
+        allow_keys=AGENT_EXTRA_ENV_ALLOWLIST,
+        overrides={
             "HOME": str(home),
             "CODEX_HOME": str(codex_home),
             "PYTHONDONTWRITEBYTECODE": "1",
             "PIP_DISABLE_PIP_VERSION_CHECK": "1",
-            "PATH": f"{venv / 'bin'}:{env.get('PATH', '')}",
-        }
+            "PATH": (
+                f"{venv / 'bin'}{os.pathsep}{base_path}"
+                if base_path
+                else str(venv / "bin")
+            ),
+        },
     )
     return env
 
@@ -794,13 +800,13 @@ def grade_patch(
     selected = test_scope(task)
     junit = out_dir / "junit.xml"
     junit.unlink(missing_ok=True)
-    env = os.environ.copy()
-    env.update(
-        {
+    env = filtered_env(
+        allow_keys=PYTEST_STUB_ENV_ALLOWLIST,
+        overrides={
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             "PYTHONPATH": task_pythonpath(task["instance_id"], workdir),
-        }
+        },
     )
     command = pytest_command(venv, selected, junit)
     # 评分跑的是不可信测试代码：交给 run_captured 接管独立会话与进程树，
@@ -851,12 +857,14 @@ def baseline_status(
     captured = run_captured(
         command,
         cwd=workdir,
-        env={
-            **os.environ,
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
-            "PYTHONPATH": task_pythonpath(task["instance_id"], workdir),
-        },
+        env=filtered_env(
+            allow_keys=PYTEST_STUB_ENV_ALLOWLIST,
+            overrides={
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTHONPATH": task_pythonpath(task["instance_id"], workdir),
+            },
+        ),
         timeout=timeout,
     )
     result = subprocess.CompletedProcess(

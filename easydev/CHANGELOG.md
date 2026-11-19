@@ -2,6 +2,13 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.12.0 更新说明（2026-11-19）
+
+为 `easydev/tests/experiments` 全部被测 Agent、不可信 `pytest` 与验收/Git 子进程落地最小环境变量白名单隔离，阻止无关宿主凭据与环境配置污染进入子进程；`easydev` 流程档位、规则正文不变，规则文档总量上限维持 75839 字节（`SKILL.md` + `references/*.md` 合计不得超过 75839 字节，当前 75839 字节）。
+
+- **最小环境变量白名单**：`tests/experiments/process_control.py` 新增 `BASE_ENV_ALLOWLIST`、`AGENT_EXTRA_ENV_ALLOWLIST`、`PYTEST_STUB_ENV_ALLOWLIST` 与 `filtered_env()`，替换 `codex_cli.py`、`swebench/run.py`、`agent_runner/runner.py`、`scenarios/common.py`、`scenarios/b67.py` 与 `scenarios/public_contract_callers.py` 中的全量 `os.environ.copy()` / `{**os.environ}` 继承；不可信 `pytest` 与验收脚本不再透传 API Key 或代理变量，并修复 `codex_env` 的空 `PATH` 冒号拼接与 `run_python` 中 `extra_env` 复带入 `PYTHONOPTIMIZE` 的问题。
+- **端到端验证**：`agent_runner/test_cli.py`、`swebench/test_cli.py` 与 `test_process_control.py` 补充宿主凭据剔除、模型鉴权/代理/替身变量透传、不可信 `pytest` 隔离及 `extra_env` 注入 `PYTHONOPTIMIZE` 剔除测试。
+
 ## 2.11.0 更新说明（2026-11-19）
 
 全仓深度审计后续修复与安全守卫加固；`easydev` 流程档位、`d/3` 与 `r/5` 两本账及三次修复预算不变，规则文档总量上限调整为 75839 字节（`SKILL.md` + `references/*.md` 合计不得超过 75839 字节，当前 75839 字节）。

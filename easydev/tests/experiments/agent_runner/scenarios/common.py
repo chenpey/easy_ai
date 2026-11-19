@@ -11,7 +11,7 @@ from typing import Dict, Iterable, List
 _EXPERIMENTS = str(Path(__file__).resolve().parents[2])
 if _EXPERIMENTS not in sys.path:
     sys.path.insert(0, _EXPERIMENTS)
-from process_control import run_captured  # noqa: E402
+from process_control import filtered_env, run_captured  # noqa: E402
 
 
 def write_files(root: Path, files: Dict[str, str]) -> None:
@@ -100,10 +100,10 @@ def run_python(
     timeout: int = 60,
     extra_env: Dict[str, str] | None = None,
 ) -> Dict[str, object]:
-    env = os.environ.copy()
+    env = filtered_env(overrides=extra_env)
     # 验收脚本普遍依赖 assert；-O / PYTHONOPTIMIZE 会剥掉断言，造成验收假绿。
+    # 白名单不透传该键，这里再显式剔除一次，避免 extra_env 把它带回来。
     env.pop("PYTHONOPTIMIZE", None)
-    env.update(extra_env or {})
     env.update(
         {
             "PYTHONDONTWRITEBYTECODE": "1",

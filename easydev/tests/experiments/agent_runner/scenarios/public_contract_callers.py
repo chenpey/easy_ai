@@ -11,7 +11,7 @@ from pathlib import Path
 _EXPERIMENTS = str(Path(__file__).resolve().parents[2])
 if _EXPERIMENTS not in sys.path:
     sys.path.insert(0, _EXPERIMENTS)
-from process_control import run_captured  # noqa: E402
+from process_control import filtered_env, run_captured  # noqa: E402
 
 from .common import (
     check,
@@ -69,9 +69,8 @@ def acceptance_script() -> Path:
 
 
 def run_acceptance(workspace: Path) -> dict:
-    env = os.environ.copy()
-    env.update(
-        {
+    env = filtered_env(
+        overrides={
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": str(workspace),
         }

@@ -14,7 +14,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .common import check, evaluation, run_captured, run_python, write_files
+from .common import (
+    check,
+    evaluation,
+    filtered_env,
+    run_captured,
+    run_python,
+    write_files,
+)
 
 
 TITLE = "B67 code-quality implementation"
@@ -157,9 +164,8 @@ ALLOWED_PREFIXES = ("src", "tests", "codegen.py", "README.md")
 
 
 def run_suite(workspace: Path) -> dict:
-    env = os.environ.copy()
-    env.update(
-        {
+    env = filtered_env(
+        overrides={
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": str(workspace),
         }

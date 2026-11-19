@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -33,6 +34,44 @@ class AcceptanceTimeoutTest:
             assert result["returncode"] != 0
             assert "started" in result["stdout"]
             assert (time.monotonic() - started) < 15
+
+
+def test_run_python_blocks_host_credentials_and_optimize_override(monkeypatch) -> None:
+    """验收脚本不得继承宿主凭据或 pytest 选项，extra_env 也不能把 PYTHONOPTIMIZE 带回来。"""
+    for key, value in {
+        "GITHUB_TOKEN": "secret",
+        "OPENAI_API_KEY": "sk-test",
+        "PYTEST_ADDOPTS": "-x",
+        "PYTHONOPTIMIZE": "1",
+    }.items():
+        monkeypatch.setenv(key, value)
+    keys = [
+        "GITHUB_TOKEN",
+        "OPENAI_API_KEY",
+        "PYTEST_ADDOPTS",
+        "PYTHONOPTIMIZE",
+        "EASYDEV_B01_RUNTIME_MARKER",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONPATH",
+    ]
+    with tempfile.TemporaryDirectory() as directory:
+        workspace = Path(directory)
+        result = run_python(
+            workspace,
+            "import json, os; "
+            f"print(json.dumps({{key: os.environ.get(key) for key in {keys!r}}}))",
+            extra_env={
+                "PYTHONOPTIMIZE": "1",
+                "EASYDEV_B01_RUNTIME_MARKER": "marker",
+            },
+        )
+    assert result["returncode"] == 0, result["stderr"]
+    observed = json.loads(result["stdout"])
+    assert observed["EASYDEV_B01_RUNTIME_MARKER"] == "marker"
+    assert observed["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert observed["PYTHONPATH"] == str(workspace)
+    for key in ("GITHUB_TOKEN", "OPENAI_API_KEY", "PYTEST_ADDOPTS", "PYTHONOPTIMIZE"):
+        assert observed[key] is None
 
 
 def test_terminate_process_leaves_reused_process_group_alone() -> None:

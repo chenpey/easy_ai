@@ -18,7 +18,12 @@ SWEBENCH_ROOT = EXPERIMENTS_ROOT / "swebench"
 if str(SWEBENCH_ROOT) not in sys.path:
     sys.path.insert(0, str(SWEBENCH_ROOT))
 
-from process_control import terminate_process, wait_for_process  # noqa: E402
+from process_control import (  # noqa: E402
+    AGENT_EXTRA_ENV_ALLOWLIST,
+    filtered_env,
+    terminate_process,
+    wait_for_process,
+)
 from protocol import TOKEN_FIELDS, is_valid_event  # noqa: E402
 
 
@@ -38,15 +43,13 @@ def prepare_codex_environment(run_dir: Path, auth_path: Path) -> Dict[str, str]:
         auth_link.unlink()
     if not os.path.lexists(auth_link):
         auth_link.symlink_to(auth_path)
-    env = os.environ.copy()
-    for key in ("CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED"):
-        env.pop(key, None)
-    env.update(
-        {
+    env = filtered_env(
+        allow_keys=AGENT_EXTRA_ENV_ALLOWLIST,
+        overrides={
             "HOME": str(home),
             "CODEX_HOME": str(codex_home),
             "PYTHONDONTWRITEBYTECODE": "1",
-        }
+        },
     )
     return env
 

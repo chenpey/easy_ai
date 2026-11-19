@@ -9,10 +9,77 @@ import subprocess
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 
 ProcessIdentity = Tuple[int, ...]
+
+# 子进程只继承显式列出的宿主变量：其余（云厂商凭据、PYTHONOPTIMIZE、PYTEST_ADDOPTS、
+# CDPATH、RIPGREP_CONFIG_PATH、GIT_* 等）一律不进入被测 Agent、不可信 pytest 与验收脚本。
+BASE_ENV_ALLOWLIST: Tuple[str, ...] = (
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "SYSTEMROOT",  # Windows 子进程所需
+    "COMSPEC",  # Windows 子进程所需
+    "WINDIR",  # Windows 子进程所需
+)
+
+# 被测 codex Agent 额外需要的模型鉴权、网络代理与离线替身控制通道。
+AGENT_EXTRA_ENV_ALLOWLIST: Tuple[str, ...] = (
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_ORG_ID",
+    "OPENAI_PROJECT",
+    "CODEX_API_KEY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "EASYDEV_STUB_PLAN",
+)
+
+# 离线 pytest 替身的控制通道；不可信测试子进程拿不到 API key 或代理。
+PYTEST_STUB_ENV_ALLOWLIST: Tuple[str, ...] = (
+    "EASYDEV_PYTEST_PLAN",
+    "EASYDEV_PYTEST_TRAILER",
+    "EASYDEV_PYTEST_RETURNCODE",
+)
+
+
+def filtered_env(
+    *,
+    allow_keys: Iterable[str] = (),
+    overrides: Optional[Dict[str, Optional[str]]] = None,
+    source: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
+    """按最小白名单从 source（默认 os.environ）构造子进程环境变量；overrides 中键值为 None 的项被剔除。"""
+    environment = os.environ if source is None else source
+    env = {
+        key: environment[key]
+        for key in (*BASE_ENV_ALLOWLIST, *allow_keys)
+        if environment.get(key) is not None
+    }
+    for key, value in (overrides or {}).items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    return env
 
 
 def _linux_snapshot() -> Dict[int, Tuple[int, ProcessIdentity]]:

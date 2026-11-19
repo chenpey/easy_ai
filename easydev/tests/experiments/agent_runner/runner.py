@@ -35,6 +35,7 @@ if str(AGENT_RUNNER_ROOT) not in sys.path:
 import replay_read_guard  # noqa: E402
 from analyze_events import analyze_run  # noqa: E402
 from adapters.codex_cli import run_codex  # noqa: E402
+from process_control import filtered_env  # noqa: E402
 from scenarios import SCENARIO_MODULES, all_scenarios, load_scenario  # noqa: E402
 from scenarios.common import install_skill  # noqa: E402
 
@@ -47,7 +48,7 @@ def run_command(
     timeout: int = 120,
 ) -> subprocess.CompletedProcess:
     command = list(args)
-    env = os.environ.copy()
+    env = filtered_env()
     if command and Path(command[0]).name == "git":
         command[1:1] = [
             "-c",
@@ -59,11 +60,6 @@ def run_command(
         env["GIT_CONFIG_GLOBAL"] = os.devnull
         env["GIT_ATTR_SYSTEM"] = os.devnull
         env["GIT_ATTR_GLOBAL"] = os.devnull
-        env.pop("GIT_CONFIG_COUNT", None)
-        env.pop("GIT_CONFIG_PARAMETERS", None)
-        for key in list(env):
-            if key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
-                env.pop(key, None)
     result = subprocess.run(
         command,
         cwd=str(cwd),

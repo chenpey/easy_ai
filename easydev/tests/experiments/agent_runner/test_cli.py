@@ -432,6 +432,65 @@ class RunnerCliTest:
         assert patch.strip()
         assert ".agents/skills" not in patch
 
+    def test_run_b01_only_hands_allowlisted_host_variables_to_the_agent(self) -> None:
+        fixture = self.stub_environment("b01-agent-env", self.b01_plan())
+        dump = fixture.base / "agent-env.json"
+        fixture.launcher.write_text(
+            "#!/bin/sh\n"
+            '"{python}" -c \'import json, os, sys; '
+            'json.dump(dict(os.environ), open(sys.argv[1], "w"))\' "{dump}"\n'
+            'exec "{python}" -B "{stub}" "$@"\n'.format(
+                python=sys.executable, dump=dump, stub=CODEX_STUB
+            ),
+            encoding="utf-8",
+        )
+        fixture.launcher.chmod(0o755)
+        injected = {
+            "GITHUB_TOKEN": "secret",
+            "AWS_SECRET_ACCESS_KEY": "secret",
+            "PYTHONOPTIMIZE": "1",
+            "PYTEST_ADDOPTS": "-x",
+            "RIPGREP_CONFIG_PATH": "/outside/rg.conf",
+            "OPENAI_API_KEY": "sk-test",
+            "HTTPS_PROXY": "http://127.0.0.1:7890",
+        }
+        completed = self.cli(
+            "run",
+            "--scenario",
+            "b01",
+            "--out",
+            fixture.out,
+            "--codex-bin",
+            fixture.launcher,
+            "--codex-auth",
+            fixture.auth,
+            "--skill-root",
+            fixture.skill,
+            "--case-root",
+            CASES_ROOT,
+            "--agent-timeout",
+            30,
+            env=dict(fixture.env, **injected),
+        )
+        assert completed.returncode == 0, completed.stderr + completed.stdout
+        assert self.result(fixture, "b01")["resolved"]
+        observed = json.loads(dump.read_text(encoding="utf-8"))
+        assert observed["HOME"] == str(self.run_dir(fixture, "b01") / "home")
+        assert observed["CODEX_HOME"] == str(self.run_dir(fixture, "b01") / "codex-home")
+        assert observed["PYTHONDONTWRITEBYTECODE"] == "1"
+        assert observed["PATH"] == fixture.env["PATH"]
+        assert observed["EASYDEV_STUB_PLAN"] == fixture.env["EASYDEV_STUB_PLAN"]
+        assert observed["OPENAI_API_KEY"] == injected["OPENAI_API_KEY"]
+        assert observed["HTTPS_PROXY"] == injected["HTTPS_PROXY"]
+        for key in (
+            "GITHUB_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+            "PYTHONOPTIMIZE",
+            "PYTEST_ADDOPTS",
+            "RIPGREP_CONFIG_PATH",
+        ):
+            assert key not in observed
+
     def test_run_b01_rejects_workflow_reference(self) -> None:
         fixture = self.stub_environment(
             "b01-workflow", self.b01_plan(commands=["cat references/workflow.md"])
