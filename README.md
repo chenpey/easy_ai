@@ -6,8 +6,8 @@
 
 | 名称 | 版本 | 说明 |
 | --- | --- | --- |
-| [EasyThink](easythink/README.md) | 0.6.0 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
-| [EasyDev](easydev/README.md) | 2.13.1 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
+| [EasyThink](easythink/README.md) | 0.6.1 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
+| [EasyDev](easydev/README.md) | 2.13.2 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
 | [EasyPi](easypi/README.md) | 0.6.1 | 由 Antigravity 设计与编排、分派 Pi 走 EasyDev `gate` 或 `full` 协同分支完成开发与独立审查的跨宿主工作流。 |
 
 - 技能按标准 `SKILL.md` 分发，安装与使用见对应目录的 README。
@@ -31,13 +31,13 @@
 部署与更新：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.sh | bash -s -- --apply
+curl -fsSL --max-time 30 https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.sh | bash -s -- --apply
 ```
 
 核对一致性：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.sh | bash -s -- --check
+curl -fsSL --max-time 30 https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.sh | bash -s -- --check
 ```
 
 #### Windows (PowerShell)
@@ -45,13 +45,13 @@ curl -fsSL https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-a
 部署与更新（需开发者模式或管理员权限）：
 
 ```powershell
-& ([ScriptBlock]::Create((irm https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.ps1))) -Apply
+& ([ScriptBlock]::Create((Invoke-RestMethod -TimeoutSec 30 https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.ps1))) -Apply
 ```
 
 核对一致性：
 
 ```powershell
-& ([ScriptBlock]::Create((irm https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.ps1))) -Check
+& ([ScriptBlock]::Create((Invoke-RestMethod -TimeoutSec 30 https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-agent-rules.ps1))) -Check
 ```
 
 ## 本地维护与校验
@@ -63,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/chenpey/easy_ai/main/scripts/sync-a
 bash scripts/sync-agent-rules.sh --apply
 bash scripts/sync-agent-rules.sh --check
 
-# 运行全套自动化门禁（格式、版本、链接、schema 与一致性；需已安装 pytest）
+# 运行核心静态门禁（格式、版本、链接、schema、一致性与 hook 单测；CI 中的 pytest 与独立门禁矩阵见 `.github/workflows/checks.yml`）
 bash scripts/check.sh
 
 # 运行技能安装契约冒烟测试

@@ -34,7 +34,6 @@ SEARCH_TOOLS = {"grep", "find", "ls"}
 MAX_TRANSCRIPT_BYTES = 2 * 1024 * 1024
 MALFORMED_LIMIT = 1000
 TAIL_BLOCK_BYTES = 64 * 1024
-IDENTITY_MAX_BYTES = 256 * 1024
 
 
 class UserTurn(object):
@@ -259,27 +258,6 @@ def latest_user_turn(path: str, deadline: Optional[float] = None) -> UserTurn:
         return UserTurn(None, "", scanned, complete)
     text, offset = found
     return UserTurn(text, user_text_key(offset, text), scanned, True)
-
-
-def latest_user_evidence(
-    path: str,
-    limit: int = 200,
-    deadline: Optional[float] = None,
-) -> Tuple[Optional[str], str, int]:
-    """兼容封装：`limit` 已不再截断尾部扫描，只保留旧签名。"""
-    del limit
-    turn = latest_user_turn(path, deadline=deadline)
-    return turn.text, turn.key, turn.scanned
-
-
-def latest_user_text(
-    path: str,
-    limit: int = 200,
-    deadline: Optional[float] = None,
-) -> Tuple[Optional[str], int]:
-    """兼容封装：只要最后一条原始用户指令与已扫描行数。"""
-    text, _key, scanned = latest_user_evidence(path, limit=limit, deadline=deadline)
-    return text, scanned
 
 
 def _path_value(args: Any) -> List[str]:
@@ -1037,108 +1015,6 @@ def read_records(
     if host == "codex":
         return codex_records(path, cwd=cwd, actor=actor, deadline=deadline)
     return [], ["未知宿主 %s，未抽取读取记录" % host]
-
-
-def transcript_identity(
-    host: str, path: str, deadline: Optional[float] = None
-) -> Dict[str, str]:
-    """transcript 自带的有来源身份（session/actor/thread），只读文件头部。
-
-    原生 `session_meta` 给出的是宿主自己的 session/thread 与 agent 身份；Hook
-    必须用它核对“这条 transcript 是否就是当前会话”，不能把明确无关的会话当成
-    当前会话。
-    """
-    identity = {"session": "", "actor": "", "thread": ""}
-    if host != "codex" or not path:
-        return identity
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return identity
-    try:
-        try:
-            info = os.fstat(fd)
-        except OSError:
-            return identity
-        if not stat.S_ISREG(info.st_mode):
-            return identity
-        try:
-            payload = os.read(fd, IDENTITY_MAX_BYTES)
-        except OSError:
-            return identity
-    finally:
-        os.close(fd)
-    for raw in payload.decode("utf-8", "replace").splitlines():
-        if not raw.strip():
-            continue
-        try:
-            entry = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(entry, dict) or entry.get("type") != "session_meta":
-            continue
-        meta = entry.get("payload")
-        if not isinstance(meta, dict):
-            continue
-        for key, field in (
-            ("session", "id"),
-            ("thread", "thread_id"),
-            ("actor", "agent_id"),
-        ):
-            value = meta.get(field)
-            if isinstance(value, str) and value and not identity[key]:
-                identity[key] = value
-        break
-    return identity
-
-
-def confirmed_skill_read_offset(
-    host: str,
-    path: str,
-    skill_file: str,
-    *,
-    actor: Optional[str] = None,
-    session: Optional[str] = None,
-    deadline: Optional[float] = None,
-) -> int:
-    """最近一次确认成功的 SKILL 读取在 transcript 里的字节偏移；-1 表示没有。
-
-    偏移与用户记录键同坐标系，调用方用它把“停用前的历史读取”和“停用后的新
-    读取”分开：只有后者才是新的激活证据。0 是合法偏移（记录在文件开头）。
-    """
-    if not path or not skill_file:
-        return -1
-    identity = transcript_identity(host, path, deadline=deadline)
-    # 明确不匹配的原生身份不能退回“无身份”激活。
-    if session:
-        for key in ("session", "thread"):
-            value = identity.get(key) or ""
-            if value and value != session:
-                return -1
-    expected_actor = identity.get("actor") or ""
-    if actor and expected_actor and expected_actor != actor:
-        return -1
-    target = os.path.realpath(skill_file)
-    try:
-        # 不把调用方 actor 当参数传入：Codex 的 actor 由 transcript 自己的
-        # session_meta 决定，否则无关 actor 会退化成“恒等于期望值”的自证。
-        records, _warnings = read_records(host, path, deadline=deadline)
-    except Exception:  # transcript 结构异常不影响其余判定
-        return -1
-    newest = -1
-    for record in records:
-        if not record.get("confirmed"):
-            continue
-        record_actor = record.get("actor")
-        if actor and record_actor and record_actor != actor:
-            # 只认同 actor 的读取；其他 actor/无关会话不能激活本 actor。
-            continue
-        for candidate in record.get("paths") or []:
-            if os.path.realpath(str(candidate)) == target:
-                newest = max(newest, int(record.get("offset") or 0))
-                break
-    return newest
 
 
 def reference_paths(records: Iterable[ReadRecord]) -> List[str]:

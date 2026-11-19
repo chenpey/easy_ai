@@ -65,9 +65,9 @@ download_file() {
   local url="$1"
   local dest="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$dest"
+    curl -fsSL --max-time 30 "$url" -o "$dest"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$dest" "$url"
+    wget -qO "$dest" -T 30 "$url"
   else
     echo "Error: 需要 curl 或 wget 从远端下载规则" >&2
     exit 1
@@ -118,7 +118,7 @@ hash_sha256() {
   fi
 }
 
-# 先完成全部只读校验：任一项失败都不得留下半更新状态。
+# 先完成全部只读校验再逐个原子替换目标文件（中途失败可重新执行 --apply 收敛，不做整批自动回滚）。
 for i in "${!targets[@]}"; do
   test -f "${sources[$i]}"
   if [ -d "${targets[$i]}" ]; then

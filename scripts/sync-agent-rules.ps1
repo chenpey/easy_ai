@@ -13,7 +13,7 @@
 
 发布内容与语义对齐 POSIX 版 scripts/sync-agent-rules.sh：四个规则/守卫目标加 `~/.gemini/config/hooks.json`；
 目标为非普通文件或非预期软链时报错退出；hooks.json 存在但不是合法 JSON 对象时报错且不覆盖；
-所有写入都走同目录临时文件后原子替换；`-Check` 只读比对，不创建任何文件或链接。
+所有写入都走同目录临时文件后原子替换；`-Check` 不修改部署目标；远程模式仅创建并清理临时下载文件。
 入口与目标路径沿用 POSIX 版的 $HOME 布局。
 链接目标必须是完全限定路径（盘符绝对或 UNC）；`\foo`、`C:foo` 与相对路径一律拒绝。用法错误（未知参数或同时传 `-Check -Apply`）退出 2。
 #>
@@ -168,7 +168,7 @@ try {
             if (-not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
             $url = "$RawBase/$rel"
             try {
-                Invoke-RestMethod -Uri $url -OutFile $dest
+                Invoke-RestMethod -Uri $url -OutFile $dest -TimeoutSec 30
             } catch {
                 Fail "Failed to download $url : $_"
             }
@@ -179,7 +179,7 @@ try {
         if (-not (Test-Path -LiteralPath $hooksDir)) { New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null }
         $hooksUrl = "$RawBase/$HooksRelPath"
         try {
-            Invoke-RestMethod -Uri $hooksUrl -OutFile $HooksSource
+            Invoke-RestMethod -Uri $hooksUrl -OutFile $HooksSource -TimeoutSec 30
         } catch {
             Fail "Failed to download $hooksUrl : $_"
         }

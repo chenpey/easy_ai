@@ -448,8 +448,10 @@ def run_budget_cases() -> None:
     b.design_review()
     b.freeze()
     b.open_gate()
-    for _ in range(4):
-        b._spend_r("既有施工审核")
+    b.incremental_review()
+    b.incremental_review()
+    b.incremental_review()
+    b.full_review()  # r=4，剩余 1
     try:
         b.rework()
     except Stop as stop:
@@ -476,15 +478,13 @@ def run_budget_cases() -> None:
             accepted += 1
         except Stop:
             break
-    if accepted == 3 and b._r_left() == R_RESERVE:
+    if accepted == 3 and b.r == R_CAP - R_RESERVE:
         ok("阶段增量审查最多 3 轮，之后仍余 2 轮给完整审查与复审")
     else:
-        bad("阶段增量审查合批", f"accepted={accepted} left={b._r_left()}")
+        bad("阶段增量审查合批", f"accepted={accepted} left={R_CAP - b.r}")
 
     # 完整初审报缺陷但已无复审轮次。
-    b = Budget(design_enabled=False)
-    for _ in range(R_CAP - 1):
-        b._spend_r("占位")
+    b = Budget(design_enabled=False, prior_r=R_CAP - 1)
     try:
         b.full_review(findings=1)
     except Stop as stop:

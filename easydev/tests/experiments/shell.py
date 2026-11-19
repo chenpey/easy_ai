@@ -5200,69 +5200,6 @@ def _analyze_tokens(
         _CANDIDATE_OWNER = previous_owner
 
 
-def segment_text(tokens: List[str]) -> str:
-    return " ".join(tokens)
-
-
-def argv_of(command: str) -> List[List[str]]:
-    return analyze(command).commands
-
-
-def read_targets(analysis: Analysis) -> List[Dict[str, object]]:
-    return analysis.reads
-
-
-def write_candidates(analysis: Analysis) -> List[Dict[str, object]]:
-    return analysis.writes
-
-
-def is_read_only_command(command: str) -> Tuple[bool, bool]:
-    """返回 (只读且可判定, 有未知/不透明部分)。"""
-    analysis = analyze(command)
-    if analysis.opaque or analysis.write_unknown or analysis.stdin_program:
-        return False, True
-    if any(not write.get("complete", False) for write in analysis.writes):
-        return False, True
-    return not analysis.writes, analysis.read_unknown
-
-
-def reviewer_violation(
-    command: str, cwd: Optional[str] = None, cwd_known: bool = True
-) -> Optional[Dict[str, object]]:
-    """reviewer 只读：先判明确危险 Git/写入，再区分窄的“复合结构无法核对”。
-
-    `compound_unresolved` 是独立类别（`unknown=False`）：已识别为复合结构但无法
-    安全配对/归属时拒绝，并提示改用简单命令重跑。其余未知结构仍 `unknown=True`
-    告警放行，不统一收紧。
-    """
-    analysis = analyze(command, cwd=cwd, cwd_known=cwd_known)
-    for action in analysis.git:
-        violation = git_violation(action)
-        if violation:
-            return {"kind": "git", "detail": violation, "unknown": False}
-    writes = analysis.writes
-    if writes:
-        return {
-            "kind": "write",
-            "detail": "写操作会改动审查目标",
-            "unknown": False,
-            "targets": [write.get("target") for write in writes],
-        }
-    if analysis.compound_unresolved:
-        return {
-            "kind": "compound_unresolved",
-            "detail": "复合结构无法核对，请改用简单命令重跑",
-            "unknown": False,
-        }
-    if analysis.opaque or analysis.write_unknown:
-        return {"kind": "unknown", "detail": "命令结构无法完整判定", "unknown": True}
-    return None
-
-
-def parse_shell(command: str) -> Dict[str, object]:
-    return analyze(command).as_dict()
-
-
 def read_command_paths(
     command: str, cwd: Optional[str] = None, cwd_known: bool = True
 ) -> Tuple[List[Dict[str, object]], bool]:
@@ -5273,8 +5210,3 @@ def read_command_paths(
     """
     analysis = analyze(command, cwd=cwd, cwd_known=cwd_known)
     return analysis.reads, analysis.opaque or analysis.read_unknown or analysis.stdin_program
-
-
-def command_flags(command: str) -> Dict[str, bool]:
-    analysis = analyze(command)
-    return {"recursive_follow": analysis.recursive_follow}
