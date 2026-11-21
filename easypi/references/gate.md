@@ -28,3 +28,14 @@
 ## baseline 敏感快照
 
 `baseline/` 只存首次原内容；含凭证或个人数据的文件**严禁写入 scratch 或 artifact 目录**，须放权限受控的私有临时目录（目录 `0700`、文件 `0600`），并在账本与报告中记录该路径；无法确认保护条件时暂停写入。完整口径见 [基线与敏感快照](../../easydev/references/environment.md#基线与敏感快照)。
+
+## 15 分钟巡检与插话询问
+
+1. 派发 `run_pi.sh` 后，立即用 `schedule` 设一个 `DurationSeconds=900`（15 分钟）的一次性定时器（`TimerCondition` 设为该后台任务的 `TaskId` 或 `'any'`，任务提前完成则自动取消）。
+2. 若 900 秒定时器触发且 `run_pi.sh` 仍在运行：
+   - 先用 `manage_task`（`status`）查看近期输出，并查 `git status --short --untracked-files=all </dev/null` 与 `git diff --stat`。
+   - **插话询问**：通过 `manage_task`（`kill`）暂停当前 `pi -p` 进程，再用同一 `--session-id` 调 `run_pi.sh` 写入一条简短询问 prompt（例如：「已运行 15 分钟，请简要汇报当前执行到哪一步、是否卡住或阻塞；不要继续改代码，直接回答。」）。
+   - **判断去留**：
+     - 明确仍在正常推进、未卡住 → 用同一 `--session-id` 发送续跑 prompt（「继续执行原任务」）并重设 900 秒定时器；
+     - 明确卡死、无限循环或无解阻塞 → 终止不再续跑，按中断恢复汇报现场；
+     - 无法判断是否卡住或是否值得继续 → 暂停并将 Pi 的回复、当前日志摘要与 `git status` 交给用户判断。

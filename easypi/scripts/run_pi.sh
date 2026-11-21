@@ -6,7 +6,7 @@ set -euo pipefail
 #   run_pi.sh <session-id> <prompt-file> [--model <id>] [--thinking <level>] [--approve]
 # The prompt file keeps design text out of the shell command line, so the
 # host hook never re-parses backticks or $(...) that belong to the design.
-# EASYPI_TIMEOUT（秒，默认 900）是硬超时：超时后整组进程终止并以 124 退出。
+# EASYPI_TIMEOUT（秒，默认 0 不设硬超时；正数时超时后整组进程终止并以 124 退出）。
 
 if [ "$#" -lt 2 ]; then
   echo "Usage: $0 <session-id> <prompt-file> [--model <id>] [--thinking <level>] [--approve]" >&2
@@ -92,7 +92,7 @@ if [ -n "$previous" ]; then
   exit 2
 fi
 
-EASYPI_TIMEOUT="${EASYPI_TIMEOUT:-900}"
+EASYPI_TIMEOUT="${EASYPI_TIMEOUT:-0}"
 
 export EASYPI_TIMEOUT
 exec python3 - "$SESSION_ID" "$@" -- "$PROMPT" <<'PY'
@@ -174,8 +174,8 @@ try:
 except ValueError:
     print("Error: EASYPI_TIMEOUT 必须是秒数", file=sys.stderr)
     raise SystemExit(2)
-if not math.isfinite(timeout) or timeout <= 0:
-    print("Error: EASYPI_TIMEOUT 必须是有限正数", file=sys.stderr)
+if not math.isfinite(timeout) or timeout < 0:
+    print("Error: EASYPI_TIMEOUT 必须是有限非负数", file=sys.stderr)
     raise SystemExit(2)
 
 # Popen 与等待纳入同一 try：创建子进程的窗口用 pthread_sigmask 阻塞，避免信号落在"process 已存在但尚未赋值"的缝隙里导致整组泄漏。
@@ -192,7 +192,7 @@ try:
         )
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
-    code = process.wait(timeout=timeout)
+    code = process.wait(timeout=None if timeout == 0 else timeout)
 except FileNotFoundError:
     print("Error: 找不到 pi 可执行文件", file=sys.stderr)
     raise SystemExit(127)

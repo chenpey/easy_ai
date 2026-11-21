@@ -22,7 +22,7 @@ metadata:
 
 ## 2. 分派 Pi 走 `easydev gate`（agy -> pi）
 
-在调用方工作目录下用绝对路径调用 [run_pi.sh](scripts/run_pi.sh)，第二参数是 prompt 文件（内部执行 `pi -p --session-id ... </dev/null`；硬超时 `EASYPI_TIMEOUT` 默认 900 秒（长任务按需上调），超时退出码 `124`；会话 ID 不得以 `-` 开头，额外参数仅限白名单）：
+在调用方工作目录下调 [run_pi.sh](scripts/run_pi.sh)，第二参数为 prompt 文件（`pi -p --session-id ... </dev/null`；`EASYPI_TIMEOUT` 默认 `0` 不硬杀，正数超时退出码 `124`；会话 ID 不得以 `-` 开头，额外参数限白名单）：
 
 ```bash
 bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" --model "<provider/id>" </dev/null
@@ -31,7 +31,7 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 - **设计分歧处理**：Pi 停在施工闸前返回分歧时，agy 按用户意见升版设计并同步 `prompt.md`，保持同一目录与 `--session-id` 重调；修订重审计入 `d/3`，累计 3 轮用尽即停并报用户。
 - **模型参数**：`--model` 由调用方指定，未指定时省略（`gate` 不按 `models.json` 委派，`full` 按 `developer` 核实值），不猜模型。
 - **高风险与硬拦**：Pi 发现任务实际触及高风险边界时立即停写回报；`pi -p` 无 UI，`force_ask` 级命令（非临时/缓存目标的 `rm -rf`、`git reset --hard`/`clean -f`/整仓 `restore`·`checkout`、`commit`/`push`）会被钩子直接阻断，需要此类操作时交 agy 经用户确认执行。
-- **中断恢复**：超时或异常中断时，先查 `git status --short --untracked-files=all </dev/null` 与 `git diff HEAD`，再决定续跑或经用户确认后清理。按需追加 `--thinking <level>`；需加载受信任的项目级 `.pi/` 资源时追加 `--approve`；Pi 运行期间 agy 不修改工作区。
+- **15分钟巡检与恢复**：派发后设900秒 `schedule`，到点仍在跑则按[巡检规程](references/gate.md#15-分钟巡检与插话询问)查输出并插话问进度，再定续跑、终止或交用户判断；异常中断先查 `git status --short --untracked-files=all </dev/null` 与 `git diff HEAD`。按需加 `--thinking`/`--approve`；Pi 运行期间 agy 不改工作区。
 
 ## 3. 开发终审（agy）
 

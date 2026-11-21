@@ -31,7 +31,7 @@ ln -sfn "$PWD/easypi" "$HOME/.gemini/config/skills/easypi"
 
 ## 辅助脚本用法
 
-`easypi/scripts/run_pi.sh` 封装非交互、stdin 封闭、硬超时与参数校验，脚本不切工作目录（`pi` 继承调用方 `cwd`）；外部 `SIGTERM` 以 `143` 退出，非法参数 `exit 2`。其余超时、退出码与参数白名单语义见 [SKILL.md](SKILL.md) 第 2 节与 [full 协同分支](references/full.md)。
+`easypi/scripts/run_pi.sh` 封装非交互、stdin 封闭、可选硬超时（默认 `0` 不硬杀，由 `agy` 15 分钟巡检）与参数校验，脚本不切工作目录（`pi` 继承调用方 `cwd`）；外部 `SIGTERM` 以 `143` 退出，非法参数 `exit 2`。其余超时、退出码与参数白名单语义见 [SKILL.md](SKILL.md) 第 2 节与 [full 协同分支](references/full.md)。
 
 `--model` 只在确有需要时传入：`gate` 不按 `models.json` 委派角色，调用方未指定即省略；`full` 协同按 `developer` 的核实值传入（独立审查实例另按 `reviewer` 核实值），解析为 `inherit` 或不可用时按 [full.md](references/full.md) 暂停交用户指定，不静默省略或猜模型。
 
