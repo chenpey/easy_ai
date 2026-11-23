@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 更新说明（2026-11-23）
+
+- **派单模板冷启动摘要**：`references/gate.md` 与 `references/full.md` 的 `gate`、`developer`、`reviewer` 模板补充 `≤1KB` 冷启动摘要（`HEAD` SHA、`git status --short` 摘要、受影响目录与验证入口命令）与 `#L起-止` 行号锚点，并明示摘要不含凭证与文件正文、不替代 `baseline/` 首次原内容保存与自行 `git status`/`git diff` 核对；`reviewer` 模板注明切入点仅作定位、不收窄完整 diff 与调用链的审查范围；`SKILL.md` 入口与 `references/gate.md`「使用方式」同步该口径。
+
 ## 0.6.1 更新说明（2026-11-19）
 
 - **口径与路径澄清**：`SKILL.md` 明确「返工达 2 轮或同根因 3 次修复任一上限即暂停」（4986 字节 ≤ 5000）；`README.md` 将 `scripts/run_pi.sh` 明确为 `easypi/scripts/run_pi.sh`。

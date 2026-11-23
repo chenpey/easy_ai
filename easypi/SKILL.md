@@ -3,12 +3,12 @@ name: easypi
 description: >-
   当用户要求调用 easypi、或通过 Antigravity（agy）分派 Pi 走 easydev gate 模式或 full 协同分支完成设计审查、编码与独立审查时使用。
 metadata:
-  version: "0.6.1"
+  version: "0.6.2"
 ---
 
 # easypi
 
-本流程专用于 **Antigravity（agy）分派任务到 Pi 走 `easydev` `gate` 模式**：默认 agy 负责设计与开发终审，Pi 负责设计审查（`d/3`）与唯一代码实现。`gate` 的两处例外（`d/3` 由后续实现者执行、终审由设计方执行）由 `easydev` 规则定义，报告中须披露。
+本流程专用于 **Antigravity（agy）分派任务到 Pi 走 `easydev` `gate` 模式**：默认 agy 负责设计与开发终审，Pi 负责设计审查（`d/3`）与唯一代码实现。`gate` 的两处例外（`d/3` 由后续实现者执行、终审由设计方执行）由 `easydev` 定义，报告中须披露。
 
 触及 `easydev` 高风险边界的任务不适用 `gate`：交 agy 接管原生 `full`，或走第 5 节 `full` 协同分支。
 
@@ -17,8 +17,8 @@ metadata:
 1. 运行 `git status --short --untracked-files=all </dev/null` 并记 `git rev-parse HEAD`；任务相关脏/未跟踪文件的首次原内容按[敏感快照](references/gate.md#baseline-敏感快照)存 `baseline/`。
 2. 明确目标、范围与验收标准；高代价歧义先向用户澄清。
 3. **冻结设计**：写清目标文件、接口契约、数据流、失败路径与测试策略并与用户确认；按宿主规则（`agent-rules/antigravity.md`）落盘到会话 scratch（`<appDataDir>/brain/<conversation-id>/scratch/`，不写 `/tmp`）并冻结为 `v1`（修订升版），不写入产品仓库。该文件是设计唯一事实源，Pi 只核对首行版本并只读审查。
-4. **写 prompt 文件**：按 [gate 模板](references/gate.md#prompt-模板) 写成同一 scratch 下的 `prompt.md`，只放设计路径、验收标准与约束；设计正文不内联到命令行（宿主钩子会把双引号内的反引号与 `$(...)` 当命令复核）。
-5. 工作目录由调用方从外部带入，本流程不指定；生成唯一会话 ID（如 `easypi-YYYYMMDD-HHMMSS`），返工时在同一目录用同一 `--session-id` 续接。
+4. **写 prompt 文件**：按 [gate 模板](references/gate.md#prompt-模板) 写成同一 scratch 下的 `prompt.md`，只放设计路径、冷启动摘要、验收标准与约束；设计正文不内联到命令行（宿主钩子会把双引号内的反引号与 `$(...)` 当命令复核）。
+5. 工作目录由调用方带入，本流程不指定；生成唯一会话 ID（如 `easypi-YYYYMMDD-HHMMSS`），返工时在同一目录用同一 `--session-id` 续接。
 
 ## 2. 分派 Pi 走 `easydev gate`（agy -> pi）
 
@@ -36,7 +36,7 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 ## 3. 开发终审（agy）
 
 1. **核对改动**：先 `git status --short --untracked-files=all </dev/null`，逐个读取所有未跟踪新增文件全文，再查 `git diff HEAD`（无提交用 `git diff --cached` 与 `git diff`），确认无越界改动、未偏离过闸设计、未误删用户修改。
-2. **核验证据**：确认 Pi 已加载 `easydev`（`gate`）、设计审查无分歧，核实实际验证命令与输出；关键检查缺失时由 agy 补跑。
+2. **核验证据**：确认 Pi 已加载 `easydev`（`gate`）、设计审查无分歧，核实验证命令与输出；关键检查缺失时由 agy 补跑。
 3. **对照终审**：对照冻结设计审查正确性、边界处理、调用方与契约同步、测试真实性（无空断言或过度 mock）；报告注明审查实例与范围。
 
 ## 4. 返工或结束

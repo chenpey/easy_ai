@@ -922,6 +922,13 @@ DOC_CONTRACT = [
         {"forbidden": ["并行放行（评测批次"], "scope": "section"},
     ),
     (
+        "交接引用已知切入点附符号或行号区间",
+        "easydev/references/workflow.md",
+        "## 账本与交接",
+        ["已完成事项与证据路径（已知切入点附符号或行号区间）"],
+        {"forbidden": ["已完成事项与证据路径、"], "scope": "section"},
+    ),
+    (
         "入口并行分片按需加载 workflow",
         "easydev/SKILL.md",
         "## 按需加载",
@@ -1683,6 +1690,10 @@ def run_doc_contract_mechanism() -> None:
         ("旧评测门槛与新判断并存必须判负", "easydev/references/workflow.md",
          lambda text: text.replace("## 并行执行\n", "## 并行执行\n\n未放行默认串行。\n", 1),
          "并行判断门槛、验证依赖与集成预算", False),
+        ("交接锚点搬到邻节必须判负", "easydev/references/workflow.md",
+         lambda text: text.replace("（已知切入点附符号或行号区间）", "", 1).replace(
+             "## 审查与修复", "## 审查与修复\n\n已知切入点附符号或行号区间。", 1),
+         "交接引用已知切入点", False),
     )
     for label, rel, transform, label_part, should_pass in cases:
         with tempfile.TemporaryDirectory() as tmp:

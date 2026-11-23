@@ -49,7 +49,8 @@
 角色：developer
 规程：<easydev/references/roles.md#开发角色 的绝对路径>
 设计：<已冻结 design.md 的绝对路径>（先核对首行版本，严格按过闸设计实现）
-目标文件与验收标准：<...>
+冷启动摘要：<HEAD SHA；git status --short 摘要；受影响目录与验证入口（≤1KB，不含凭证与文件正文，供冷启动定位，不替代 baseline/ 首次原内容保存与自行 git status/git diff 核对）>
+目标文件与验收标准：<目标文件路径（已知切入点附符号或 #L起-止 行号）与可观察验收标准>
 
 约束：
 1. 仅履行开发与自验职责：保护工作区已有未提交改动，禁止 git commit、git push 与 git add（保持工作区与索引干净，便于外层核对）。
@@ -68,8 +69,9 @@
 
 角色：reviewer
 规程：<easydev/references/review.md 的绝对路径>（强度：<标准 | 深>）
-任务范围与验收标准：<原始需求与验收；冻结设计路径 design.md（先核对首行版本并只读审查）>
+任务范围与验收标准：<原始需求与验收；冻结设计路径 design.md（先核对首行版本并只读审查）；目标文件已知切入点附符号或 #L起-止 行号（仅作定位，不收窄完整 diff 与调用链的审查范围）>
 审查阶段：<设计审查 d/3 | 施工初审 r/5 | 终审第一阶段（盲审）>
+冷启动摘要：<HEAD SHA；git status --short 摘要；受影响目录与验证入口（≤1KB，不含凭证与文件正文，仅作冷启动导航，不替代 baseline/ 首次原内容保存与下行的自行复核）>
 基线与变更：<基线说明；代码审查请自行核对 git status --short --untracked-files=all、未跟踪新文件全文与 git diff HEAD（无提交用 git diff --cached 与 git diff）>
 已执行验证：<命令与真实结果摘要（设计审查阶段填“无”）>
 
