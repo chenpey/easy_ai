@@ -19,7 +19,7 @@
 1. 先按 gate 审设计（d/3）：有 P0/P1、范围内 P2、验收缺口或分歧时严禁写代码，停闸输出分歧待修订。
 2. 无分歧后按设计编码自验；保护已有未提交改动，禁止 git commit/push/add。
 3. 跳过内部 r/5 代码审查，停待终审态交外层 Antigravity 终审。
-4. 发现触及 easydev 高风险边界立即停写回报，不自行改走 full 或跳过 r/5。
+4. 发现触及 easydev 高风险边界或重大外部契约/持久数据影响立即停写回报，不自行改走 full 或跳过 r/5。
 5. 非交互（-p）运行：需确认命令会被钩子硬拦，遇到即停写回报。
 6. 汇报：是否加载 easydev（gate）、设计审查结论、改动与新增清单、验证命令与真实结果、遗留风险。
 ```
@@ -32,8 +32,8 @@
 
 ## 15 分钟巡检与插话询问
 
-1. 派发 `run_pi.sh` 后立即用 `schedule` 设 `DurationSeconds=900` 定时器（`TimerCondition` 填任务 `TaskId` 或 `'any'`）。
+1. 以低 `WaitMsBeforeAsync`（如 `500`）异步派发 `run_pi.sh` 拿到 `TaskId` 后，立即用 `schedule` 设 `DurationSeconds=900` 定时器（`TimerCondition` 填任务 `TaskId` 或 `'any'`）。
 2. 到点仍在运行时：
-   - 用 `manage_task`（`status`）查输出，并查 `git status --short --untracked-files=all </dev/null` 与 `git diff --stat`。
-   - **插话**：`manage_task`（`kill`）暂停 `pi -p`，同 `--session-id` 调 `run_pi.sh` 询问（「已运行 15 分钟，请简报进度与是否卡住，勿改代码，直接回答。」）。
-   - **去留**：正常推进 → 同 `--session-id` 发「继续执行原任务」并重设 900 秒定时器；卡死/阻塞 → 终止并汇报现场；无法判断 → 暂停交用户裁决（附回复、日志与 `git status`）。
+   - 用 `manage_task`（`status`）查近期输出，并查 `git status --short --untracked-files=all </dev/null` 与 `git diff --stat`。若日志或工作区持续推进，**不中断任务**，直接重设 900 秒定时器继续等待。
+   - **停滞/不明时插话**：先 `manage_task`（`kill`）暂停 `pi -p`（走 `SIGTERM` 清理整组），再用 `pgrep -f "[p]i -p --session-id <sid>" </dev/null`（方括号防自匹配父 shell）确认输出为空；若有残留则 `kill -TERM` 后复查确认其已退出（防同会话双写），然后同 `--session-id` 调 `run_pi.sh` 询问（「已运行 15 分钟，请简报进度与是否卡住，勿改代码，直接回答。」）。
+   - **去留**：正常推进 → 同 `--session-id` 异步发「继续执行原任务」并重设 900 秒定时器；卡死/阻塞 → 终止并汇报现场；无法判断 → 暂停交用户裁决（附回复、日志与 `git status`）。

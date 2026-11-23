@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`2.14.0`
+当前版本：`2.14.1`
 
 EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（≤5000 字节），普通 quick 不加载完整编排，详细规则按需读取；主代理默认单写，full 依据配置委派。
 
@@ -20,8 +20,8 @@ EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（
 | --- | --- |
 | quick | 局部明确、低风险：实现、验证、自查 |
 | normal | 影响有界且具第二视角信号：实现、验证、独立定向审查（允许至多一次局部 P2 修复与复审），无 full 账本 |
-| full | 高风险、重大契约/数据影响或关键影响未明：门控设计、独立审查、有限修复与复审 |
-| gate | 外部编排方（如 `easypi`）传入已完成设计：先审设计，无分歧后开发并自验，跳过内部 `r/5` 交外部非实现者终审；高风险走 full |
+| full | 高风险、重大外部契约/持久数据影响或关键影响未明：门控设计、独立审查、有限修复与复审 |
+| gate | 外部编排方（如 `easypi`）传入已完成设计：先审设计，无分歧后开发并自验，跳过内部 `r/5` 交外部非实现者终审；高风险或重大外部契约/持久数据影响走 full |
 | design / plan | 设计权衡或实施计划，按请求范围交付 |
 | debug | 先定位根因；授权修复后按实际风险选档 |
 | review / audit | 单次只读审查或大仓分片审计 |
@@ -75,7 +75,7 @@ EasyDev 的设计围绕三个核心问题展开：**如何让低风险任务零�
 | **主代理 · `normal`** | 必读 | 读 `environment.md`（核实模型）+ `workflow.md`（分流与 `normal` 编排） | 按需读 `engineering.md`（主代理自写时） | 轻量引入独立第二视角，不建重型账本 |
 | **主代理 · `full`** | 必读 | 读 `environment.md` + `workflow.md`（建 `ledger.md` 账本） | 读 `design.md#启用门控`；需并行分片时读 `parallel.md`；主代理自任开发时读 `engineering.md` | 完整门控闭环与预算强约束 |
 | **主代理 · `gate`** | 必读 | 读 `workflow.md#gate-模式`（设计审查闸与待终审态）；不按 `models.json` 委派角色 | 读 `design.md#设计审查与建议通道` | 外部设计交接：先审设计再开发自验，不建内部 `r/5` |
-| **主代理 · 只读路径**（`design` / `plan` / `debug` / `review` / `audit` / `demo`） | 必读 | `audit` 与涉候选委派的 `design` 必读 `environment.md`；单次只读 `review` 与无委派路径免读 | 只读对应专项模块（如 `design.md`、`engineering.md#根因排障` 或 `review.md`） | 只交付请求产物，不改业务代码、不跑全量测试（`demo` 仅写标 `throwaway` 的实验代码） |
+| **主代理 · 只读/实验路径**（只读 `design` / `plan` / `debug` / `review` / `audit`；实验 `demo`） | 必读 | `audit` 与涉候选委派的 `design` 必读 `environment.md`；单次只读 `review` 与无委派路径免读 | 只读对应专项模块（如 `design.md`、`engineering.md#根因排障` 或 `review.md`） | 只交付请求产物，不改业务代码、不跑全量测试（`demo` 仅写标 `throwaway` 的实验代码） |
 | **子代理 · `designer`** | 不必重读 | 直达 `roles.md#设计角色` | 读 `design.md` | 专注方案探索、接口契约与回滚设计 |
 | **子代理 · `developer`** | 不必重读 | 直达 `roles.md#开发角色` | 读 `engineering.md` + 已冻结的 `design.md`（若有） | 专注最小实现、端到端测试与项目脚本验证 |
 | **子代理 · `reviewer`** | 不必重读 | 直达 `roles.md#审查角色` | `normal` 执行 `roles.md` 内置最小规程；`full` / 高风险 / `audit` 读 `review.md` | 保持审改分离，杜绝作者自证偏差 |
@@ -91,8 +91,8 @@ EasyDev 以**主代理单写控盘**为轴，按实际风险动态升降档。�
 | 风险分流 | 四问自查与第二视角信号；七类高风险边界按实际行为与数据影响三态判定（已排除 / 已确认涉及 / 尚未核实） | [分流判定](references/workflow.md#分流判定)、[高风险边界](references/workflow.md#高风险边界) |
 | `quick` | 局部明确、低风险且无第二视角信号：最小实现、端到端测试、脚本验证、自查 | [SKILL.md](SKILL.md#quick-执行核心) |
 | `normal` | 单写 + 一次独立定向审查；仅局部 P2 可原地修复并定向复审，其余必关项转 `full` 并继承预算 | [normal 流程](references/workflow.md#normal-流程) |
-| `full` | 门控设计、独立审查、有限修复；高风险或重大契约/数据影响 | [full 编排](references/workflow.md#full-编排) |
-| `gate` | 外部传入冻结设计：先审后写、跳过内部 `r/5`、交外部非实现者终审；高风险不适用 | [gate 模式](references/workflow.md#gate-模式) |
+| `full` | 门控设计、独立审查、有限修复；高风险或重大外部契约/持久数据影响 | [full 编排](references/workflow.md#full-编排) |
+| `gate` | 外部传入冻结设计：先审后写、跳过内部 `r/5`、交外部非实现者终审；高风险或重大外部契约/持久数据影响不适用 | [gate 模式](references/workflow.md#gate-模式) |
 | 设计门控 | 五项触发条件、`design.md` 冻结版本与施工闸 | [启用门控](references/design.md#启用门控)、[收敛与施工闸](references/design.md#收敛与施工闸) |
 | 预算 | 同根因 3 次修复；`d/3` 设计审查与 `r/5` 施工审查（含阶段增量上限） | [尝试预算](references/workflow.md#尝试预算)、[审查预算](references/workflow.md#审查预算) |
 | 并行 | 内容自判 1–6 片；`normal` 单写，`full` 满足独立性与隔离才可并写 | [并行执行](references/parallel.md#并行执行) |
@@ -113,7 +113,7 @@ EasyDev 以**主代理单写控盘**为轴，按实际风险动态升降档。�
 
 ## 架构与运作全景脑图
 
-![EasyDev 2.14.0 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
+![EasyDev 2.14.1 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
 
 ## 模型配置
 

@@ -3,21 +3,21 @@ name: easypi
 description: >-
   当用户要求调用 easypi、或通过 Antigravity（agy）分派 Pi 走 easydev gate 模式或 full 协同分支完成设计审查、编码与独立审查时使用。
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
 ---
 
 # easypi
 
-本流程专用于 **Antigravity（agy）分派任务到 Pi 走 `easydev` `gate` 模式**：默认 agy 负责设计与开发终审，Pi 负责设计审查（`d/3`）与唯一代码实现。`gate` 的两处例外（`d/3` 由后续实现者执行、终审由设计方执行）由 `easydev` 定义，报告中须披露。
+专用于 **Antigravity（agy）分派 Pi 走 `easydev` `gate`**：默认 agy 设计与终审，Pi 审设计（`d/3`）并唯一实现。`gate` 两处例外（`d/3` 由实现者执行、终审由设计方执行）须在报告披露。
 
-触及 `easydev` 高风险边界的任务不适用 `gate`：交 agy 接管原生 `full`，或走第 5 节 `full` 协同分支。
+触及 `easydev` 高风险边界或重大外部契约/持久数据影响不适用 `gate`：交 agy 接管原生 `full`，或走第 5 节 `full` 协同分支。
 
 ## 1. 准备与设计（agy）
 
 1. 运行 `git status --short --untracked-files=all </dev/null` 并记 `git rev-parse HEAD`；任务相关脏/未跟踪文件的首次原内容按[敏感快照](references/gate.md#baseline-敏感快照)存 `baseline/`。
 2. 明确目标、范围与验收标准；高代价歧义先向用户澄清。
-3. **冻结设计**：写清目标文件、接口契约、数据流、失败路径与测试策略并与用户确认；按宿主规则（`agent-rules/antigravity.md`）落盘到会话 scratch（`<appDataDir>/brain/<conversation-id>/scratch/`，不写 `/tmp`）并冻结为 `v1`（修订升版），不写入产品仓库。该文件是设计唯一事实源，Pi 只核对首行版本并只读审查。
-4. **写 prompt 文件**：按 [gate 模板](references/gate.md#prompt-模板) 写成同一 scratch 下的 `prompt.md`，只放设计路径、冷启动摘要、验收标准与约束；设计正文不内联到命令行（宿主钩子会把双引号内的反引号与 `$(...)` 当命令复核）。
+3. **冻结设计**：写清目标、契约、数据流、失败路径与测试策略并与用户确认；落盘到会话 scratch（`<appDataDir>/brain/<conversation-id>/scratch/`，禁 `/tmp`）冻结为 `v1`（修订升版），不入产品仓库；作唯一事实源，Pi 核首行版本只读审查。
+4. **写 prompt 文件**：按 [gate 模板](references/gate.md#prompt-模板) 写同一 scratch 下 `prompt.md`，只放设计路径、冷启动摘要、验收与约束，不内联设计正文（防钩子复核反引号与 `$(...)`）。
 5. 工作目录由调用方带入，本流程不指定；生成唯一会话 ID（如 `easypi-YYYYMMDD-HHMMSS`），返工时在同一目录用同一 `--session-id` 续接。
 
 ## 2. 分派 Pi 走 `easydev gate`（agy -> pi）
@@ -30,8 +30,8 @@ bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<pro
 
 - **设计分歧处理**：Pi 停在施工闸前返回分歧时，agy 按用户意见升版设计并同步 `prompt.md`，保持同一目录与 `--session-id` 重调；修订重审计入 `d/3`，累计 3 轮用尽即停并报用户。
 - **模型参数**：`--model` 由调用方指定，未指定时省略（`gate` 不按 `models.json` 委派，`full` 按 `developer` 核实值），不猜模型。
-- **高风险与硬拦**：Pi 发现任务实际触及高风险边界时立即停写回报；`pi -p` 无 UI，`force_ask` 级命令（非临时/缓存目标的 `rm -rf`、`git reset --hard`/`clean -f`/整仓 `restore`·`checkout`、`commit`/`push`）会被钩子直接阻断，需要此类操作时交 agy 经用户确认执行。
-- **15分钟巡检与恢复**：派发后设900秒 `schedule`，到点仍在跑则按[巡检规程](references/gate.md#15-分钟巡检与插话询问)查输出并插话问进度，再定续跑、终止或交用户判断；异常中断先查 `git status --short --untracked-files=all </dev/null` 与 `git diff HEAD`。按需加 `--thinking`/`--approve`；Pi 运行期间 agy 不改工作区。
+- **高风险与硬拦**：触及高风险或重大外部契约/持久数据影响即停写回报；`pi -p` 无 UI，`force_ask` 级命令（非临时/缓存目标的 `rm -rf`、`git reset --hard`/`clean -f`/整仓 `restore`·`checkout`/`stash drop`·`clear`/`branch -D`/`commit`/`push`、敏感凭据目录等，见守卫）会被硬拦，需此操作交 agy 确认执行。
+- **15分钟巡检与恢复**：以低 `WaitMsBeforeAsync` 异步派发拿到 `TaskId` 后立即设 900 秒 `schedule`，到点按[巡检规程](references/gate.md#15-分钟巡检与插话询问)查进展，停滞再插话；异常中断查 `git status --short --untracked-files=all </dev/null` 与 `git diff HEAD`。按需加 `--thinking`/`--approve`；Pi 运行期 agy 不改工作区。
 
 ## 3. 开发终审（agy）
 

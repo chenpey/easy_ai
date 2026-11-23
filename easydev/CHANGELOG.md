@@ -2,6 +2,14 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.14.1 更新说明（2026-11-23）
+
+依据全仓规则审计修复 `gate` 排除条件、跨文件例外披露、运行时 API 解耦与 `AGENTS.md` §2 同步口径（`SKILL.md` + `references/*.md` 合计不得超过 65404 字节）。
+
+- **`gate` 排除条件与两处例外对齐**：`SKILL.md`、`README.md`、`references/workflow.md` 统一补齐「重大外部契约/持久数据影响」排除条件与步骤停写条件，同步更新 `tests/behavior.md`（B73）与 `tests/cases/design-gate/` 状态机及契约断言；`references/roles.md` 与 `references/design.md` 补全 `gate` 第二处例外（终审由外部设计方执行）。
+- **运行时规则与措辞收口**：`references/environment.md` 移除运行期不可调用的脚本内部 API（`--untrusted`、`Selection.window`、`locked_window`），改为宿主无关规则描述；`SKILL.md` 与 `README.md` 将 `demo` 从只读路径拆为实验路径；`references/workflow.md` 收紧「验收缺口（误标 P3 亦同）」措辞。
+- **全局规则同步与门禁加固**：`AGENTS.md` §2 补充单条命令 stdin 封闭措辞及「宿主异步任务 + 900 秒定时巡检托管的委派代理」硬超时例外，并同步至 `SKILL.md` 与 `references/engineering.md`；`scripts/check.sh` §9 新增 `gate` 两处例外、排除条件与 `AGENTS.md` §2 关键短语检查。
+
 ## 2.14.0 更新说明（2026-11-23）
 
 深层精简规则正文与门禁去重瘦身，规则文档总量降至 65404 字节（`SKILL.md` + `references/*.md` 合计不得超过 65404 字节，较 2.13.3 净减 10220 字节）。

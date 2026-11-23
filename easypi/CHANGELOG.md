@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 更新说明（2026-11-23）
+
+- **超时策略变更与审计对齐**：`scripts/run_pi.sh` 取消 0.5.0 的默认 900 秒硬超时（`EASYPI_TIMEOUT` 默认改为 `0` 不硬杀），改为异步派发 + 15 分钟 `schedule` 巡检（持续推进不中断，停滞时先确认 `pi` 进程退场再同 `--session-id` 询问）；同步 `SKILL.md` / `references/gate.md` / `references/full.md`：`gate` 排除条件补齐重大外部契约/持久数据影响、`force_ask` 枚举对齐守卫、独立只读 `Pi` 设计者分配 `<sid>-des`（允许写 `design*.md`）、只读物理校验排除忽略文件全量哈希，并明确高风险「深」审查动态验证的补跑责任方。
+
 ## 0.7.0 更新说明（2026-11-23）
 
 - **规则与模板精简瘦身**：精简 `references/full.md` 与 `references/gate.md` 中对 `easydev` 规则的重复复述（改为精准锚点引用）及模板冗余括号说明，合计由 16856 字节降至 12497 字节（净减 4359 字节），完整保留 `inherit` CLI 覆写、每次只读 `run_pi.sh` 的 SHA-256 物理校验、三方隔离、终审两阶段与 5 个对外标题锚点。

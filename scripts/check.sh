@@ -856,6 +856,27 @@ roles_text = read("easydev/references/roles.md")
 if "改前不跑既有测试摸底" not in roles_text or "纯重构" not in roles_text:
     errors.append("easydev/references/roles.md 缺少改前不跑既有测试摸底及纯重构例外约束")
 
+# gate 跨文件口径一致性：两处例外与重大外部契约/持久数据影响排除条件不得漂移。
+for gate_doc in (
+    "easydev/references/workflow.md",
+    "easydev/references/roles.md",
+    "easydev/references/design.md",
+):
+    if "终审由外部设计方执行" not in read(gate_doc):
+        errors.append(f"{gate_doc} 缺少 gate 第二处例外（终审由外部设计方执行）披露")
+for gate_scope_doc in (
+    "easydev/SKILL.md",
+    "easydev/README.md",
+    "easydev/references/workflow.md",
+    "easypi/SKILL.md",
+    "easypi/references/gate.md",
+):
+    if "重大外部契约/持久数据影响" not in read(gate_scope_doc):
+        errors.append(f"{gate_scope_doc} 缺少 gate 对重大外部契约/持久数据影响的排除条件")
+for agents_needle in ("单条命令与管道首段", "900 秒定时巡检"):
+    if agents_needle not in agents_text:
+        errors.append(f"AGENTS.md §2 缺少关键短语: {agents_needle!r}")
+
 if not errors:
     print(f"OK: 全局规则 AGENTS.md §2/§5/§6 与 easydev 引用及 {len(sync_pairs)} 项核心口径同步")
 

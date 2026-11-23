@@ -210,6 +210,8 @@ ROUTE_CASES = [
      {"user_tier": "gate", "prior_check_catches_regression": True}, "gate", []),
     ("外部指定 gate 但触及高风险：升 full",
      {"user_tier": "gate", "high_risk": "confirmed"}, "full", []),
+    ("外部指定 gate 但触及重大外部契约/持久数据影响：升 full",
+     {"user_tier": "gate", "major_contract_or_data": True}, "full", []),
 ]
 
 INTENSITY_CASES = [
@@ -1187,7 +1189,7 @@ DOC_CONTRACT = [
         "入口把只读路径排除在代码改动与全量检查外",
         "easydev/SKILL.md",
         "## 入口与任务分流",
-        ["只交产物", "只读路径不改代码、不跑全量测试、构建与全仓检查"],
+        ["只交产物", "不改业务代码、不跑全量测试、构建与全仓检查"],
     ),
     (
         "审查者只跑安全只读命令并排除全仓检查",
@@ -1425,10 +1427,10 @@ DOC_CONTRACT = [
         {"forbidden": ["回放冻结"]},
     ),
     (
-        "gate 保持高风险排除与外部终审",
+        "gate 保持高风险与重大契约排除及外部终审",
         "easydev/references/workflow.md",
         "## gate 模式",
-        ["高风险边界不适用本模式", "跳过内部 `r/5` 代码审查", "不称全闭环完成", "停写回报编排方"],
+        ["高风险边界或重大外部契约/持久数据影响不适用本模式", "跳过内部 `r/5` 代码审查", "不称全闭环完成", "停写回报编排方"],
     ),
     (
         "gate 设计审查先核对传入冻结版本",

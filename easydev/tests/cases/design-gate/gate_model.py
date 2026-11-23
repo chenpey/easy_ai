@@ -385,8 +385,9 @@ def decide_route(task: dict) -> dict:
     if requested is None:
         return {"path": needed, "actions": [], "needs": fulls or signals}
     if requested == "gate":
-        # gate 是外部编排方指定的路径，不参与风险排序；高风险仍升 full，其余按 gate 执行。
-        return {"path": "full" if high_risk_active(task) else "gate", "actions": [], "needs": fulls or signals}
+        # gate 是外部编排方指定的路径，不参与风险排序；高风险或重大外部契约/持久数据影响仍升 full，其余按 gate 执行。
+        gate_excluded = high_risk_active(task) or bool(task.get("major_contract_or_data"))
+        return {"path": "full" if gate_excluded else "gate", "actions": [], "needs": fulls or signals}
     if PATH_RANK[requested] >= PATH_RANK[needed]:
         return {"path": requested, "actions": [], "needs": fulls or signals}
     if not high_risk_active(task):
