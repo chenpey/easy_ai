@@ -2,6 +2,14 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 2.14.0 更新说明（2026-11-23）
+
+深层精简规则正文与门禁去重瘦身，规则文档总量降至 65404 字节（`SKILL.md` + `references/*.md` 合计不得超过 65404 字节，较 2.13.3 净减 10220 字节）。
+
+- **拆分并行模块**：将 `references/workflow.md` 的「并行执行」拆出为按需加载的 [references/parallel.md](references/parallel.md)（4103 字节），常规单写任务免加载，并同步更新 `SKILL.md`、`README.md`、`fold-eval.md`、`verify.py` 与 `test_design_gate.py`。
+- **解除 `AGENTS.md` 逐字复写绑定**：`references/engineering.md`、`references/roles.md` 与 `SKILL.md` 改由权威引用衔接同仓 `AGENTS.md` §1/§2/§5/§6，保留工程独有细则与 `DOC_CONTRACT` 精确契约；`scripts/check.sh` §9 收敛为 9 项核心同步短语检查，§10 棘轮 `MAX_TOTAL` 下调至 `65404`。
+- **精简其余参考正文**：压缩 `references/{workflow,design,review,environment,roles}.md` 跨文件重复叙述，保持全部门禁、预算与安全底线语义完整。
+
 ## 2.13.3 更新说明（2026-11-23）
 
 补充交接定位锚点与长会话上下文缓存保护两处口径，规则文档总量 75624 字节（`SKILL.md` + `references/*.md` 合计不得超过 75634 字节）。

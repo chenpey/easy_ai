@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 更新说明（2026-11-23）
+
+- **规则与模板精简瘦身**：精简 `references/full.md` 与 `references/gate.md` 中对 `easydev` 规则的重复复述（改为精准锚点引用）及模板冗余括号说明，合计由 16856 字节降至 12497 字节（净减 4359 字节），完整保留 `inherit` CLI 覆写、每次只读 `run_pi.sh` 的 SHA-256 物理校验、三方隔离、终审两阶段与 5 个对外标题锚点。
+
 ## 0.6.2 更新说明（2026-11-23）
 
 - **派单模板冷启动摘要**：`references/gate.md` 与 `references/full.md` 的 `gate`、`developer`、`reviewer` 模板补充 `≤1KB` 冷启动摘要（`HEAD` SHA、`git status --short` 摘要、受影响目录与验证入口命令）与 `#L起-止` 行号锚点，并明示摘要不含凭证与文件正文、不替代 `baseline/` 首次原内容保存与自行 `git status`/`git diff` 核对；`reviewer` 模板注明切入点仅作定位、不收窄完整 diff 与调用链的审查范围；`SKILL.md` 入口与 `references/gate.md`「使用方式」同步该口径。

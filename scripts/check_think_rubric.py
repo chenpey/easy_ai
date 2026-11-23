@@ -6,7 +6,8 @@
 2. 「全量定义」中 TR/NT/BH 的范围在所有出现处一致，且等于断言表实际最大编号；
 3. RG/SV/EV 标签被引用前必须已在「标签索引」中定义；
 4. README 的关键判据短语与 SKILL.md 同源（README 只是副本，规则以 SKILL.md 为准）；
-5. 回归记录首行版本与 SKILL.md 的 metadata.version 一致。
+5. 回归记录首行版本与 SKILL.md 的 metadata.version 一致；
+6. SKILL.md 中 examples.md 的行号区间索引（`#L<start>-L<end>`）合法、起点为二级标题、首尾覆盖完整且相邻紧接。
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ BEHAVIOR = ROOT / "easythink/tests/behavior.md"
 RECORDS = ROOT / "easythink/tests/runs/README.md"
 SKILL = ROOT / "easythink/SKILL.md"
 README = ROOT / "easythink/README.md"
+EXAMPLES = ROOT / "easythink/references/examples.md"
 
 # README 是给人看的规则副本，这些判据短语必须与 SKILL.md 逐字同源。
 SHARED_PHRASES = (
@@ -66,6 +68,7 @@ behavior = read(BEHAVIOR)
 records = read(RECORDS)
 skill = read(SKILL)
 readme = read(README)
+examples = read(EXAMPLES)
 
 # 1. 用例编号：断言表 01..N 连续，覆盖矩阵与断言表集合相等
 defined: set[str] = set()
@@ -169,11 +172,55 @@ else:
                 "回归记录首行版本 %s 与 SKILL.md 版本 %s 不一致" % (rows[0], skill_version)
             )
 
+# 6. SKILL.md 中 examples.md 行号区间索引与实际标题/行数一致
+example_lines = examples.splitlines()
+example_ranges = [
+    (int(start), int(end))
+    for start, end in re.findall(r"`#L(\d+)-L(\d+)`", skill)
+]
+if not example_ranges:
+    errors.append("SKILL.md 缺少 examples.md 行号区间索引（`#L<start>-L<end>`）")
+elif example_lines:
+    first_h2 = next(
+        (idx for idx, line in enumerate(example_lines, 1) if line.startswith("## ")),
+        None,
+    )
+    if first_h2 is None:
+        errors.append("examples.md 缺少二级标题（## ）")
+    else:
+        for start, end in example_ranges:
+            if not (1 <= start <= end <= len(example_lines)):
+                errors.append(
+                    "SKILL.md 中 examples.md 行号区间 #L%d-L%d 超出范围（1..%d）"
+                    % (start, end, len(example_lines))
+                )
+            elif not example_lines[start - 1].startswith("## "):
+                errors.append(
+                    "SKILL.md 中 examples.md 行号区间 #L%d-L%d 起点第 %d 行不是二级标题"
+                    % (start, end, start)
+                )
+        if example_ranges[0][0] != first_h2:
+            errors.append(
+                "SKILL.md 中 examples.md 首个行号区间起点 %d 与首个二级标题第 %d 行不一致"
+                % (example_ranges[0][0], first_h2)
+            )
+        if example_ranges[-1][1] != len(example_lines):
+            errors.append(
+                "SKILL.md 中 examples.md 末个行号区间终点 %d 与文件总行数 %d 不一致"
+                % (example_ranges[-1][1], len(example_lines))
+            )
+        for (_, prev_end), (next_start, _) in zip(example_ranges, example_ranges[1:]):
+            if prev_end + 1 != next_start:
+                errors.append(
+                    "SKILL.md 中 examples.md 相邻行号区间未首尾紧接（%d -> %d）"
+                    % (prev_end, next_start)
+                )
+
 if errors:
     for error in errors:
         print("Error: %s" % error, file=sys.stderr)
     sys.exit(1)
 print(
-    "OK: 行为规约门禁通过（%d 条用例、%d 个标签、%d 条共享判据、记录版本 %s）"
-    % (len(defined), len(defined_labels), len(SHARED_PHRASES), rows[0])
+    "OK: 行为规约门禁通过（%d 条用例、%d 个标签、%d 条共享判据、%d 段示例索引、记录版本 %s）"
+    % (len(defined), len(defined_labels), len(SHARED_PHRASES), len(example_ranges), rows[0])
 )

@@ -6,9 +6,9 @@
 
 | 名称 | 版本 | 说明 |
 | --- | --- | --- |
-| [EasyThink](easythink/README.md) | 0.6.1 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
-| [EasyDev](easydev/README.md) | 2.13.3 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
-| [EasyPi](easypi/README.md) | 0.6.2 | 由 Antigravity 设计与编排、分派 Pi 走 EasyDev `gate` 或 `full` 协同分支完成开发与独立审查的跨宿主工作流。 |
+| [EasyThink](easythink/README.md) | 0.7.0 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
+| [EasyDev](easydev/README.md) | 2.14.0 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
+| [EasyPi](easypi/README.md) | 0.7.0 | 由 Antigravity 设计与编排、分派 Pi 走 EasyDev `gate` 或 `full` 协同分支完成开发与独立审查的跨宿主工作流。 |
 
 - 技能按标准 `SKILL.md` 分发，安装与使用见对应目录的 README。
 - `agents/openai.yaml` 仅作为 OpenAI/Codex 界面的可选展示元数据，其他宿主可忽略。

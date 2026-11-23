@@ -1,6 +1,6 @@
 # EasyDev
 
-当前版本：`2.13.3`
+当前版本：`2.14.0`
 
 EasyDev 按实际风险组织编码、设计、排障与审查。入口轻量（≤5000 字节），普通 quick 不加载完整编排，详细规则按需读取；主代理默认单写，full 依据配置委派。
 
@@ -59,20 +59,21 @@ EasyDev 的设计围绕三个核心问题展开：**如何让低风险任务零�
 - **L0 入口常驻层（[SKILL.md](SKILL.md)，≤ 5000 B）**：包含角色边界声明、四问快速分流表、开工调查底线、`quick` 完整执行核心（最小改动、端到端测试、项目脚本验证、3 次修复预算与交付自查）以及模块路由表。**普通 `quick` 任务仅凭 `SKILL.md` 即可闭环，默认零额外引用加载。**
 - **L1 编排与环境层（进入非 `quick` 路径或分派子代理时加载）**：
   - [environment.md](references/environment.md)：读取 `~/.config/easydev/models.json`（或本地覆盖），核实 `developer` / `reviewer` / `designer` 角色配置、工作区脏改动快照与宿主委派能力。
-  - [workflow.md](references/workflow.md)：定义 `normal`、`full` 与 `gate` 编排、三态风险分类、两本账（`d/3`、`r/5`）与尝试预算、1–6 片并行分片门控及任务账本 `ledger.md`。
+  - [workflow.md](references/workflow.md)：定义 `normal`、`full` 与 `gate` 编排、三态风险分类、两本账（`d/3`、`r/5`）与尝试预算及任务账本 `ledger.md`。
   - [roles.md](references/roles.md)：子代理的唯一直达入口。被委派的 `developer`、`reviewer`、`designer` 子代理无需通读主控编排，直接跳转到各自章节履职。
 - **L2 专项细则层（按当前动作与高风险触发条件加载）**：
+  - [parallel.md](references/parallel.md)：1–6 片并行分片门控、独立性与隔离条件、审查流水线与集成预算。
   - [design.md](references/design.md)：高代价歧义的选项式澄清与按需深度追问、独立设计环节 5 项触发门控、`design.md`（`v1 → vN`）施工闸与多方案（`C1/C2`）并发探索。
   - [engineering.md](references/engineering.md)：最小充分实现 6 步序、代码质量判据（边界校验、直线式结构、禁逃生舱）、红绿测试纪律、排障与重构专项规范。
   - [review.md](references/review.md)：审查三问、轻/标准/深三档审查强度、证据纪律（P0–P3 必须给出具体触发输入/状态与失败路径）、不可信代码沙箱隔离与全仓 `audit` 分片规程。
 
 #### 执行路径 / 角色 × 按需加载矩阵
 
-| 执行路径 / 角色实例 | L0：`SKILL.md` | L1：`environment` / `workflow` / `roles` | L2：`design` / `engineering` / `review` | 设计目的 |
+| 执行路径 / 角色实例 | L0：`SKILL.md` | L1：`environment` / `workflow` / `roles` | L2：`parallel` / `design` / `engineering` / `review` | 设计目的 |
 | --- | --- | --- | --- | --- |
 | **主代理 · `quick`** | 必读 | 默认不读（仅入口自问句成立时才读 `workflow.md`） | 默认不读（仅涉及性能声明或未知外部验证能力时按锚点定向补读 `engineering.md`） | 极速闭环，零编排税 |
 | **主代理 · `normal`** | 必读 | 读 `environment.md`（核实模型）+ `workflow.md`（分流与 `normal` 编排） | 按需读 `engineering.md`（主代理自写时） | 轻量引入独立第二视角，不建重型账本 |
-| **主代理 · `full`** | 必读 | 读 `environment.md` + `workflow.md`（建 `ledger.md` 账本与分片调度） | 读 `design.md#启用门控`；主代理自任开发时读 `engineering.md` | 完整门控闭环与预算强约束 |
+| **主代理 · `full`** | 必读 | 读 `environment.md` + `workflow.md`（建 `ledger.md` 账本） | 读 `design.md#启用门控`；需并行分片时读 `parallel.md`；主代理自任开发时读 `engineering.md` | 完整门控闭环与预算强约束 |
 | **主代理 · `gate`** | 必读 | 读 `workflow.md#gate-模式`（设计审查闸与待终审态）；不按 `models.json` 委派角色 | 读 `design.md#设计审查与建议通道` | 外部设计交接：先审设计再开发自验，不建内部 `r/5` |
 | **主代理 · 只读路径**（`design` / `plan` / `debug` / `review` / `audit` / `demo`） | 必读 | `audit` 与涉候选委派的 `design` 必读 `environment.md`；单次只读 `review` 与无委派路径免读 | 只读对应专项模块（如 `design.md`、`engineering.md#根因排障` 或 `review.md`） | 只交付请求产物，不改业务代码、不跑全量测试（`demo` 仅写标 `throwaway` 的实验代码） |
 | **子代理 · `designer`** | 不必重读 | 直达 `roles.md#设计角色` | 读 `design.md` | 专注方案探索、接口契约与回滚设计 |
@@ -94,7 +95,7 @@ EasyDev 以**主代理单写控盘**为轴，按实际风险动态升降档。�
 | `gate` | 外部传入冻结设计：先审后写、跳过内部 `r/5`、交外部非实现者终审；高风险不适用 | [gate 模式](references/workflow.md#gate-模式) |
 | 设计门控 | 五项触发条件、`design.md` 冻结版本与施工闸 | [启用门控](references/design.md#启用门控)、[收敛与施工闸](references/design.md#收敛与施工闸) |
 | 预算 | 同根因 3 次修复；`d/3` 设计审查与 `r/5` 施工审查（含阶段增量上限） | [尝试预算](references/workflow.md#尝试预算)、[审查预算](references/workflow.md#审查预算) |
-| 并行 | 内容自判 1–6 片；`normal` 单写，`full` 满足独立性与隔离才可并写 | [并行执行](references/workflow.md#并行执行) |
+| 并行 | 内容自判 1–6 片；`normal` 单写，`full` 满足独立性与隔离才可并写 | [并行执行](references/parallel.md#并行执行) |
 | 交付 | `quick` 自查、`normal` 定向审查、`full` 闭环、`gate` 待终审 | [完成边界](references/engineering.md#完成边界) |
 
 ---
@@ -112,7 +113,7 @@ EasyDev 以**主代理单写控盘**为轴，按实际风险动态升降档。�
 
 ## 架构与运作全景脑图
 
-![EasyDev 2.13.3 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
+![EasyDev 2.14.0 架构与上下文交接全景：渐进式披露、风险分流、三角色隔离、两本账预算与无损上下文交接](assets/easydev-mindmap.svg)
 
 ## 模型配置
 
@@ -182,6 +183,7 @@ Windows 路径、字段及生效核对见 [environment.md](references/environmen
 
 - [角色定义](references/roles.md)：开发、审查与设计角色交接入口
 - [流程编排](references/workflow.md)：分流、normal、full 与 gate 编排、两本账与尝试预算
+- [并行执行](references/parallel.md)：1–6 片并行分片门控、写入隔离、审查流水线与集成预算
 - [工程实践](references/engineering.md)：实现规范、代码质量判据、测试、排障与验证
 - [设计与计划](references/design.md)：设计门控、施工闸、产物规范与多方案候选
 - [审查规程](references/review.md)：审查原则、强度分档与全仓审计规程

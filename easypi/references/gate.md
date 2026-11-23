@@ -1,42 +1,39 @@
 # `gate` prompt 模板与敏感快照
 
-`gate` 分支由 `agy` 设计并冻结 `design.md`，再分派 `Pi` 审设计（`d/3`）后编码自验，最后交回 `agy` 做开发终审。
+`gate` 由 `agy` 冻结 `design.md`，派 `Pi` 审设计（`d/3`）并编码自验，最后交 `agy` 开发终审。
 
 ## 使用方式
 
-模板写成同一 scratch 下的 `prompt.md`，作为 [run_pi.sh](../scripts/run_pi.sh) 第二参数传入；只放设计路径、冷启动摘要（`≤1KB`，仅含 `HEAD`、`git status --short` 摘要、受影响目录与验证入口命令，不含凭证与文件正文）、验收标准与约束，设计正文不内联到命令行。
+模板写入同一 scratch 下 `prompt.md` 作 [run_pi.sh](../scripts/run_pi.sh) 第二参数；只含设计路径、冷启动摘要（`≤1KB`，仅 `HEAD`、`git status --short`、受影响目录与验证入口，不含凭证与正文）、验收与约束，不内联设计正文。
 
 ## prompt 模板
 
 ```text
 请激活 easydev skill，严格按 gate 模式执行本任务。
 
-设计：<已冻结 design.md 的绝对路径>（先核对首行版本，只读审查）
-冷启动摘要：<HEAD SHA；git status --short 摘要；受影响目录与验证入口（≤1KB，不含凭证与文件正文，供冷启动定位，不替代 baseline/ 首次原内容保存与自行 git status/git diff 核对）>
-目标文件与验收标准：<目标文件路径（已知切入点附符号或 #L起-止 行号）与可观察验收标准>
+设计：<冻结 design.md 绝对路径>（先核首行版本，只读审查）
+冷启动摘要：<HEAD SHA；git status --short；受影响目录与验证入口（≤1KB，不含凭证与正文，不替代自行核对）>
+目标文件与验收标准：<目标路径（已知切入点附符号或 #L起-止）与可观察验收>
 
 约束：
-1. 先按 gate 执行设计审查（d/3）：发现 P0/P1、范围内 P2、验收缺口或设计分歧时，严禁写代码，停在施工闸前输出分歧清单等待修订。
-2. 无分歧后严格按设计编码与自验；保护工作区已有未提交改动，禁止 git commit、git push 与 git add。
-3. 跳过内部 r/5 代码审查，停在待终审态，由外层 Antigravity 执行开发终审。
-4. 发现任务实际触及 easydev 高风险边界时立即停写回报，不要自行改走 full 或跳过 r/5。
-5. 当前为非交互（-p）运行：需要用户确认的命令会被钩子硬拦，遇到时停写回报。
-6. 完成后汇报：是否加载 easydev（gate 模式）、设计审查结论、改动与新增文件清单、实际验证命令与真实结果、遗留风险。
+1. 先按 gate 审设计（d/3）：有 P0/P1、范围内 P2、验收缺口或分歧时严禁写代码，停闸输出分歧待修订。
+2. 无分歧后按设计编码自验；保护已有未提交改动，禁止 git commit/push/add。
+3. 跳过内部 r/5 代码审查，停待终审态交外层 Antigravity 终审。
+4. 发现触及 easydev 高风险边界立即停写回报，不自行改走 full 或跳过 r/5。
+5. 非交互（-p）运行：需确认命令会被钩子硬拦，遇到即停写回报。
+6. 汇报：是否加载 easydev（gate）、设计审查结论、改动与新增清单、验证命令与真实结果、遗留风险。
 ```
 
-设计审查报告须保留 `**[建议] 简短标题**` 通道：指不出具体失败路径的条目不带 P 级，由外层逐条记「接受 / 拒绝」。
+设计审查须保留 `**[建议] 简短标题**` 通道（无失败路径不给 P 级，外层逐条记「接受 / 拒绝」）。
 
 ## baseline 敏感快照
 
-`baseline/` 只存首次原内容；含凭证或个人数据的文件**严禁写入 scratch 或 artifact 目录**，须放权限受控的私有临时目录（目录 `0700`、文件 `0600`），并在账本与报告中记录该路径；无法确认保护条件时暂停写入。完整口径见 [基线与敏感快照](../../easydev/references/environment.md#基线与敏感快照)。
+`baseline/` 只存首次原内容；含凭证或个人数据的文件**严禁写入 scratch 或 artifact 目录**，须放私有临时目录（目录 `0700`、文件 `0600`）并在账本与报告记录路径；无法确认保护条件暂停写入。详见 [基线与敏感快照](../../easydev/references/environment.md#基线与敏感快照)。
 
 ## 15 分钟巡检与插话询问
 
-1. 派发 `run_pi.sh` 后，立即用 `schedule` 设一个 `DurationSeconds=900`（15 分钟）的一次性定时器（`TimerCondition` 设为该后台任务的 `TaskId` 或 `'any'`，任务提前完成则自动取消）。
-2. 若 900 秒定时器触发且 `run_pi.sh` 仍在运行：
-   - 先用 `manage_task`（`status`）查看近期输出，并查 `git status --short --untracked-files=all </dev/null` 与 `git diff --stat`。
-   - **插话询问**：通过 `manage_task`（`kill`）暂停当前 `pi -p` 进程，再用同一 `--session-id` 调 `run_pi.sh` 写入一条简短询问 prompt（例如：「已运行 15 分钟，请简要汇报当前执行到哪一步、是否卡住或阻塞；不要继续改代码，直接回答。」）。
-   - **判断去留**：
-     - 明确仍在正常推进、未卡住 → 用同一 `--session-id` 发送续跑 prompt（「继续执行原任务」）并重设 900 秒定时器；
-     - 明确卡死、无限循环或无解阻塞 → 终止不再续跑，按中断恢复汇报现场；
-     - 无法判断是否卡住或是否值得继续 → 暂停并将 Pi 的回复、当前日志摘要与 `git status` 交给用户判断。
+1. 派发 `run_pi.sh` 后立即用 `schedule` 设 `DurationSeconds=900` 定时器（`TimerCondition` 填任务 `TaskId` 或 `'any'`）。
+2. 到点仍在运行时：
+   - 用 `manage_task`（`status`）查输出，并查 `git status --short --untracked-files=all </dev/null` 与 `git diff --stat`。
+   - **插话**：`manage_task`（`kill`）暂停 `pi -p`，同 `--session-id` 调 `run_pi.sh` 询问（「已运行 15 分钟，请简报进度与是否卡住，勿改代码，直接回答。」）。
+   - **去留**：正常推进 → 同 `--session-id` 发「继续执行原任务」并重设 900 秒定时器；卡死/阻塞 → 终止并汇报现场；无法判断 → 暂停交用户裁决（附回复、日志与 `git status`）。

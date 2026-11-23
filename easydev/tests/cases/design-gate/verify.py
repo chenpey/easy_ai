@@ -875,7 +875,7 @@ DOC_CONTRACT = [
     ),
     (
         "并行判断门槛、验证依赖与集成预算",
-        "easydev/references/workflow.md",
+        "easydev/references/parallel.md",
         "## 并行执行",
         ["并行写入仅限 full", "独立性与隔离条件全部成立才可并行，否则串行",
          "每片唯一写入者", "写集互不相交", "不依赖其他片尚未完成的结果",
@@ -896,7 +896,7 @@ DOC_CONTRACT = [
     ),
     (
         "并行片数由内容判断且用户指定优先",
-        "easydev/references/workflow.md",
+        "easydev/references/parallel.md",
         "## 并行执行",
         ["内容自判 1–6 片，用户指定片数优先", "1 片即串行，默认不追求用满",
          "同批活跃代理片（含提前审查）合计最多 6 片，不嵌套倍增",
@@ -906,7 +906,7 @@ DOC_CONTRACT = [
     ),
     (
         "高风险并行例外须明确要求并可隔离恢复",
-        "easydev/references/workflow.md",
+        "easydev/references/parallel.md",
         "## 并行执行",
         ["高风险边界默认串行", "鉴权、支付、敏感数据、迁移、发布权限",
          "仅用户明确要求该高风险工作并行", "每片可独立验证和恢复时例外",
@@ -929,17 +929,17 @@ DOC_CONTRACT = [
         {"forbidden": ["已完成事项与证据路径、"], "scope": "section"},
     ),
     (
-        "入口并行分片按需加载 workflow",
+        "入口并行分片按需加载 parallel",
         "easydev/SKILL.md",
         "## 按需加载",
-        ["预算、并行分片", "references/workflow.md"],
+        ["并行分片", "references/parallel.md"],
         {"forbidden": [], "scope": "section"},
     ),
     (
         "入口并行边界保留 normal 单写",
         "easydev/SKILL.md",
         "## 全程约束",
-        ["并行分片先读 workflow", "内容自判 1–6 片，用户指定优先", "normal 单写",
+        ["并行分片先读 parallel", "内容自判 1–6 片，用户指定优先", "normal 单写",
          "full 并写须满足独立性与隔离门槛", "串行包装不得称并行"],
         {"forbidden": ["normal 允许并写"], "scope": "section"},
     ),
@@ -1683,11 +1683,11 @@ def run_doc_contract_mechanism() -> None:
         ("开工核实角色配置搬到按需加载必须判负", "easydev/SKILL.md", move_model_gate, "入口把开工核实角色配置变成硬门", False),
         ("quick 专项验证段移到邻节必须判负", "easydev/SKILL.md", move_quick_clause, "quick 专项验证", False),
         ("旧 quick 措辞与新措辞并存必须判负", "easydev/SKILL.md", legacy_quick_clause, "quick 专项验证", False),
-        ("并行门槛搬到邻节必须判负", "easydev/references/workflow.md",
-         lambda text: text.replace("独立性与隔离条件全部成立才可并行，否则串行。", "", 1).replace(
-             "## 审查预算", "## 审查预算\n\n独立性与隔离条件全部成立才可并行，否则串行。", 1),
+        ("并行门槛搬到邻节必须判负", "easydev/references/parallel.md",
+         lambda text: text.replace("独立性与隔离条件全部成立才可并行，否则串行。", "", 1)
+         + "\n\n## 邻节\n\n独立性与隔离条件全部成立才可并行，否则串行。\n",
          "并行判断门槛、验证依赖与集成预算", False),
-        ("旧评测门槛与新判断并存必须判负", "easydev/references/workflow.md",
+        ("旧评测门槛与新判断并存必须判负", "easydev/references/parallel.md",
          lambda text: text.replace("## 并行执行\n", "## 并行执行\n\n未放行默认串行。\n", 1),
          "并行判断门槛、验证依赖与集成预算", False),
         ("交接锚点搬到邻节必须判负", "easydev/references/workflow.md",
