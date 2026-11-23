@@ -2,17 +2,19 @@
 
 在保留 `agy ↔ Pi` 协同的前提下，通过 `Pi` 调用 `models.json` 指定的第三方或跨供应商模型完成 `easydev` `full` 闭环；与 `easydev` 原生 `full`（AGY 接管全流程、不调 `Pi`）互斥。
 
+> **加载边界**：本文件已内联 `agy` 编排侧常规完整规程（模型解析、三方隔离、只读物理快照比对、发现复核、终审两阶段续发与收口报告项）。文中指向 `../../easydev/references/*.md` 的链接仅作同源锚点与**异常/争议分支（如 `gate→full` 补审裁决、未知高风险边界定级）的按需查阅入口**，常规执行时 `agy` 无需预先展开读取 `easydev` 的 references（`Pi` 子进程在各自会话内按 prompt 模板加载对应角色规程）；确需查阅时优先按所附行号区间分段读取。
+
 ## 1. 触发、批准与预算继承
 
 - **触发**：开局指定 `/easypi` 走 `full` 协同，或在 `gate` 遇高风险边界/重大影响/用户要求经用户明确批准升级。
-- **预算继承**：沿用 [workflow.md#gate-模式](../../easydev/references/workflow.md#gate-模式) 升级规则——保留已耗 `d/3` 与尝试数，`r` 从 0 起算（`gate` 终审与返工只作移交证据）。
+- **预算继承**：沿用 [workflow.md#gate-模式](../../easydev/references/workflow.md#gate-模式) `#L74-L82` 升级规则——保留已耗 `d/3` 与尝试数，`r` 从 0 起算（`gate` 终审与返工只作移交证据）。
 - **调用与恢复**：[run_pi.sh](../scripts/run_pi.sh) 的 `force_ask` 硬拦、可选硬超时、15 分钟巡检、中断恢复、`--approve` 与“`Pi` 运行期 `agy` 不改工作区”沿用 [SKILL.md](../SKILL.md) 第 2 节。
 
 ## 2. 模型组配置与不可用兜底
 
-**CLI 适配覆写**：本节以 `inherit` 不静默回退、须暂停交用户指定，覆写 [workflow.md#full-编排](../../easydev/references/workflow.md#full-编排) 中“`developer` 模型与深度均为 `inherit` 时由主代理写入”的默认约定（`run_pi.sh` 只能按显式 `<provider/id>` 分派）。
+**CLI 适配覆写**：本节以 `inherit` 不静默回退、须暂停交用户指定，覆写 [workflow.md#full-编排](../../easydev/references/workflow.md#full-编排) `#L60-L73` 中“`developer` 模型与深度均为 `inherit` 时由主代理写入”的默认约定（`run_pi.sh` 只能按显式 `<provider/id>` 分派）。
 
-分派前 `agy` 按 [environment.md#模型配置](../../easydev/references/environment.md#模型配置) 解析 `developer`、`reviewer` 的 `model`/`reasoning_effort`（含项目级 `.easydev/models.json` 外发安全门槛；开局或从 `gate` 升级未锁定时解析并锁定北京时间 `windows`，无命中记 `default`，已锁定则沿用），映射到 [run_pi.sh](../scripts/run_pi.sh) 的 `--model` 与 `--thinking`（`off`–`max` 传 `--thinking <effort>`，`inherit` 省略，禁传 `--thinking inherit`）。
+分派前 `agy` 按 [environment.md#模型配置](../../easydev/references/environment.md#模型配置) `#L3-L25` 解析 `developer`、`reviewer` 的 `model`/`reasoning_effort`（含项目级 `.easydev/models.json` 外发安全门槛；开局或从 `gate` 升级未锁定时解析并锁定北京时间 `windows`，无命中记 `default`，已锁定则沿用），映射到 [run_pi.sh](../scripts/run_pi.sh) 的 `--model` 与 `--thinking`（`off`–`max` 传 `--thinking <effort>`，`inherit` 省略，禁传 `--thinking inherit`）。
 
 - **写入者与 `designer` 核实**：进入 `full` 协同即授权 `Pi` 会话 A 任唯一写入者（报告披露写入者覆盖）。同步解析 `designer`：模型与深度均为 `inherit` 由 `agy` 设计，任一非 `inherit` 不得静默顶替——暂停请用户确认覆盖（报告披露）或派独立只读 `Pi` 按该配置设计。
 - **不可用与 `inherit` 暂停**：选中配置无效/不可读、`developer`/`reviewer`（或独立 `Pi` `designer`）解析为 `inherit`，或调 `run_pi.sh` 时目标模型不可用（非瞬时抖动）：**严禁静默回退、改用 `pi` 默认或由 `agy`/会话 A 自审替代**。立即暂停报受阻角色、原模型与原因，交用户指定 `<provider/id>`（及可选 `--thinking`），或明确选择改用 `pi` 默认 / 切回 AGY 原生 `full`。
@@ -20,19 +22,19 @@
 ## 3. 三方角色隔离与 `d/3`
 
 - **`designer` 与编排者**：按 §2 核实值（默认 `agy`，或派独立只读 `Pi` 使用独立 `--session-id <sid>-des`），维护冻结 `design.md`、scratch 产物、账本与 `git` 校验，不充当 `r/5` 审查者。
-- **`developer`（唯一写入者）**：`Pi` 会话 A（`--session-id <sid>` + `developer` 模型），按 [developer prompt 模板](#developer-prompt-模板) 履 [开发角色](../../easydev/references/roles.md#开发角色)，自验后停待审查态；**严禁会话 A 内部启动 `easydev full` 或自审 `r/5`**。
+- **`developer`（唯一写入者）**：`Pi` 会话 A（`--session-id <sid>` + `developer` 模型），按 [developer prompt 模板](#developer-prompt-模板) 履 [开发角色](../../easydev/references/roles.md#开发角色) `#L15-L24`，自验后停待审查态；**严禁会话 A 内部启动 `easydev full` 或自审 `r/5`**。
 - **`reviewer`（独立只读第三方）**：`agy` 通过 `run_pi.sh` 调起**全新 `--session-id`**（`<sid>-d1`、`<sid>-r1`、`<sid>-final`，严禁复用 `<sid>` 或 `<sid>-des`）+ `reviewer` 模型的只读 `Pi`，按 [reviewer prompt 模板](#reviewer-prompt-模板) 盲审。
 - **`d/3` 设计审查**：
-  - **开局 `full`**：独立只读 `Pi`（`<sid>-d1`）核对 `design.md` 首行版本并盲审（必做 §4.2 只读物理校验），保留 `**[建议]**` 通道（[design.md#设计审查与建议通道](../../easydev/references/design.md#设计审查与建议通道)，施工闸前由 `agy` 逐条记「接受 / 拒绝」）；无阻塞分歧再开闸，`d/3` 用尽或受阻即停。
-  - **`gate` 升级**：升级前 `d/3` 仅由会话 A 执行时，按 [workflow.md#gate-模式](../../easydev/references/workflow.md#gate-模式) 补 1 轮独立审查或经用户确认沿用并披露非独立 `d/3`；`d/3` 用尽停写交用户裁决，不越顶补审。
+  - **开局 `full`**：独立只读 `Pi`（`<sid>-d1`）核对 `design.md` 首行版本并盲审（必做 §4.2 只读物理校验），保留 `**[建议]**` 通道（[design.md#设计审查与建议通道](../../easydev/references/design.md#设计审查与建议通道) `#L68-L73`，施工闸前由 `agy` 逐条记「接受 / 拒绝」）；无阻塞分歧再开闸，`d/3` 用尽或受阻即停。
+  - **`gate` 升级**：升级前 `d/3` 仅由会话 A 执行时，按 [workflow.md#gate-模式](../../easydev/references/workflow.md#gate-模式) `#L74-L82` 补 1 轮独立审查或经用户确认沿用并披露非独立 `d/3`；`d/3` 用尽停写交用户裁决，不越顶补审。
 
 ## 4. 独立 `r/5`、发现核实与终审两阶段
 
-1. **送审前核对（agy）**：开工记 `git rev-parse HEAD`（无提交注 unborn），按 [基线与敏感快照](../../easydev/references/environment.md#基线与敏感快照) 存脏/未跟踪文件首次原内容至 `baseline/`；会话 A 停写后核 `git status --short --untracked-files=all </dev/null`、未跟踪新文件全文与 `git diff HEAD`（无提交用 `--cached` 与 `diff`），确认加载 `easydev`（开发角色）、无越界且有真实验证输出（缺失由 `agy` 补跑）。
+1. **送审前核对（agy）**：开工记 `git rev-parse HEAD`（无提交注 unborn），按 [基线与敏感快照](../../easydev/references/environment.md#基线与敏感快照) `#L39-L46` 存脏/未跟踪文件首次原内容至 `baseline/`；会话 A 停写后核 `git status --short --untracked-files=all </dev/null`、未跟踪新文件全文与 `git diff HEAD`（无提交用 `--cached` 与 `diff`），确认加载 `easydev`（开发角色）、无越界且有真实验证输出（缺失由 `agy` 补跑）。
 2. **独立盲审与只读物理校验**：**每次**只读 `run_pi.sh` 调用（`<sid>-des`、`<sid>-d1`、`<sid>-r1`、`<sid>-final*` 及阶段 2 续发）前，记 `git rev-parse HEAD`、`git status --porcelain --untracked-files=all`、`git diff --binary HEAD`（无提交用 `--cached` 与 `diff`）、未忽略的未跟踪文件（含子模块递归）及 scratch 下 `design*.md`、`ledger.md`、`findings.md`、`baseline/` 的 SHA-256（忽略文件如缓存/虚拟环境不做逐文件哈希）。派独立 `reviewer` 按 [审查规程](../../easydev/references/review.md)（高风险最低「深」，输出「覆盖账」）盲审计 `r/5`。**退出后逐项比对快照**，除 `<sid>-des` 允许写入/修订 scratch 下 `design*.md` 外，其余全部须零改动方可采信；发生意外写入立即拦截报错。
-3. **核实与有限修复**：按 [workflow.md#审查与修复](../../easydev/references/workflow.md#审查与修复) 与 [报告规则](../../easydev/references/review.md#6-报告规则) 核实（**P0/P1 排除、降级或转风险须 `reviewer` 复核证据**；潜在 P0–P2 待验证风险须最小确认；高风险「深」审查提出的动态验证或最小确认项由 `agy` 执行或派回会话 A 只验不改，并将命令与输出回传 `reviewer` 复核）。仅将确认的 P0/P1、范围内 P2 或验收缺口发回会话 A（同 `--session-id`）修复重验（同根因限 3 次）；P3 记位置与代价不进修复；根因在设计须升版重走 `d/3`（`r<2` 不得单开设计重审）。
-4. **终审两阶段**：修复后冻结最终 diff，调起**全新 `--session-id`**（`<sid>-final`，多轮用 `-final2`…不复用）按 [review.md#终审两阶段](../../easydev/references/review.md#终审两阶段) 执行：阶段 1 盲审最终 diff；阶段 2 复用同 `--session-id` 补发历史清单与修复 diff 核对「已关闭 / 未关闭」与前提变化，合计 1 轮 `r`。
-5. **收口与上限**：按 [完成边界](../../easydev/references/engineering.md#完成边界) 交付或报**部分完成/待确认**，报告明示 **`easypi full 协同`**、`d/3` 与 `r/5`、三方生效模型（`designer` / 会话 A `developer` / 各独立审查 `reviewer`）、写入者/设计者覆盖、设计建议接受/拒绝、确认问题关闭状态、文档校准状态、P3 建议、遗留/未验证项、验证结果及 `gate→full` 升级披露；任一上限用尽暂停报用户。
+3. **核实与有限修复**：按 [workflow.md#审查与修复](../../easydev/references/workflow.md#审查与修复) `#L110-L125` 与 [报告规则](../../easydev/references/review.md#6-报告规则) `#L62-L70` 核实（**P0/P1 排除、降级或转风险须 `reviewer` 复核证据**；潜在 P0–P2 待验证风险须最小确认；高风险「深」审查提出的动态验证或最小确认项由 `agy` 执行或派回会话 A 只验不改，并将命令与输出回传 `reviewer` 复核）。仅将确认的 P0/P1、范围内 P2 或验收缺口发回会话 A（同 `--session-id`）修复重验（同根因限 3 次）；P3 记位置与代价不进修复；根因在设计须升版重走 `d/3`（`r<2` 不得单开设计重审）。
+4. **终审两阶段**：修复后冻结最终 diff，调起**全新 `--session-id`**（`<sid>-final`，多轮用 `-final2`…不复用）按 [review.md#终审两阶段](../../easydev/references/review.md#终审两阶段) `#L22-L24` 执行：阶段 1 盲审最终 diff；阶段 2 复用同 `--session-id` 补发历史清单与修复 diff 核对「已关闭 / 未关闭」与前提变化，合计 1 轮 `r`。
+5. **收口与上限**：按 [完成边界](../../easydev/references/engineering.md#完成边界) `#L79-L87` 交付或报**部分完成/待确认**，报告明示 **`easypi full 协同`**、`d/3` 与 `r/5`、三方生效模型（`designer` / 会话 A `developer` / 各独立审查 `reviewer`）、写入者/设计者覆盖、设计建议接受/拒绝、确认问题关闭状态、文档校准状态、P3 建议、遗留/未验证项、验证结果及 `gate→full` 升级披露；任一上限用尽暂停报用户。
 
 ## developer prompt 模板
 

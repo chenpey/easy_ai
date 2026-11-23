@@ -7,7 +7,7 @@
 3. RG/SV/EV 标签被引用前必须已在「标签索引」中定义；
 4. README 的关键判据短语与 SKILL.md 同源（README 只是副本，规则以 SKILL.md 为准）；
 5. 回归记录首行版本与 SKILL.md 的 metadata.version 一致；
-6. SKILL.md 中 examples.md 的行号区间索引（`#L<start>-L<end>`）合法、起点为二级标题、首尾覆盖完整且相邻紧接。
+6. SKILL.md 中 examples.md 与 methods.md 的行号区间索引（`#L<start>-L<end>`）合法、起点为对应标题且边界一致。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ RECORDS = ROOT / "easythink/tests/runs/README.md"
 SKILL = ROOT / "easythink/SKILL.md"
 README = ROOT / "easythink/README.md"
 EXAMPLES = ROOT / "easythink/references/examples.md"
+METHODS = ROOT / "easythink/references/methods.md"
 
 # README 是给人看的规则副本，这些判据短语必须与 SKILL.md 逐字同源。
 SHARED_PHRASES = (
@@ -69,6 +70,7 @@ records = read(RECORDS)
 skill = read(SKILL)
 readme = read(README)
 examples = read(EXAMPLES)
+methods = read(METHODS)
 
 # 1. 用例编号：断言表 01..N 连续，覆盖矩阵与断言表集合相等
 defined: set[str] = set()
@@ -172,12 +174,28 @@ else:
                 "回归记录首行版本 %s 与 SKILL.md 版本 %s 不一致" % (rows[0], skill_version)
             )
 
-# 6. SKILL.md 中 examples.md 行号区间索引与实际标题/行数一致
+# 6. SKILL.md 中 examples.md 与 methods.md 行号区间索引与实际标题/行数一致
+range_re = re.compile(r"`#L(\d+)-L(\d+)`")
 example_lines = examples.splitlines()
-example_ranges = [
-    (int(start), int(end))
-    for start, end in re.findall(r"`#L(\d+)-L(\d+)`", skill)
-]
+method_lines = methods.splitlines()
+example_ranges: list[tuple[int, int]] = []
+method_ranges: list[tuple[int, int]] = []
+for lineno, line in enumerate(skill.splitlines(), 1):
+    found_ranges = [(int(s), int(e)) for s, e in range_re.findall(line)]
+    if not found_ranges:
+        continue
+    has_examples = "references/examples.md" in line
+    has_methods = "references/methods.md" in line
+    if has_examples and not has_methods:
+        example_ranges.extend(found_ranges)
+    elif has_methods and not has_examples:
+        method_ranges.extend(found_ranges)
+    else:
+        errors.append(
+            "SKILL.md 第 %d 行行号区间无法唯一归属 examples.md 或 methods.md：%s"
+            % (lineno, found_ranges)
+        )
+
 if not example_ranges:
     errors.append("SKILL.md 缺少 examples.md 行号区间索引（`#L<start>-L<end>`）")
 elif example_lines:
@@ -216,11 +234,38 @@ elif example_lines:
                     % (prev_end, next_start)
                 )
 
+if not method_ranges:
+    errors.append("SKILL.md 缺少 methods.md 行号区间索引（`#L<start>-L<end>`）")
+elif method_lines:
+    for start, end in method_ranges:
+        if not (1 <= start <= end <= len(method_lines)):
+            errors.append(
+                "SKILL.md 中 methods.md 行号区间 #L%d-L%d 超出范围（1..%d）"
+                % (start, end, len(method_lines))
+            )
+        elif not method_lines[start - 1].startswith(("## ", "### ")):
+            errors.append(
+                "SKILL.md 中 methods.md 行号区间 #L%d-L%d 起点第 %d 行不是二/三级标题"
+                % (start, end, start)
+            )
+        elif end < len(method_lines) and not method_lines[end].startswith(("## ", "### ")):
+            errors.append(
+                "SKILL.md 中 methods.md 行号区间 #L%d-L%d 终点后第 %d 行不是新标题"
+                % (start, end, end + 1)
+            )
+
 if errors:
     for error in errors:
         print("Error: %s" % error, file=sys.stderr)
     sys.exit(1)
 print(
-    "OK: 行为规约门禁通过（%d 条用例、%d 个标签、%d 条共享判据、%d 段示例索引、记录版本 %s）"
-    % (len(defined), len(defined_labels), len(SHARED_PHRASES), len(example_ranges), rows[0])
+    "OK: 行为规约门禁通过（%d 条用例、%d 个标签、%d 条共享判据、%d 段示例索引、%d 段方法索引、记录版本 %s）"
+    % (
+        len(defined),
+        len(defined_labels),
+        len(SHARED_PHRASES),
+        len(example_ranges),
+        len(method_ranges),
+        rows[0],
+    )
 )

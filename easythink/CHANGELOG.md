@@ -2,6 +2,10 @@
 
 版本变更记录。最近一次更新见 [README](README.md)。
 
+## 0.7.1 更新说明（2026-11-23）
+
+为 `SKILL.md`「按诉求选方法」与「追问视角」补充 [references/methods.md](references/methods.md) 全部 9 段方法与子节的行号区间按需选读索引（含 `### 组合使用` `#L93-L96`，体量 11820 字节 ≤ 12288），并升级 `scripts/check_think_rubric.py` 第 6 项门禁同时校验 `examples.md`（4 段）与 `methods.md`（9 段）的起点标题与终点边界；安全总闸与核心判据未改动。
+
 ## 0.7.0 更新说明（2026-11-23）
 
 为 `SKILL.md` 增加 [references/examples.md](references/examples.md) 四段场景行号区间按需选读索引（`#L5-L34`、`#L35-L75`、`#L76-L117`、`#L118-L174`，体量 11631 字节 ≤ 12288），并在 `scripts/check_think_rubric.py` 新增第 6 项自动化门禁校验区间起点、总行数与相邻紧接性；安全总闸与核心判据未改动。

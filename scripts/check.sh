@@ -230,6 +230,8 @@ python3 -c '
 import glob, os, re, sys
 
 FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+RANGE_RE = re.compile(r"`#L(\d+)-L(\d+)`")
 
 def strip_fenced_code(content):
     """移除围栏代码块（``` / ~~~），代码块内的 # 行不是标题。"""
@@ -261,12 +263,15 @@ def github_slug(heading_text):
     slug = re.sub(r"\s+", "-", text)
     return slug
 
-def extract_slugs(file_path):
+def extract_heading_slugs(file_path):
+    """返回 (总行数, {1-based标题行号: GitHub_slug})，含重复标题 -1 后缀并排除 >=4 空格缩进。"""
     slug_counts = {}
-    slugs = set()
+    line_to_slug = {}
     with open(file_path, "r", encoding="utf-8") as f:
-        content = strip_fenced_code(f.read())
-    for line in content.splitlines():
+        raw_text = f.read()
+    total_lines = len(raw_text.splitlines())
+    content = strip_fenced_code(raw_text)
+    for lineno, line in enumerate(content.splitlines(), 1):
         # 缩进 4 个空格以上属于缩进代码块，其中的 # 不是标题
         if len(line) - len(line.lstrip()) >= 4:
             continue
@@ -286,8 +291,8 @@ def extract_slugs(file_path):
                 else:
                     slug_counts[base_slug] = 0
                     final_slug = base_slug
-                slugs.add(final_slug)
-    return slugs
+                line_to_slug[lineno] = final_slug
+    return total_lines, line_to_slug
 
 files = (
     ["README.md", "AGENTS.md"]
@@ -297,14 +302,14 @@ files = (
     + sorted(glob.glob("easypi/**/*.md", recursive=True))
 )
 
-file_slugs = {f: extract_slugs(f) for f in files}
-link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+file_meta = {f: extract_heading_slugs(f) for f in files}
+file_slugs = {f: set(meta[1].values()) for f, meta in file_meta.items()}
 
 for f in files:
     with open(f, "r", encoding="utf-8") as fh:
         content = strip_fenced_code(fh.read())
     base_dir = os.path.dirname(f)
-    for text, url in link_pattern.findall(content):
+    for text, url in LINK_RE.findall(content):
         if url.startswith(("http://", "https://", "mailto:", "file://")):
             continue
         if url.startswith("#"):
@@ -319,13 +324,93 @@ for f in files:
             print(f"Error: {f} 链接目标不存在: {url} -> {target_path}", file=sys.stderr)
             sys.exit(1)
         if anchor_part:
-            if target_path not in file_slugs:
-                file_slugs[target_path] = extract_slugs(target_path)
+            if target_path not in file_meta:
+                file_meta[target_path] = extract_heading_slugs(target_path)
+                file_slugs[target_path] = set(file_meta[target_path][1].values())
             if anchor_part not in file_slugs[target_path]:
                 print(f"Error: {f} 外部文件标题锚点不存在: {url} (目标文件: {target_path})", file=sys.stderr)
                 sys.exit(1)
 
 print("OK: 所有 Markdown 相对链接与 GitHub Slug 标题锚点校验通过")
+
+print("=== 4b. easydev / easypi 行号区间索引防漂移检查 ===")
+range_sources = sorted(
+    glob.glob("easydev/SKILL.md")
+    + glob.glob("easydev/references/*.md")
+    + glob.glob("easypi/SKILL.md")
+    + glob.glob("easypi/references/*.md")
+)
+required_range_sources = {
+    "easydev/SKILL.md",
+    "easydev/references/workflow.md",
+    "easypi/references/full.md",
+    "easypi/references/gate.md",
+}
+
+errors = []
+total_checked = 0
+
+missing_required = sorted(required_range_sources - set(range_sources))
+if missing_required:
+    errors.append(f"必需行号区间源文件缺失: {missing_required}")
+
+for src in range_sources:
+    lines = strip_fenced_code(open(src, encoding="utf-8").read()).splitlines()
+    base_dir = os.path.dirname(src)
+    count = 0
+    for lineno, line in enumerate(lines, 1):
+        ranges = list(RANGE_RE.finditer(line))
+        if not ranges:
+            continue
+        links = [
+            (m.start(), m.group(2))
+            for m in LINK_RE.finditer(line)
+            if not m.group(2).startswith(("http://", "https://", "mailto:", "file://", "#"))
+        ]
+        for rm in ranges:
+            start, end = int(rm.group(1)), int(rm.group(2))
+            preceding = [url for pos, url in links if pos < rm.start()]
+            if not preceding:
+                errors.append(f"{src}:{lineno} 行号区间 #L{start}-L{end} 缺少前置文件链接")
+                continue
+            file_part, _, anchor_part = preceding[-1].partition("#")
+            target_path = os.path.normpath(os.path.join(base_dir, file_part))
+            if not os.path.exists(target_path):
+                errors.append(f"{src}:{lineno} 行号区间目标文件不存在: {target_path}")
+                continue
+            if target_path not in file_meta:
+                file_meta[target_path] = extract_heading_slugs(target_path)
+            total_lines, target_slug_map = file_meta[target_path]
+            count += 1
+            total_checked += 1
+            if not (1 <= start <= end <= total_lines):
+                errors.append(
+                    f"{src}:{lineno} -> {target_path} #L{start}-L{end} 超出范围（1..{total_lines}）"
+                )
+                continue
+            if start not in target_slug_map:
+                errors.append(
+                    f"{src}:{lineno} -> {target_path} #L{start}-L{end} 起点第 {start} 行不是合法标题行"
+                )
+                continue
+            if anchor_part and target_slug_map[start] != anchor_part:
+                errors.append(
+                    f"{src}:{lineno} -> {target_path} #L{start}-L{end} 起点标题 slug({target_slug_map[start]!r}) 与锚点({anchor_part!r})不一致"
+                )
+                continue
+            # 零容差终点边界：终点要么恰好到达文件末行 EOF，要么下一行必须是新的合法标题行（文件末尾多空行或追加内容均会报错）。
+            if end < total_lines and (end + 1) not in target_slug_map:
+                errors.append(
+                    f"{src}:{lineno} -> {target_path} #L{start}-L{end} 终点后第 {end + 1} 行不是新标题行（发生尾部漂移或截断）"
+                )
+    if src in required_range_sources and count == 0:
+        errors.append(f"{src} 未解析到任何 `#L<start>-L<end>` 行号区间")
+
+if errors:
+    for err in errors:
+        print(f"Error: {err}", file=sys.stderr)
+    sys.exit(1)
+print(f"OK: 行号区间索引防漂移检查通过（扫描 {len(range_sources)} 个运行时文档，校验 {total_checked} 处起止区间）")
 '
 
 echo "=== 5. README bash 代码块语法检查 (bash -n) ==="

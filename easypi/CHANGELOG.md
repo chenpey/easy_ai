@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.2 更新说明（2026-11-23）
+
+- **切断 `full` 跨目录瀑布流读取与行号索引加固**：`references/full.md` 顶部新增「加载边界」声明，明确常规编排规程已内联自包含，指向 `../../easydev/references/*.md` 的外链仅作同源锚点与异常/争议分支的按需查阅入口；为 `references/full.md` 与 `references/gate.md` 中指向 `easydev` 参考文档的链接补齐 `#L<start>-L<end>` 行号区间并纳入仓库根 `scripts/check.sh` §4b 起止边界防漂移门禁。
+
 ## 0.7.1 更新说明（2026-11-23）
 
 - **超时策略变更与审计对齐**：`scripts/run_pi.sh` 取消 0.5.0 的默认 900 秒硬超时（`EASYPI_TIMEOUT` 默认改为 `0` 不硬杀），改为异步派发 + 15 分钟 `schedule` 巡检（持续推进不中断，停滞时先确认 `pi` 进程退场再同 `--session-id` 询问）；同步 `SKILL.md` / `references/gate.md` / `references/full.md`：`gate` 排除条件补齐重大外部契约/持久数据影响、`force_ask` 枚举对齐守卫、独立只读 `Pi` 设计者分配 `<sid>-des`（允许写 `design*.md`）、只读物理校验排除忽略文件全量哈希，并明确高风险「深」审查动态验证的补跑责任方。

@@ -3,7 +3,7 @@ name: easypi
 description: >-
   当用户要求调用 easypi、或通过 Antigravity（agy）分派 Pi 走 easydev gate 模式或 full 协同分支完成设计审查、编码与独立审查时使用。
 metadata:
-  version: "0.7.1"
+  version: "0.7.2"
 ---
 
 # easypi
