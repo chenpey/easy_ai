@@ -572,7 +572,8 @@ runpi_cleanup() {
   trap - EXIT INT TERM
   local pid_file stub_pid recorded
   for pid_file in "$RUNPI_TMP/pid" "$RUNPI_TMP/sig-pid" "$RUNPI_TMP/exit-pid" "$RUNPI_TMP/pass-pid" \
-    "$RUNPI_TMP/plain-pid"; do
+    "$RUNPI_TMP/plain-pid" "$RUNPI_TMP/inject-pid" "$RUNPI_TMP/keep-pid" "$RUNPI_TMP/link-pid" \
+    "$RUNPI_TMP/empty-pid" "$RUNPI_TMP/bad-pid"; do
     [ -f "$pid_file" ] || continue
     stub_pid="$(head -n 1 "$pid_file")"
     if [ -n "$stub_pid" ]; then
@@ -593,7 +594,11 @@ runpi_cleanup() {
 trap runpi_cleanup EXIT
 trap 'runpi_cleanup; exit 130' INT
 trap 'runpi_cleanup; exit 143' TERM
-mkdir -p "$RUNPI_TMP/bin"
+# 全部用例隔离 HOME/APPDATA：run_pi.sh 未传 --model 时会读用户级 models.json，
+# 不隔离就依赖宿主机配置（非法配置会让超时/SIGTERM 用例以非 124 退出而失败）。
+RUNPI_HOME="$RUNPI_TMP/home"
+RUNPI_APPDATA="$RUNPI_TMP/appdata"
+mkdir -p "$RUNPI_TMP/bin" "$RUNPI_HOME" "$RUNPI_APPDATA" "$RUNPI_TMP/home-models/.config/easydev"
 cat > "$RUNPI_TMP/bin/pi" <<'RUNPI_STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$$" > "$STUB_PID_FILE"
@@ -617,7 +622,7 @@ chmod +x "$RUNPI_TMP/bin/pi"
 printf 'prompt\n' > "$RUNPI_TMP/prompt.txt"
 runpi_ok=1
 runpi_code=0
-STUB_PID_FILE="$RUNPI_TMP/pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=2 \
+STUB_PID_FILE="$RUNPI_TMP/pid" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=2 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
   > "$RUNPI_TMP/out.log" 2>&1 </dev/null || runpi_code=$?
 if [ "$runpi_code" -ne 124 ]; then
@@ -635,7 +640,7 @@ fi
 # 旧实现此处耗满 5s 多（SECONDS 整数秒，新实现约 1s，取 3s 为界仍可判别）。
 runpi_plain_code=0
 runpi_plain_start=$SECONDS
-STUB_MODE=plain STUB_PID_FILE="$RUNPI_TMP/plain-pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=1 \
+STUB_MODE=plain STUB_PID_FILE="$RUNPI_TMP/plain-pid" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=1 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
   > "$RUNPI_TMP/plain.log" 2>&1 </dev/null || runpi_plain_code=$?
 runpi_plain_elapsed=$((SECONDS - runpi_plain_start))
@@ -652,7 +657,7 @@ if [ ! -f "$RUNPI_TMP/plain-pid" ] || ! runpi_wait_gone "$RUNPI_TMP/plain-pid"; 
   runpi_ok=0
 fi
 # 外部中断：SIGTERM 到 wrapper 也必须整组清理（桩忽略 TERM，靠 SIGKILL 收口），退出码 128+15=143。
-STUB_PID_FILE="$RUNPI_TMP/sig-pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+STUB_PID_FILE="$RUNPI_TMP/sig-pid" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
   > "$RUNPI_TMP/sig.log" 2>&1 </dev/null &
 runpi_bg=$!
@@ -678,7 +683,7 @@ if [ -f "$RUNPI_TMP/sig-pid" ] && ! runpi_wait_gone "$RUNPI_TMP/sig-pid"; then
 fi
 # 正常退出：桩记录 PID 后立即 exit 0，其忽略 TERM 的后台子进程必须被 wrapper 清掉，退出码保持 0。
 runpi_exit_code=0
-STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/exit-pid" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/exit-pid" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
   > "$RUNPI_TMP/exit.log" 2>&1 </dev/null || runpi_exit_code=$?
 if [ "$runpi_exit_code" -ne 0 ]; then
@@ -695,7 +700,7 @@ fi
 # 允许清单内的参数必须真实按序透传给 pi（只验退出码发现不了取值或选项被守卫吞掉）。
 runpi_pass_code=0
 STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/pass-pid" STUB_ARGV_FILE="$RUNPI_TMP/pass-argv" \
-  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
   --model provider/id --thinking high --approve \
   > "$RUNPI_TMP/pass.log" 2>&1 </dev/null || runpi_pass_code=$?
@@ -728,7 +733,7 @@ for bad_args in \
   "stub session|$RUNPI_TMP/prompt.txt"; do
   IFS='|' read -r -a runpi_args <<< "$bad_args"
   runpi_args_rc=0
-  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=5 \
+  PATH="$RUNPI_TMP/bin:$PATH" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" EASYPI_TIMEOUT=5 \
     bash easypi/scripts/run_pi.sh "${runpi_args[@]}" >/dev/null 2>&1 </dev/null || runpi_args_rc=$?
   if [ "$runpi_args_rc" -ne 2 ]; then
     echo "Error: run_pi.sh 参数守卫未拒绝: ${runpi_args[*]}（exit=${runpi_args_rc}）" >&2
@@ -738,7 +743,7 @@ done
 # 纯空白取值：单列在此，避免 IFS 切分把空白字段吃掉。
 for blank_args in "--model" "--thinking"; do
   runpi_blank_rc=0
-  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=5 \
+  PATH="$RUNPI_TMP/bin:$PATH" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" EASYPI_TIMEOUT=5 \
     bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" "$blank_args" "   " \
     >/dev/null 2>&1 </dev/null || runpi_blank_rc=$?
   if [ "$runpi_blank_rc" -ne 2 ]; then
@@ -746,7 +751,7 @@ for blank_args in "--model" "--thinking"; do
     runpi_ok=0
   fi
   runpi_blank_rc=0
-  PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=5 \
+  PATH="$RUNPI_TMP/bin:$PATH" HOME="$RUNPI_HOME" APPDATA="$RUNPI_APPDATA" EASYPI_TIMEOUT=5 \
     bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" "$blank_args=   " \
     >/dev/null 2>&1 </dev/null || runpi_blank_rc=$?
   if [ "$runpi_blank_rc" -ne 2 ]; then
@@ -754,11 +759,139 @@ for blank_args in "--model" "--thinking"; do
     runpi_ok=0
   fi
 done
+# 自动解析 windows：用户配置写在隔离 HOME 下，窗口按当前北京时间动态构造（now±60 分钟，
+# 天然覆盖跨午夜），避免整点边界抖动；developer 基座 + 时段局部覆盖由 models.py 合并。
+python3 - "$RUNPI_TMP/home-models/.config/easydev/models.json" <<'RUNPI_CFG'
+import json, sys
+from datetime import datetime, timedelta, timezone
+
+now = datetime.now(timezone(timedelta(hours=8)))
+start = (now - timedelta(minutes=60)).strftime("%H:%M")
+end = (now + timedelta(minutes=60)).strftime("%H:%M")
+config = {
+    "developer": {"model": "openai/base-model", "reasoning_effort": "high"},
+    "reviewer": {"model": "anthropic/review-model", "reasoning_effort": "medium"},
+    "windows": {f"{start}-{end}": {"developer": {"model": "google/window-model", "reasoning_effort": "low"}}},
+}
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(config, handle)
+RUNPI_CFG
+mkdir -p "$RUNPI_TMP/bad-models/.config/easydev" "$RUNPI_TMP/empty-home" "$RUNPI_TMP/link" "$RUNPI_TMP/no-models/easypi/scripts"
+printf '{"developer": ' > "$RUNPI_TMP/bad-models/.config/easydev/models.json"
+# 软链安装布局（easypi 整目录软链）与缺 models.py 布局（只软链 run_pi.sh 单文件）。
+ln -s "$ROOT_DIR/easypi" "$RUNPI_TMP/link/easypi"
+ln -s "$ROOT_DIR/easypi/scripts/run_pi.sh" "$RUNPI_TMP/no-models/easypi/scripts/run_pi.sh"
+# 未传 --model：按 windows 命中注入 --model 与 --thinking。
+runpi_auto_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/inject-pid" STUB_ARGV_FILE="$RUNPI_TMP/inject-argv" \
+  HOME="$RUNPI_TMP/home-models" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/inject.log" 2>&1 </dev/null || runpi_auto_code=$?
+runpi_auto_argv=""
+if [ -f "$RUNPI_TMP/inject-argv" ]; then
+  runpi_auto_argv="$(tr '\n' ' ' < "$RUNPI_TMP/inject-argv")"
+fi
+case " $runpi_auto_argv " in
+  *" --model google/window-model --thinking low "*) [ "$runpi_auto_code" -eq 0 ] || runpi_ok=0 ;;
+  *)
+    echo "Error: 未传 --model 时未按 windows 注入模型与深度（exit=${runpi_auto_code}，argv=${runpi_auto_argv:-（桩未记录参数）}）" >&2
+    runpi_ok=0
+    ;;
+esac
+if [ -f "$RUNPI_TMP/inject.log" ] && grep -q 'Error:' "$RUNPI_TMP/inject.log"; then
+  echo "Error: 注入路径输出了错误: $(cat "$RUNPI_TMP/inject.log")" >&2
+  runpi_ok=0
+fi
+# 已传 --model/--thinking：按原样透传，不被 windows 覆盖。
+runpi_keep_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/keep-pid" STUB_ARGV_FILE="$RUNPI_TMP/keep-argv" \
+  HOME="$RUNPI_TMP/home-models" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" --model provider/id --thinking high \
+  > "$RUNPI_TMP/keep.log" 2>&1 </dev/null || runpi_keep_code=$?
+runpi_keep_argv=""
+if [ -f "$RUNPI_TMP/keep-argv" ]; then
+  runpi_keep_argv="$(tr '\n' ' ' < "$RUNPI_TMP/keep-argv")"
+fi
+case " $runpi_keep_argv " in
+  *window-model*)
+    echo "Error: 显式 --model 被 windows 覆盖: ${runpi_keep_argv:-（桩未记录参数）}" >&2
+    runpi_ok=0
+    ;;
+  *" --model provider/id --thinking high "*) [ "$runpi_keep_code" -eq 0 ] || runpi_ok=0 ;;
+  *)
+    echo "Error: 显式参数未原样透传（exit=${runpi_keep_code}，argv=${runpi_keep_argv:-（桩未记录参数）}）" >&2
+    runpi_ok=0
+    ;;
+esac
+# 软链安装布局：物理路径解析必须仍能找到仓库 scripts/models.py 并注入。
+runpi_link_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/link-pid" STUB_ARGV_FILE="$RUNPI_TMP/link-argv" \
+  HOME="$RUNPI_TMP/home-models" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash "$RUNPI_TMP/link/easypi/scripts/run_pi.sh" stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/link.log" 2>&1 </dev/null || runpi_link_code=$?
+runpi_link_argv=""
+if [ -f "$RUNPI_TMP/link-argv" ]; then
+  runpi_link_argv="$(tr '\n' ' ' < "$RUNPI_TMP/link-argv")"
+fi
+case " $runpi_link_argv " in
+  *" --model google/window-model "*) [ "$runpi_link_code" -eq 0 ] || runpi_ok=0 ;;
+  *)
+    echo "Error: 软链安装布局下未按 windows 注入模型（exit=${runpi_link_code}，argv=${runpi_link_argv:-（桩未记录参数）}）" >&2
+    runpi_ok=0
+    ;;
+esac
+# 无用户配置：不注入任何参数，原样透传。
+runpi_empty_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/empty-pid" STUB_ARGV_FILE="$RUNPI_TMP/empty-argv" \
+  HOME="$RUNPI_TMP/empty-home" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/empty.log" 2>&1 </dev/null || runpi_empty_code=$?
+runpi_empty_argv=""
+if [ -f "$RUNPI_TMP/empty-argv" ]; then
+  runpi_empty_argv="$(tr '\n' ' ' < "$RUNPI_TMP/empty-argv")"
+fi
+case " $runpi_empty_argv " in
+  *"--model"*|*"--thinking"*)
+    echo "Error: 无用户配置时不应注入参数: ${runpi_empty_argv:-（桩未记录参数）}" >&2
+    runpi_ok=0
+    ;;
+  "")
+    echo "Error: 无用户配置用例未记录透传参数" >&2
+    runpi_ok=0
+    ;;
+  *)
+    [ "$runpi_empty_code" -eq 0 ] || runpi_ok=0
+    ;;
+esac
+# 用户配置非法：不静默回退，按退出码 2 失败且不启动 pi。
+runpi_bad_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/bad-pid" \
+  HOME="$RUNPI_TMP/bad-models" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/bad.log" 2>&1 </dev/null || runpi_bad_code=$?
+if [ "$runpi_bad_code" -ne 2 ]; then
+  echo "Error: 非法用户配置未以退出码 2 退出（exit=${runpi_bad_code}）" >&2
+  runpi_ok=0
+fi
+if [ -f "$RUNPI_TMP/bad-pid" ]; then
+  echo "Error: 非法用户配置仍启动了 pi" >&2
+  runpi_ok=0
+fi
+# 缺 models.py：fail-closed 以退出码 2 报错，不静默回退 pi 默认模型。
+runpi_nomodels_code=0
+STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/nomodels-pid" \
+  HOME="$RUNPI_TMP/empty-home" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+  bash "$RUNPI_TMP/no-models/easypi/scripts/run_pi.sh" stub-session "$RUNPI_TMP/prompt.txt" \
+  > "$RUNPI_TMP/nomodels.log" 2>&1 </dev/null || runpi_nomodels_code=$?
+if [ "$runpi_nomodels_code" -ne 2 ] || ! grep -q 'models.py' "$RUNPI_TMP/nomodels.log"; then
+  echo "Error: 缺失 models.py 未按 fail-closed 以 2 退出（exit=${runpi_nomodels_code}）" >&2
+  runpi_ok=0
+fi
 runpi_cleanup
 if [ "$runpi_ok" -ne 1 ]; then
   exit 1
 fi
-echo "OK: run_pi.sh 硬超时 124、响应 SIGTERM 的桩 3s 内 124、外部 SIGTERM 143、正常退出清子进程、参数守卫均返回 2（允许清单内参数按序透传）"
+echo "OK: run_pi.sh 硬超时 124、响应 SIGTERM 的桩 3s 内 124、外部 SIGTERM 143、正常退出清子进程、参数守卫均返回 2、允许清单参数按序透传；按 windows 注入（含软链安装布局）、显式 --model 不被覆盖、无配置透传、非法配置与缺失 models.py fail-closed 均符合契约"
 if command -v pwsh >/dev/null 2>&1; then
   pwsh -NoProfile -Command '
     $errors = $null

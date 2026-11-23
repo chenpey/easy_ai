@@ -52,6 +52,8 @@ fi
 # 额外参数只按白名单放行 --model/--thinking/--approve（与 README/SKILL 一致）：
 # 其余一律拒绝，避免把 pi 的未知选项（如悬空短选项）当成取值或吞掉分隔符。
 previous=""
+model_given=0
+thinking_given=0
 for arg in "$@"; do
   value="$arg"
   case "$previous" in
@@ -59,11 +61,13 @@ for arg in "$@"; do
       case "$arg" in
         --model|--thinking)
           previous="$arg"
+          if [ "$arg" = --model ]; then model_given=1; else thinking_given=1; fi
           continue
           ;;
         --model=*|--thinking=*)
           previous="${arg%%=*}"
           value="${arg#*=}"
+          if [ "$previous" = --model ]; then model_given=1; else thinking_given=1; fi
           ;;
         --approve)
           continue
@@ -90,6 +94,31 @@ done
 if [ -n "$previous" ]; then
   echo "Error: $previous 缺少取值（悬空带值选项会吞掉分隔符）" >&2
   exit 2
+fi
+
+# 未传 --model 时按用户级 models.json（含北京时间 windows）兜底注入；显式指定则不覆盖。
+# 物理路径解析：easypi 常以整目录软链安装，按软链路径的 ../../scripts 找不到仓库实现。
+# 只读用户级配置（--untrusted）：项目根 .easydev/models.json 须由 agy 过外发门槛后显式传 --model。
+if [ "$model_given" -eq 0 ]; then
+  script_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  models_py="$script_dir/../../scripts/models.py"
+  [ -f "$models_py" ] || models_py="${HOME:-}/.config/agent-hooks/models.py"
+  if [ ! -f "$models_py" ]; then
+    echo "Error: 找不到 models.py；请用 scripts/sync-agent-rules.sh --apply 同步，或改用完整仓库布局" >&2
+    exit 2
+  fi
+  if ! resolved="$(python3 "$models_py" resolve --untrusted)"; then
+    printf '%s\n' "$resolved" >&2
+    echo "Error: 用户级 models.json 无效或不可读，已停止派发（不静默回退 pi 默认模型）" >&2
+    exit 2
+  fi
+  { read -r auto_model; read -r auto_effort; } <<< "$(printf '%s' "$resolved" | python3 -c 'import json, sys; d = json.load(sys.stdin)["config"]["developer"]; print(d["model"]); print(d["reasoning_effort"])')"
+  if [ "$auto_model" != inherit ]; then
+    set -- "$@" --model "$auto_model"
+  fi
+  if [ "$thinking_given" -eq 0 ] && [ "$auto_effort" != inherit ]; then
+    set -- "$@" --thinking "$auto_effort"
+  fi
 fi
 
 EASYPI_TIMEOUT="${EASYPI_TIMEOUT:-0}"

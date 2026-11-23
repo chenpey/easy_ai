@@ -30,6 +30,8 @@ targets=(
   "$HOME/.gemini/config/rules/antigravity.md"
   "$HOME/.config/agent-hooks/check_command.py"
   "$HOME/.pi/agent/extensions/enforce-noninteractive.ts"
+  "$HOME/.config/agent-hooks/models.py"
+  "$HOME/.pi/agent/extensions/apply-model-windows.ts"
 )
 entries=(
   "$HOME/.pi/agent/AGENTS.md"
@@ -41,6 +43,8 @@ rel_paths=(
   "agent-rules/antigravity.md"
   "agent-hooks/check_command.py"
   "agent-hooks/pi/enforce-noninteractive.ts"
+  "scripts/models.py"
+  "agent-hooks/pi/apply-model-windows.ts"
 )
 HOOKS_REL_PATH="agent-hooks/antigravity/hooks.json"
 HOOKS_TARGET="$HOME/.gemini/config/hooks.json"

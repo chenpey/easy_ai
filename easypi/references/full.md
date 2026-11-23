@@ -12,7 +12,7 @@
 
 ## 2. 模型组配置与不可用兜底
 
-**CLI 适配覆写**：本节以 `inherit` 不静默回退、须暂停交用户指定，覆写 [workflow.md#full-编排](../../easydev/references/workflow.md#full-编排) `#L60-L73` 中“`developer` 模型与深度均为 `inherit` 时由主代理写入”的默认约定（`run_pi.sh` 只能按显式 `<provider/id>` 分派）。
+**CLI 适配覆写**：本节以 `inherit` 不静默回退、须暂停交用户指定，覆写 [workflow.md#full-编排](../../easydev/references/workflow.md#full-编排) `#L60-L73` 中“`developer` 模型与深度均为 `inherit` 时由主代理写入”的默认约定（`run_pi.sh` 未传 `--model` 时按用户级 `models.json` 的 `windows` 兜底注入，本分支仍须显式传核实值）。
 
 分派前 `agy` 按 [environment.md#模型配置](../../easydev/references/environment.md#模型配置) `#L3-L25` 解析 `developer`、`reviewer` 的 `model`/`reasoning_effort`（含项目级 `.easydev/models.json` 外发安全门槛；开局或从 `gate` 升级未锁定时解析并锁定北京时间 `windows`，无命中记 `default`，已锁定则沿用），映射到 [run_pi.sh](../scripts/run_pi.sh) 的 `--model` 与 `--thinking`（`off`–`max` 传 `--thinking <effort>`，`inherit` 省略，禁传 `--thinking inherit`）。
 

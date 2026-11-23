@@ -45,7 +45,9 @@ $RelPaths = @(
     'AGENTS.md',
     'agent-rules/antigravity.md',
     'agent-hooks/check_command.py',
-    'agent-hooks/pi/enforce-noninteractive.ts'
+    'agent-hooks/pi/enforce-noninteractive.ts',
+    'scripts/models.py',
+    'agent-hooks/pi/apply-model-windows.ts'
 )
 $HooksRelPath = 'agent-hooks/antigravity/hooks.json'
 
@@ -56,7 +58,9 @@ $Targets = @(
     (Join-Path $HOME '.config/agent-rules/AGENTS.md'),
     (Join-Path $HOME '.gemini/config/rules/antigravity.md'),
     (Join-Path $HOME '.config/agent-hooks/check_command.py'),
-    (Join-Path $HOME '.pi/agent/extensions/enforce-noninteractive.ts')
+    (Join-Path $HOME '.pi/agent/extensions/enforce-noninteractive.ts'),
+    (Join-Path $HOME '.config/agent-hooks/models.py'),
+    (Join-Path $HOME '.pi/agent/extensions/apply-model-windows.ts')
 )
 $HooksTarget = Join-Path $HOME '.gemini/config/hooks.json'
 $Entries = @(

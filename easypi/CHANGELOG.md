@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0 更新说明（2026-11-23）
+
+- **全场景遵循 `models.json` 的 `windows`**：`easypi/scripts/run_pi.sh` 未传 `--model` 时复用仓库 `scripts/models.py`（`--untrusted`，只读用户级配置）按北京时间命中 `windows` 后注入 `developer` 的 `--model`/`--thinking`，显式传参不覆盖，用户配置非法或找不到 `models.py` 时以 `2` 失败退出不静默回退；新增 `agent-hooks/pi/apply-model-windows.ts` 让独立运行的 `pi` 在 `startup`/`new` 遵循同一窗口（`resume`/`fork`/`reload` 保留会话锁定模型，命令行 `--model`/`-m` 不覆盖），二者与 `scripts/models.py` 一并纳入 `sync-agent-rules.sh` / `.ps1` 同步清单。
+- **文档校准**：`SKILL.md` 与 `README.md` 明确 `gate`/`full` 均按 `windows` 解析 `developer`，同 `--session-id` 返工须显式传开工锁定的 `--model`/`--thinking`；`references/full.md` 移除「只能按显式 `<provider/id>` 分派」的不实描述；根 `README.md` 补扩展与解析器清单。
+
 ## 0.7.2 更新说明（2026-11-23）
 
 - **切断 `full` 跨目录瀑布流读取与行号索引加固**：`references/full.md` 顶部新增「加载边界」声明，明确常规编排规程已内联自包含，指向 `../../easydev/references/*.md` 的外链仅作同源锚点与异常/争议分支的按需查阅入口；为 `references/full.md` 与 `references/gate.md` 中指向 `easydev` 参考文档的链接补齐 `#L<start>-L<end>` 行号区间并纳入仓库根 `scripts/check.sh` §4b 起止边界防漂移门禁。

@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | [EasyThink](easythink/README.md) | 0.7.1 | 理清问题、检查证据、比较选择并形成可验证的下一步。 |
 | [EasyDev](easydev/README.md) | 2.14.2 | 面向编码 Agent，按风险组织设计、实施、排障、验证与审查。 |
-| [EasyPi](easypi/README.md) | 0.7.2 | 由 Antigravity 设计与编排、分派 Pi 走 EasyDev `gate` 或 `full` 协同分支完成开发与独立审查的跨宿主工作流。 |
+| [EasyPi](easypi/README.md) | 0.8.0 | 由 Antigravity 设计与编排、分派 Pi 走 EasyDev `gate` 或 `full` 协同分支完成开发与独立审查的跨宿主工作流。 |
 
 - 技能按标准 `SKILL.md` 分发，安装与使用见对应目录的 README。
 - `agents/openai.yaml` 仅作为 OpenAI/Codex 界面的可选展示元数据，其他宿主可忽略。
@@ -21,6 +21,7 @@
 - `agent-rules/antigravity.md`：Antigravity 专有适配规则，发布至 `~/.gemini/config/rules/antigravity.md`。
 - `agent-hooks/check_command.py`：跨宿主共享的命令与写入硬守卫（非交互 stdin 封闭、高危 Git/删除确认、密钥防写入与防提交、网络命令硬超时、`sleep` 禁令（仅 Antigravity）及敏感凭据目录确认），发布至 `~/.config/agent-hooks/check_command.py`。
 - `agent-hooks/antigravity/hooks.json` 与 `agent-hooks/pi/enforce-noninteractive.ts`：Antigravity（`~/.gemini/config/hooks.json`，按命名键合并）与 Pi（`~/.pi/agent/extensions/enforce-noninteractive.ts`）的前置拦截适配器，随 `sync-agent-rules.sh`（macOS/Linux）与 `sync-agent-rules.ps1`（Windows）一并同步。
+- `agent-hooks/pi/apply-model-windows.ts` 与 `scripts/models.py`：Pi 会话启动时按用户级 `models.json` 的北京时间 `windows` 应用 `developer` 模型与思考档位的扩展（发布至 `~/.pi/agent/extensions/apply-model-windows.ts`），以及该扩展与 `easypi/scripts/run_pi.sh` 共用的模型配置解析器（发布至 `~/.config/agent-hooks/models.py`），同样随上述同步脚本发布。
 
 ### 规则同步
 
