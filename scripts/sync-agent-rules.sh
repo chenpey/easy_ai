@@ -131,11 +131,16 @@ for i in "${!targets[@]}"; do
   fi
 done
 
-# 运行时规则发布文件必须是非软链的真文件。
-if [ -L "${targets[0]}" ] || [ -L "${targets[2]}" ] || [ -L "${targets[3]}" ]; then
-  echo "Runtime rule target must be a regular file: ${targets[0]} ${targets[2]} ${targets[3]}" >&2
-  exit 1
-fi
+# 运行时规则发布文件必须是非软链的真文件；index 1（AGY 专有规则）由下面的过渡分支单独处理。
+for i in "${!targets[@]}"; do
+  if [ "$i" -eq 1 ]; then
+    continue
+  fi
+  if [ -L "${targets[$i]}" ]; then
+    echo "Runtime rule target must be a regular file: ${targets[$i]}" >&2
+    exit 1
+  fi
+done
 
 # 允许 AGY 专有规则当前仍是"指向仓库"的软链（仅本地仓库模式过渡），迁移后应是真文件。
 if [ -L "${targets[1]}" ]; then

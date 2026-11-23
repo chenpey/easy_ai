@@ -566,6 +566,18 @@ runpi_wait_gone() {
   return 1
 }
 
+# 精确比对 pi 实际收到的参数序列（桩一行一个记录）：尾部重复追加 --model/--thinking
+# 会多出参数而失败，宽泛子串匹配看不出重复。
+runpi_assert_argv() {
+  local got expected
+  got="$(cat "$1" 2>/dev/null || true)"
+  expected="$2"
+  if [ "$got" != "$expected" ]; then
+    echo "Error: $3（期望: $(printf '%s' "$expected" | tr '\n' ' ')，实际: $(printf '%s' "$got" | tr '\n' ' ')）" >&2
+    runpi_ok=0
+  fi
+}
+
 # 中断或早退时：先按 PID 文件清桩进程组（其子进程在独立会话里，wrapper 死后就没人管），
 # 再停 wrapper，最后删临时目录。
 runpi_cleanup() {
@@ -573,7 +585,7 @@ runpi_cleanup() {
   local pid_file stub_pid recorded
   for pid_file in "$RUNPI_TMP/pid" "$RUNPI_TMP/sig-pid" "$RUNPI_TMP/exit-pid" "$RUNPI_TMP/pass-pid" \
     "$RUNPI_TMP/plain-pid" "$RUNPI_TMP/inject-pid" "$RUNPI_TMP/keep-pid" "$RUNPI_TMP/link-pid" \
-    "$RUNPI_TMP/empty-pid" "$RUNPI_TMP/bad-pid"; do
+    "$RUNPI_TMP/empty-pid" "$RUNPI_TMP/bad-pid" "$RUNPI_TMP/nomodels-pid"; do
     [ -f "$pid_file" ] || continue
     stub_pid="$(head -n 1 "$pid_file")"
     if [ -n "$stub_pid" ]; then
@@ -787,17 +799,19 @@ STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/inject-pid" STUB_ARGV_FILE="$RUNPI_TMP/
   HOME="$RUNPI_TMP/home-models" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
   > "$RUNPI_TMP/inject.log" 2>&1 </dev/null || runpi_auto_code=$?
-runpi_auto_argv=""
-if [ -f "$RUNPI_TMP/inject-argv" ]; then
-  runpi_auto_argv="$(tr '\n' ' ' < "$RUNPI_TMP/inject-argv")"
+if [ "$runpi_auto_code" -ne 0 ]; then
+  echo "Error: 未传 --model 时注入路径未正常退出（exit=${runpi_auto_code}）" >&2
+  runpi_ok=0
 fi
-case " $runpi_auto_argv " in
-  *" --model google/window-model --thinking low "*) [ "$runpi_auto_code" -eq 0 ] || runpi_ok=0 ;;
-  *)
-    echo "Error: 未传 --model 时未按 windows 注入模型与深度（exit=${runpi_auto_code}，argv=${runpi_auto_argv:-（桩未记录参数）}）" >&2
-    runpi_ok=0
-    ;;
-esac
+runpi_assert_argv "$RUNPI_TMP/inject-argv" "-p
+--session-id
+stub-session
+--model
+google/window-model
+--thinking
+low
+--
+prompt" "未传 --model 时未按 windows 精确注入一次 --model/--thinking（重复或漏注入均算失败）"
 if [ -f "$RUNPI_TMP/inject.log" ] && grep -q 'Error:' "$RUNPI_TMP/inject.log"; then
   echo "Error: 注入路径输出了错误: $(cat "$RUNPI_TMP/inject.log")" >&2
   runpi_ok=0
@@ -808,21 +822,19 @@ STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/keep-pid" STUB_ARGV_FILE="$RUNPI_TMP/ke
   HOME="$RUNPI_TMP/home-models" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
   bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" --model provider/id --thinking high \
   > "$RUNPI_TMP/keep.log" 2>&1 </dev/null || runpi_keep_code=$?
-runpi_keep_argv=""
-if [ -f "$RUNPI_TMP/keep-argv" ]; then
-  runpi_keep_argv="$(tr '\n' ' ' < "$RUNPI_TMP/keep-argv")"
+if [ "$runpi_keep_code" -ne 0 ]; then
+  echo "Error: 显式 --model/--thinking 透传用例未正常退出（exit=${runpi_keep_code}）" >&2
+  runpi_ok=0
 fi
-case " $runpi_keep_argv " in
-  *window-model*)
-    echo "Error: 显式 --model 被 windows 覆盖: ${runpi_keep_argv:-（桩未记录参数）}" >&2
-    runpi_ok=0
-    ;;
-  *" --model provider/id --thinking high "*) [ "$runpi_keep_code" -eq 0 ] || runpi_ok=0 ;;
-  *)
-    echo "Error: 显式参数未原样透传（exit=${runpi_keep_code}，argv=${runpi_keep_argv:-（桩未记录参数）}）" >&2
-    runpi_ok=0
-    ;;
-esac
+runpi_assert_argv "$RUNPI_TMP/keep-argv" "-p
+--session-id
+stub-session
+--model
+provider/id
+--thinking
+high
+--
+prompt" "显式 --model/--thinking 未原样精确透传（被 windows 覆盖或重复注入）"
 # 软链安装布局：物理路径解析必须仍能找到仓库 scripts/models.py 并注入。
 runpi_link_code=0
 STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/link-pid" STUB_ARGV_FILE="$RUNPI_TMP/link-argv" \
@@ -887,11 +899,56 @@ if [ "$runpi_nomodels_code" -ne 2 ] || ! grep -q 'models.py' "$RUNPI_TMP/nomodel
   echo "Error: 缺失 models.py 未按 fail-closed 以 2 退出（exit=${runpi_nomodels_code}）" >&2
   runpi_ok=0
 fi
+# 非法注入值：models.py 会放行内部空白/控制字符与前导 -，注入前守卫必须 exit 2 且不启动 pi。
+mkdir -p "$RUNPI_TMP/injectvals/dash/.config/easydev" "$RUNPI_TMP/injectvals/space/.config/easydev" \
+  "$RUNPI_TMP/injectvals/ctrl/.config/easydev"
+python3 - "$RUNPI_TMP/injectvals" <<'RUNPI_BADVAL'
+import json, os, sys
+
+base = sys.argv[1]
+bad = {"dash": "-x/y", "space": "openai/a b", "ctrl": "openai/a\tb"}
+for name, model in bad.items():
+    path = os.path.join(base, name, ".config", "easydev", "models.json")
+    config = {
+        "developer": {"model": model, "reasoning_effort": "high"},
+        "reviewer": {"model": "anthropic/review-model", "reasoning_effort": "medium"},
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(config, handle)
+RUNPI_BADVAL
+for runpi_badval in dash space ctrl; do
+  runpi_badval_code=0
+  STUB_MODE=exit STUB_PID_FILE="$RUNPI_TMP/injectvals-$runpi_badval-pid" \
+    HOME="$RUNPI_TMP/injectvals/$runpi_badval" APPDATA="$RUNPI_APPDATA" PATH="$RUNPI_TMP/bin:$PATH" EASYPI_TIMEOUT=60 \
+    bash easypi/scripts/run_pi.sh stub-session "$RUNPI_TMP/prompt.txt" \
+    > "$RUNPI_TMP/injectvals-$runpi_badval.log" 2>&1 </dev/null || runpi_badval_code=$?
+  if [ "$runpi_badval_code" -ne 2 ] || [ -f "$RUNPI_TMP/injectvals-$runpi_badval-pid" ] \
+    || ! grep -q 'Error:' "$RUNPI_TMP/injectvals-$runpi_badval.log"; then
+    echo "Error: $runpi_badval 非法注入值未以 2 退出、未输出 Error 或仍启动了 pi（exit=${runpi_badval_code}）" >&2
+    runpi_ok=0
+  fi
+done
+# 7c. sync-agent-rules.sh --apply 软链守卫：非 index 1 目标（含新增 index 4 `models.py`、
+# index 5 `apply-model-windows.ts`）为软链时 exit 1 且保留原软链；全程只写隔离 HOME。
+SYNC_TMP="$RUNPI_TMP/sync"
+mkdir -p "$SYNC_TMP/home4/.config/agent-hooks" "$SYNC_TMP/home5/.pi/agent/extensions"
+sync_targets=("$SYNC_TMP/home4/.config/agent-hooks/models.py" "$SYNC_TMP/home5/.pi/agent/extensions/apply-model-windows.ts")
+sync_homes=("$SYNC_TMP/home4" "$SYNC_TMP/home5")
+for sync_i in 0 1; do
+  ln -s "$SYNC_TMP/elsewhere-$sync_i" "${sync_targets[$sync_i]}"
+  sync_code=0
+  HOME="${sync_homes[$sync_i]}" bash scripts/sync-agent-rules.sh --apply > "$SYNC_TMP/log$sync_i" 2>&1 </dev/null || sync_code=$?
+  sync_link="$(readlink "${sync_targets[$sync_i]}" 2>/dev/null || true)"
+  if [ "$sync_code" -ne 1 ] || [ "$sync_link" != "$SYNC_TMP/elsewhere-$sync_i" ]; then
+    echo "Error: 目标 ${sync_targets[$sync_i]} 为软链时未以 1 退出或软链被替换（exit=${sync_code}，link=${sync_link:-未保留}）" >&2
+    runpi_ok=0
+  fi
+done
 runpi_cleanup
 if [ "$runpi_ok" -ne 1 ]; then
   exit 1
 fi
-echo "OK: run_pi.sh 硬超时 124、响应 SIGTERM 的桩 3s 内 124、外部 SIGTERM 143、正常退出清子进程、参数守卫均返回 2、允许清单参数按序透传；按 windows 注入（含软链安装布局）、显式 --model 不被覆盖、无配置透传、非法配置与缺失 models.py fail-closed 均符合契约"
+echo "OK: run_pi.sh 硬超时 124、响应 SIGTERM 的桩 3s 内 124、外部 SIGTERM 143、正常退出清子进程、参数守卫均返回 2、允许清单参数按序透传；按 windows 注入（含软链安装布局）、显式 --model 不被覆盖、无配置透传、非法配置与缺失 models.py fail-closed 均符合契约；非法注入值拦截、sync-agent-rules.sh --apply 软链拒绝均返回 2/1"
 if command -v pwsh >/dev/null 2>&1; then
   pwsh -NoProfile -Command '
     $errors = $null

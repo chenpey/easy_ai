@@ -11,7 +11,7 @@
 默认 -Check 只读核对；-Apply 幂等初始化软链入口，并用同目录临时文件替换规则文件、按命名键合并 hooks.json。
 退出码：0 一致、1 不一致或拓扑异常、2 用法错误。
 
-发布内容与语义对齐 POSIX 版 scripts/sync-agent-rules.sh：四个规则/守卫目标加 `~/.gemini/config/hooks.json`；
+发布内容与语义对齐 POSIX 版 scripts/sync-agent-rules.sh：六个规则/扩展/解析器目标加 `~/.gemini/config/hooks.json`；
 目标为非普通文件或非预期软链时报错退出；hooks.json 存在但不是合法 JSON 对象时报错且不覆盖；
 所有写入都走同目录临时文件后原子替换；`-Check` 不修改部署目标；远程模式仅创建并清理临时下载文件。
 入口与目标路径沿用 POSIX 版的 $HOME 布局。

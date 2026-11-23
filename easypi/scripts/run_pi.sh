@@ -112,7 +112,24 @@ if [ "$model_given" -eq 0 ]; then
     echo "Error: 用户级 models.json 无效或不可读，已停止派发（不静默回退 pi 默认模型）" >&2
     exit 2
   fi
-  { read -r auto_model; read -r auto_effort; } <<< "$(printf '%s' "$resolved" | python3 -c 'import json, sys; d = json.load(sys.stdin)["config"]["developer"]; print(d["model"]); print(d["reasoning_effort"])')"
+  # 注入前的取值校验：模型名/档位来自用户级配置，含空白或控制字符会让 --model/--thinking
+  # 被拆成多个参数或错位（行式读取尤其），一律 fail-closed。
+  if ! auto_fields="$(printf '%s' "$resolved" | python3 -c '
+import json, sys
+
+developer = json.load(sys.stdin)["config"]["developer"]
+for key in ("model", "reasoning_effort"):
+    value = developer[key]
+    if not isinstance(value, str) or not value or value.startswith("-") or any(
+        char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value
+    ):
+        print("Error: 用户级 models.json 的 developer.%s 取值非法（须非空、不以 - 开头、不含空白或控制字符）" % key, file=sys.stderr)
+        sys.exit(2)
+    print(value)
+')"; then
+    exit 2
+  fi
+  { read -r auto_model; read -r auto_effort; } <<< "$auto_fields"
   if [ "$auto_model" != inherit ]; then
     set -- "$@" --model "$auto_model"
   fi

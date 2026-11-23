@@ -35,5 +35,5 @@
 1. 以低 `WaitMsBeforeAsync`（如 `500`）异步派发 `run_pi.sh` 拿到 `TaskId` 后，立即用 `schedule` 设 `DurationSeconds=900` 定时器（`TimerCondition` 填任务 `TaskId` 或 `'any'`）。
 2. 到点仍在运行时：
    - 用 `manage_task`（`status`）查近期输出，并查 `git status --short --untracked-files=all </dev/null` 与 `git diff --stat`。若日志或工作区持续推进，**不中断任务**，直接重设 900 秒定时器继续等待。
-   - **停滞/不明时插话**：先 `manage_task`（`kill`）暂停 `pi -p`（走 `SIGTERM` 清理整组），再用 `pgrep -f "[p]i -p --session-id <sid>" </dev/null`（方括号防自匹配父 shell）确认输出为空；若有残留则 `kill -TERM` 后复查确认其已退出（防同会话双写），然后同 `--session-id` 调 `run_pi.sh` 询问（「已运行 15 分钟，请简报进度与是否卡住，勿改代码，直接回答。」）。
-   - **去留**：正常推进 → 同 `--session-id` 异步发「继续执行原任务」并重设 900 秒定时器；卡死/阻塞 → 终止并汇报现场；无法判断 → 暂停交用户裁决（附回复、日志与 `git status`）。
+   - **停滞/不明时插话**：先 `manage_task`（`kill`）暂停 `pi -p`（走 `SIGTERM` 清理整组），再用 `pgrep -f "[p]i -p --session-id <sid>" </dev/null`（方括号防自匹配父 shell）确认输出为空；若有残留则 `kill -TERM` 后复查确认其已退出（防同会话双写），然后同 `--session-id` 调 `run_pi.sh` 询问（「已运行 15 分钟，请简报进度与是否卡住，勿改代码，直接回答。」），并同传开工锁定的 `--model`/`--thinking`（省略会按当前时段重解析）。
+   - **去留**：正常推进 → 同 `--session-id` 异步发「继续执行原任务」并同传开工锁定的 `--model`/`--thinking`，重设 900 秒定时器；卡死/阻塞 → 终止并汇报现场；无法判断 → 暂停交用户裁决（附回复、日志与 `git status`）。

@@ -28,10 +28,10 @@ metadata:
 bash "$HOME/.gemini/config/skills/easypi/scripts/run_pi.sh" "<session-id>" "<prompt-file>" </dev/null
 ```
 
-- **设计分歧处理**：Pi 停在施工闸前返回分歧时，agy 按用户意见升版设计并同步 `prompt.md`，保持同一目录与 `--session-id` 重调，并显式传开工锁定的 `--model`/`--thinking`（省略按当前时段重解析）；修订重审计入 `d/3`，累计 3 轮用尽即停并报用户。
-- **模型参数**：`gate`/`full` 派发新 `Pi` 按 `models.json`（含 `windows` 时段）解析 `developer`，非显式覆盖且非 `inherit` 时传 `--model`/`--thinking`；`Pi` 内部按 `easydev gate` 不按 `models.json` 委派 `developer`/`reviewer`，不猜模型。
+- **设计分歧处理**：Pi 停在施工闸前返回分歧时，agy 按用户意见升版设计并同步 `prompt.md`，同目录 `--session-id` 重调并显式传开工锁定的 `--model`/`--thinking`；修订重审计入 `d/3`，累计 3 轮用尽即停并报用户。
+- **模型参数**：`gate`/`full` 派发新 `Pi` 按 `models.json`（含 `windows` 时段）解析 `developer`，未显式 `--model` 时注非 `inherit` 的 `--model`/`--thinking`；`Pi` 内部按 `easydev gate` 不按 `models.json` 委派 `developer`/`reviewer`，不猜模型。
 - **高风险与硬拦**：触及高风险或重大外部契约/持久数据影响即停写回报；`pi -p` 无 UI，`force_ask` 级命令（非临时/缓存目标的 `rm -rf`、`git reset --hard`/`clean -f`/整仓 `restore`·`checkout`/`stash drop`·`clear`/`branch -D`/`commit`/`push`、敏感凭据目录等，见守卫）会被硬拦，需此操作交 agy 确认执行。
-- **15分钟巡检与恢复**：以低 `WaitMsBeforeAsync` 异步派发拿到 `TaskId` 后立即设 900 秒 `schedule`，到点按[巡检规程](references/gate.md#15-分钟巡检与插话询问)查进展，停滞再插话；异常中断查 `git status --short --untracked-files=all </dev/null` 与 `git diff HEAD`。按需加 `--approve`；Pi 运行期 agy 不改工作区。
+- **15分钟巡检与恢复**：以低 `WaitMsBeforeAsync` 异步派发拿到 `TaskId` 后立即设 900 秒 `schedule`，到点按[巡检规程](references/gate.md#15-分钟巡检与插话询问)查进展，停滞再插话（重调传锁定参数）；异常中断重调亦同，先查 `git status --short --untracked-files=all </dev/null` 与 `git diff HEAD`。按需加 `--approve`；Pi 运行期 agy 不改工作区。
 
 ## 3. 开发终审（agy）
 
